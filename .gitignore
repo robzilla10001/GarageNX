@@ -4,6 +4,7 @@ build/
 build-pc/
 build-*/
 cmake-build-*/
+stubs/
 *.nro
 *.nso
 *.nacp
@@ -37,6 +38,7 @@ compile_commands.json
 GarageNX_data/
 
 # ─── Misc ─────────────────────────────────────────────────────────────────────
+tools/
 *.log
 *.tmp
 tags
