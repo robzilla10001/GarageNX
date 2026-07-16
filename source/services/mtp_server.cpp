@@ -362,8 +362,16 @@ bool MtpServer::recv_install(uint32_t storage_id, const std::string& filename, u
     if (!parse_header(m_buf, got, h) || h.type != Mtp::Type::Data) {
         m_install->abort(); m_install.reset(); return false;
     }
-    const uint64_t payload = (h.length == 0xFFFFFFFFu) ? size
-                                                       : (h.length - Mtp::kHeaderSize);
+    // MTP cannot express a size over 4 GiB: both ObjectCompressedSize and the
+    // data-container length are 32-bit, and a host sends 0xFFFFFFFF for anything
+    // larger. Rather than implementing MTP object properties to recover a 64-bit
+    // size, take it from the container itself — the PFS0 entry table is 64-bit
+    // and exact. `payload` starts as whatever MTP claimed and is corrected to the
+    // real value as soon as the PFS0 header has been parsed.
+    const bool undefined_len = (h.length == 0xFFFFFFFFu);
+    uint64_t payload = undefined_len ? UINT64_MAX : (h.length - Mtp::kHeaderSize);
+    if (!undefined_len && payload != size && size != 0xFFFFFFFFu)
+        m_install_progress.push_log("Note: container length and declared size disagree");
 
     uint64_t fed = 0;
     size_t first = got - Mtp::kHeaderSize;
@@ -378,9 +386,16 @@ bool MtpServer::recv_install(uint32_t storage_id, const std::string& filename, u
     fed += first;
     m_bytes_recv.fetch_add(got);
 
+    // The PFS0 header lands in the first few bytes, so the true length is known
+    // almost immediately — long before a large transfer would have run past the
+    // 4 GiB mark.
+    if (m_install->container_size() > 0) payload = m_install->container_size();
+
     while (fed < payload && !should_stop()) {
         if (!ep_read(m_buf, m_buf_size, &got, 10000000000ULL)) break;
-        if (got == 0) break;
+        if (got == 0) break;                       // ZLP terminates the data phase
+        if (payload == UINT64_MAX && m_install->container_size() > 0)
+            payload = m_install->container_size();
         size_t take = got;
         if (fed + take > payload) take = (size_t)(payload - fed);   // ignore ZLP/padding
         if (!m_install->feed(m_buf, take)) {
@@ -392,6 +407,7 @@ bool MtpServer::recv_install(uint32_t storage_id, const std::string& filename, u
         }
         m_bytes_recv.fetch_add(got);
         fed += take;
+        if (m_install->complete()) { payload = fed; break; }   // every entry consumed
     }
 
     if (fed != payload) {

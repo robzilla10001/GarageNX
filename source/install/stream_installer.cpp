@@ -57,6 +57,7 @@ bool StreamInstaller::begin(const std::string& filename, uint64_t total_size) {
     m_table.clear();
     m_entries.clear();
     m_small.clear();
+    m_container_size = 0;
 
     m_progress.reset();
     m_progress.running = true;
@@ -136,6 +137,12 @@ bool StreamInstaller::parse_table() {
     for (const auto& e : m_entries)
         if (e.is_ncz)
             return fail("NSZ/XCZ stream install is not supported yet — copy the file to the SD card and install it from the file browser");
+
+    // The container ends after its last entry. Derived from 64-bit PFS0 fields,
+    // so this stays exact where MTP's 32-bit size fields cannot.
+    m_container_size = data_start;
+    for (const auto& e : m_entries)
+        if (e.abs_end() > m_container_size) m_container_size = e.abs_end();
 
     int ncas = 0;
     for (const auto& e : m_entries) if (e.is_nca) ncas++;

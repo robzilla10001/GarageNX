@@ -69,6 +69,16 @@ public:
     /// Abandon a partial transfer, deleting any open placeholder.
     void abort();
 
+    /// True once every entry has been consumed.
+    bool complete() const { return m_phase == Phase::Done; }
+
+    /// The container's true size in bytes, derived from the PFS0 header — 0
+    /// until the header and table have arrived. This is the authority for how
+    /// much to read: MTP's ObjectCompressedSize and data-container length are
+    /// both 32-bit and carry 0xFFFFFFFF for anything over 4 GiB, whereas the
+    /// PFS0 entry table is 64-bit and always exact.
+    uint64_t container_size() const { return m_container_size; }
+
     bool ok() const { return m_phase != Phase::Failed; }
     const std::string& error() const { return m_error; }
 
@@ -101,6 +111,7 @@ private:
     std::string m_filename;
     uint64_t    m_total = 0;
     uint64_t    m_pos   = 0;          // absolute read position in the container
+    uint64_t    m_container_size = 0; // known once the table is parsed
 
     std::vector<uint8_t> m_hdr;       // first 0x10 bytes
     std::vector<uint8_t> m_table;     // entry table + string table
