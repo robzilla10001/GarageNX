@@ -2,6 +2,7 @@
 
 #include "services/mtp_server.hpp"
 #include "services/mtp_data.hpp"
+#include "services/overlap_buffer.hpp"
 #include "core/storage.hpp"
 #include "core/fs.hpp"
 #include "core/keys.hpp"
@@ -273,16 +274,30 @@ bool MtpServer::recv_file_data(const std::string& vfs_path, uint64_t expected) {
     }
     m_bytes_recv.fetch_add(got);
 
+    // Overlap the remaining USB reads with the SD writes; strictly alternating
+    // leaves each idle while the other works.
+    OverlapBuffer ov(m_buf_size, [&](const uint8_t* p, size_t n) {
+        return std::fwrite(p, 1, n, f) == n;
+    });
+
     while (written < payload && !should_stop()) {
-        if (!ep_read(m_buf, m_buf_size, &got, 10000000000ULL)) break;
+        uint8_t* dst = ov.valid() ? ov.acquire() : m_buf;
+        if (!dst) break;                                  // sink failed
+        if (!ep_read(dst, m_buf_size, &got, 10000000000ULL)) break;
         if (got == 0) break;
         size_t take = got;
         if (written + take > payload) take = (size_t)(payload - written);   // ignore any ZLP/padding
-        if (std::fwrite(m_buf, 1, take, f) != take) { std::fclose(f); return false; }
+        if (ov.valid()) {
+            if (!ov.submit(take)) break;
+        } else if (std::fwrite(dst, 1, take, f) != take) {
+            break;
+        }
         m_bytes_recv.fetch_add(got);
         written += take;
     }
+    const bool sink_ok = ov.valid() ? ov.flush() : true;   // drain before closing
     std::fclose(f);
+    if (!sink_ok) { std::remove(vfs_path.c_str()); return false; }
 
     if (written != payload) { std::remove(vfs_path.c_str()); return false; }
     return true;
@@ -391,14 +406,30 @@ bool MtpServer::recv_install(uint32_t storage_id, const std::string& filename, u
     // 4 GiB mark.
     if (m_install->container_size() > 0) payload = m_install->container_size();
 
+    // Overlap the USB reads with the placeholder writes. StreamInstaller::feed is
+    // only ever touched by the worker thread here, and flush() fences it before
+    // finish() runs on this thread, so no extra locking is needed.
+    OverlapBuffer ov(m_buf_size, [&](const uint8_t* p, size_t n) {
+        return m_install->feed(p, n);
+    });
+
     while (fed < payload && !should_stop()) {
-        if (!ep_read(m_buf, m_buf_size, &got, 10000000000ULL)) break;
+        uint8_t* dst = ov.valid() ? ov.acquire() : m_buf;
+        if (!dst) break;                           // installer failed
+        if (!ep_read(dst, m_buf_size, &got, 10000000000ULL)) break;
         if (got == 0) break;                       // ZLP terminates the data phase
         if (payload == UINT64_MAX && m_install->container_size() > 0)
             payload = m_install->container_size();
         size_t take = got;
         if (fed + take > payload) take = (size_t)(payload - fed);   // ignore ZLP/padding
-        if (!m_install->feed(m_buf, take)) {
+        if (ov.valid() && !ov.submit(take)) {
+            m_install->abort();
+            save_install_log(filename, false);
+            m_install.reset(); m_installing.store(false);
+            drain_data(payload > fed ? payload - fed : 0);
+            return false;
+        }
+        if (!ov.valid() && !m_install->feed(dst, take)) {
             m_install->abort();
             save_install_log(filename, false);
             m_install.reset(); m_installing.store(false);
@@ -408,6 +439,14 @@ bool MtpServer::recv_install(uint32_t storage_id, const std::string& filename, u
         m_bytes_recv.fetch_add(got);
         fed += take;
         if (m_install->complete()) { payload = fed; break; }   // every entry consumed
+    }
+
+    if (ov.valid() && !ov.flush()) {   // fence: worker must be done before finish()
+        m_install->abort();
+        save_install_log(filename, false);
+        m_install.reset(); m_installing.store(false);
+        drain_data(payload > fed ? payload - fed : 0);
+        return false;
     }
 
     if (fed != payload) {
