@@ -22,19 +22,26 @@
 //      meta registration and ticket import run exactly as they do for a local
 //      NSP. install() itself is untouched.
 //
-// Slice 4a: plain NSP only. A compressed entry (.ncz) is rejected up front
-// rather than half-installed — NCZ needs a pull-style reader, which is 4b.
+// Slice 4b adds NSZ: an .ncz entry cannot be written through as it arrives,
+// because NczDecompressor pulls by offset (and re-reads the header region) while
+// USB pushes. Such an entry is fed to an NczWindow while a worker thread pulls
+// through it and decompresses into the placeholder. See ncz_window.hpp for why a
+// pipe cannot serve that, and end_entry()/abort() below for the join ordering.
 
 #include "core/keys.hpp"
 #include "core/ncm.hpp"
 #include "install/installer.hpp"
+#include "install/ncz_window.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 #ifdef PLATFORM_SWITCH
 #include <switch.h>
+#else
+#include <thread>
 #endif
 
 namespace Install {
@@ -102,6 +109,21 @@ private:
     bool   end_entry();
     bool   fail(const std::string& why);
 
+    // ── NSZ (slice 4b) ───────────────────────────────────────────────────────
+    /// Spin up the window and decompression worker for the current .ncz entry.
+    bool ncz_begin();
+    /// Runs on the worker: size the placeholder from the NCZ header, create it,
+    /// then decompress into it. Pulls through m_ncz_win, which blocks until the
+    /// MTP thread has pushed far enough.
+    void ncz_worker();
+    /// Close the window and join the worker. Safe to call when not running, and
+    /// idempotent. `graceful` false means abandon (abort) rather than finish.
+    /// ALWAYS joins before the caller touches the placeholder — see abort().
+    void ncz_join(bool graceful);
+#ifdef PLATFORM_SWITCH
+    static void ncz_thread_entry(void* self);
+#endif
+
     Core::Ncm::Storage        m_storage;
     const Core::Keys::Keyset& m_keys;
     Progress&                 m_progress;
@@ -125,12 +147,28 @@ private:
     std::vector<uint8_t> m_tee;       // RAM copy of the current small entry
     std::vector<std::pair<std::string, std::vector<uint8_t>>> m_small;  // name -> bytes
 
+    // ── NSZ worker state (slice 4b) ──────────────────────────────────────────
+    // m_ncz_error is written by the worker and read by the MTP thread only after
+    // ncz_join(), which is a happens-before edge — no lock needed. Everything
+    // else here is touched by one thread at a time by the same argument.
+    std::unique_ptr<NczWindow> m_ncz_win;
+    std::string                m_ncz_error;
+    bool                       m_ncz_running = false;
+#ifndef PLATFORM_SWITCH
+    std::thread m_ncz_thread;
+#endif
+
 #ifdef PLATFORM_SWITCH
+    Thread            m_ncz_thread{};
     NcmContentStorage m_cs{};
     bool              m_have_cs = false;
     NcmContentId      m_cid{};
     NcmPlaceHolderId  m_ph{};
     uint64_t          m_ph_off = 0;
+    // The worker creates the placeholder (only it knows the decompressed size),
+    // so ownership cannot be inferred from m_entry_open as it can on the plain
+    // path. abort() consults this to decide whether there is anything to delete.
+    bool              m_ph_open = false;
 #endif
 };
 

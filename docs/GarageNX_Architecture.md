@@ -23,15 +23,28 @@
 ## 2. Repository Structure
 
 > **This tree is the original plan, not the current repo, and has drifted.** Known
-> divergences as of rev 3: `toolchain-pc.cmake` and the PC stub target were never
-> built (`source/stubs/` holds only a `.gitkeep`, and `toolchain-switch.cmake` is
-> the only toolchain file); `nsz_reader.{hpp,cpp}` shipped as `ncz.{hpp,cpp}`;
+> divergences as of rev 3: `nsz_reader.{hpp,cpp}` shipped as `ncz.{hpp,cpp}`;
 > `nca_writer.{hpp,cpp}` was never created — `stream_installer.cpp` calls the
 > libnx `ncm*` C functions directly; and the M6 files (`stream_installer`,
 > `overlap_buffer`, `mtp_data`, `mtp_server`, `rate_meter`, `net`, `keys`,
-> `ncz_window`) are absent below. `find source -type f` is the authority; this
-> section is intent. Trust it for *where a new module belongs*, not for what
-> exists.
+> `ncz_window`) are absent below, as is `tests/` (added rev 3).
+> `find source -type f` is the authority; this section is intent. Trust it for
+> *where a new module belongs*, not for what exists.
+>
+> **The PC stub build was REMOVED in rev 3 (Chief Architect ruling).** It had never
+> worked: the root `CMakeLists.txt` PC branch did `include_directories(... stubs)`
+> against a top-level `stubs/` that was never written (the repo had only an empty
+> `source/stubs/`), so `-DPLATFORM=PC` demanded SDL2 and then died on the first
+> libnx-touching `.cpp` in `SOURCES`. `PLATFORM_PC` was defined but never read by
+> any source. Ruled superfluous rather than repaired: hardware iteration is faster
+> than maintaining a second build of the app, and the transfer-and-test loop on
+> device is short. `toolchain-pc.cmake` never existed and was never needed
+> (`PLATFORM=PC` fell through to the host compiler). `PLATFORM` is retained with
+> `Switch` as its only accepted value and now hard-errors otherwise, so the option
+> cannot silently mislead. `source/stubs/` is deleted.
+>
+> This did **not** remove off-device testing, which never depended on it — see
+> *Testing reality*.
 
 ```
 GarageNX/
@@ -800,7 +813,7 @@ An `.nsz`/`.xcz` is **not** a zipped NSP. Each `.nca` inside the PFS0/HFS0 is re
 ---
 
 ### Milestone 6 — Services
-**Goal:** three network/USB transfer services (FTP, HTTP, MTP), each with a status screen, plus QR codes and access-point mode. Clean-room (no ftpd/libmicrohttpd/ftpsrv dependency) — FTP and HTTP are implemented directly on BSD sockets (libnx provides them). *Planned:* the same code would compile as POSIX for a PC stub build to enable loopback testing. **That stub build was never created**; all FTP/HTTP validation to date is on hardware.
+**Goal:** three network/USB transfer services (FTP, HTTP, MTP), each with a status screen, plus QR codes and access-point mode. Clean-room (no ftpd/libmicrohttpd/ftpsrv dependency) — FTP and HTTP are implemented directly on BSD sockets (libnx provides them). *Originally planned:* the same code would compile as POSIX for a PC stub build to enable loopback testing. **That stub build never worked and was removed in rev 3**; all FTP/HTTP validation is on hardware.
 
 **Shared foundation (implemented first):**
 - `nifm` is already initialized in `main`; **add `socketInitialize()`/`socketExit()`** to the startup/shutdown sequence (BSD socket backing).
@@ -845,8 +858,8 @@ The state machine was exercised off-device during development against synthetic 
 **Access-point mode — SHELVED (Chief Architect ruling).** No implementation path exists: `nifm` exposes no access-point API, and `ldn` is Nintendo's *local network communications* for Switch-to-Switch play — tied to a `local_communication_id` that must match the NACP, carrying game `advertise_data`, and not joinable by a PC. Ruled superfluous: WiFi is ubiquitous and the feature was a nice-to-have, never a requirement. The `config.ftp` AP fields (`start_access_point`, `ssid`, `password`, `use_5ghz`, `hidden_ssid`) are now dead and should be removed when the Settings screen lands in M8.
 
 **Testing reality (rev 3 — read this before trusting any "unit-tested" claim above).**
-This repo contains **no tests and no PC build**. There is no `toolchain-pc.cmake`,
-`source/stubs/` is empty, and until rev 3 there was no `tests/` directory. The
+As of rev 3 this repo has **no PC build of the app, by decision** (see §2), and
+until rev 3 had no tests at all. The
 off-device suites this document credited for OverlapBuffer, the StreamInstaller
 state machine, container sizing, and MTP wire format were written and run inside
 disposable AI-session containers during development and **were never committed**;
@@ -855,12 +868,27 @@ is real evidence but cannot catch a data race — a passing install proves the
 scheduler happened to cooperate that run. Treat the qualified claims above as
 development history, not as a live regression net.
 
-`tests/ncz_window_test.cpp` (rev 3) is the first committed test. It is plain C++17
-with asserts and no framework — the coding standard bars new third-party
-dependencies without an approved task — and builds against `source/` directly
-because `NczWindow` uses only `std::mutex`/`std::condition_variable`. Any future
-module that keeps its logic free of libnx (as `mtp_data` and `NczWindow` do
-deliberately) can be tested the same way with no stub layer.
+`tests/` (rev 3) is the first committed test suite, and it sidesteps the broken PC
+branch entirely. It is a **separate CMake project** with its own `project()`,
+configured against the host compiler and never included by the root:
+
+    cmake -S tests -B build-tests && cmake --build build-tests
+    ctest --test-dir build-tests --output-on-failure --repeat until-fail:20
+
+It is kept separate because the root defaults to the Switch toolchain (an
+aarch64 test binary cannot be run by the developer), because each harness has its
+own `main()` which would clash with `source/main.cpp`, and because the PC branch
+drags in SDL2 that the tests do not need. Each suite is built twice — once under
+ThreadSanitizer, once under Address/UB, since the two are mutually exclusive.
+Harnesses are plain C++17 with asserts and no framework (the coding standard bars
+new third-party dependencies without an approved task).
+
+**Admission rule:** a module belongs in `tests/` only if it is free of libnx.
+`mtp_data` and `NczWindow` are written that way deliberately, so they compile
+against `source/` with no stub layer. Anything touching `usb:ds`, `ncm`, `es`, or
+`fs` is hardware-only — do not stub those to manufacture a green light, because a
+passing stub proves only that the stub works. That boundary, not a PC build, is
+what determines whether something is testable.
 
 **Remaining M6 work:**
 - **Slice 4b:** NSZ stream install. **Window landed (rev 3): `install/ncz_window.{hpp,cpp}` + `tests/ncz_window_test.cpp`. StreamInstaller wiring outstanding.**
@@ -881,7 +909,22 @@ deliberately) can be tested the same way with no stub layer.
 
   Sync is `std::mutex`/`std::condition_variable`, following `OverlapBuffer`, which uses them unguarded on both targets and is hardware-validated — so `NczWindow` needs no `PLATFORM_SWITCH` guard and no libnx stub, and is testable off-device as-is. Decompression runs on its own thread; reuse `OverlapBuffer`'s thread and sink-callback shape rather than inventing a second one. Keys are not ambient — `Core::Keys::load()` then `available()` **before** the data phase (see below).
 
-  Remaining: drive `NczWindow` from `StreamInstaller` (decompression thread, `CreatePlaceHolder` sized from `get_decompressed_size()`, `write_cb` into the placeholder), then remove the `.ncz` rejection at `stream_installer.cpp:138`. Note `stream_installer.cpp:315` already sets `ce.is_ncz` on the `ContentEntry` handed to `install()`, and `install()` already decompresses NCZ for the file path (M5) — 4b supplies a `ReadFn`, it does not teach the installer about NCZ.
+  **StreamInstaller wiring (rev 3, NOT hardware-validated).** The `.ncz` rejection at `parse_table()` is gone, replaced by a keys precondition: an NSZ cannot be decompressed without `header_key`, so it is refused up front rather than partway through a multi-gigabyte transfer. The check reads `m_keys.has_header_key` on the keyset actually passed in, not the global `Core::Keys::available()`, which answers for whatever `load()` last cached and is not necessarily the same object.
+
+  `begin_entry()` cannot create the placeholder for an `.ncz` entry: it must be sized to the *decompressed* NCA, and at that moment not one byte has arrived. So creation moves onto the worker, which blocks in `NczWindow::read()` until the header region is in. Division of labour:
+
+  | Thread | Does |
+  |---|---|
+  | MTP | `begin_entry()` starts the worker; `write_entry()` pushes into the window (blocking = back-pressure onto USB); `end_entry()` calls `finish()`, joins, then `Register`s |
+  | Worker | `get_decompressed_size()` → `CreatePlaceHolder(dec_size)` → `decompress()` → `WritePlaceHolder` from `write_cb` |
+
+  Only one thread touches `m_cs` during an `.ncz` entry (the MTP thread pushes and nothing else), and `m_ncz_error`/`m_ph_open` cross threads only across the join, which is a happens-before edge. `write_cb`'s offset is the absolute NCA offset — `ncz.cpp` emits the verbatim `0x4000` header at 0 and body chunks at their true offsets — so it maps onto `WritePlaceHolder` with no cursor. `write_cb` also polls `m_progress.cancel`, which is how a UI cancel reaches a decompressor mid-NCA.
+
+  **`abort()` ordering is load-bearing.** A worker may be inside `ncmContentStorageWritePlaceHolder` at that instant, so: abort the window (any blocked `read()`/`push()` returns) → worker unwinds → **join** → *only then* delete the placeholder. Deleting first races the delete against a live write on a handle the worker still holds. `ncz_join()` no-ops when nothing runs, so the plain-NCA path is unaffected, and the destructor calls `abort()` as a backstop. `m_ph_open` is the authority for whether a placeholder exists — it can no longer be inferred from `m_entry_open`, because on this path the *worker* creates it and may not have got that far.
+
+  A `.cnmt.ncz` needs both paths: decompressed into a placeholder and registered, *and* teed to RAM as **compressed** bytes for `finish()`. That is correct — `ce.is_ncz` is set, `install()` decompresses it on the way in exactly as for a local NSZ, and RAM gives it the random access it needs. `install()` already handles NCZ for the file path (M5) and `stream_installer.cpp` already tagged `ce.is_ncz` — 4b supplies a `ReadFn`, it does not teach the installer about NCZ.
+
+  **Verification status: syntax only.** Both the Switch and PC paths compile clean under `-Wall -Wextra` (the Switch path against a transcribed libnx surface, in scratch — not committed). That catches typos and arity errors, nothing more; the check validates against a hand-written stand-in, so it is weaker than a real build. The stronger guarantee is that every libnx call mirrors an existing hardware-validated call site in the same file, and the thread creation copies `OverlapBuffer`'s exact shape (`0x2C`, `-2`; stack raised `0x8000` → `0x10000` for zstd's frame). **The join ordering and every `ncm` interaction are unproven until they run on hardware.**
 - **Slice 4c:** XCI/XCZ stream install. `StreamInstaller` parses PFS0 (NSP); an XCI is an HFS0 gamecard image and needs its own front-end. Currently rejected at `SendObjectInfo` with a clear message rather than mid-transfer.
 
 **Exit criteria:** FTP, HTTP, and MTP transfer modes functional; the network screens (FTP/HTTP) show a scannable address. MTP has no address to scan; access-point mode is shelved.
@@ -929,7 +972,7 @@ deliberately) can be tested the same way with no stub layer.
 - [ ] SD ↔ NAND move — validate against established practice before implementing
 - [ ] NRO forwarder template blob — source from ITotalJustice reference when implementing Milestone 7
 - [x] ~~NSZ decompression — confirm zstd block format specifics against nsz spec~~ **DONE (M5):** stream + block (`NCZBLOCK`) variants both handled; per-section re-encryption with absolute-offset persistent CTR context. See Milestone 5 notes.
-- [ ] **M6 sockets** — `socketInitialize()` must be added to startup (before any service) and `socketExit()` to shutdown; `nifm` is already initialized. FTP/HTTP are clean-room BSD-socket implementations (would compile as POSIX for a PC stub, but no such target exists — see *Testing reality*).
+- [ ] **M6 sockets** — `socketInitialize()` must be added to startup (before any service) and `socketExit()` to shutdown; `nifm` is already initialized. FTP/HTTP are clean-room BSD-socket implementations (the PC stub target was removed in rev 3; validation is on hardware).
 - [ ] **Date/time selectors** — `behavior.date_format` / `behavior.time_24h` exist and drive the clock + log names now; the settings-screen UI to pick them lands in M8 (currently `config.json`-editable).
 - [ ] GitHub browser — pagination handled via GitHub REST API (`Link` header); authenticated (token present) uses 5,000 req/hr, unauthenticated uses 60 req/hr with graceful rate-limit messaging in UI
 - [ ] Full `en.json` — to be completed key-by-key as each screen is implemented; must be 100% complete before v1.0.0
