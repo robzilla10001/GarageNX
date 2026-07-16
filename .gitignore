@@ -46,3 +46,4 @@ tags
 .aider*
 setup_github_remote.sh
 export_hex.py
+*.tgz
