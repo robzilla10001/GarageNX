@@ -72,7 +72,7 @@ std::vector<uint8_t> MtpServer::build_device_info() const {
     w.au16({});                       // PlaybackFormats
 
     w.str("GarageNX");                // Manufacturer
-    w.str("Nintendo Switch");         // Model
+    w.str("GarageNX MTP Responder");  // Model
     w.str(APP_VERSION);               // DeviceVersion
     w.str("0000000000000001");        // SerialNumber
     return w.data();
@@ -754,7 +754,7 @@ bool MtpServer::usb_init() {
     const u16 langs[1] = {0x0409};   // en-US
     if (R_FAILED(usbDsAddUsbLanguageStringDescriptor(nullptr, langs, 1))) { set_error("lang descriptor failed"); return false; }
     if (R_FAILED(usbDsAddUsbStringDescriptor(&iManufacturer, "GarageNX"))) { set_error("string descriptor failed"); return false; }
-    if (R_FAILED(usbDsAddUsbStringDescriptor(&iProduct, "Nintendo Switch"))) { set_error("string descriptor failed"); return false; }
+    if (R_FAILED(usbDsAddUsbStringDescriptor(&iProduct, "GarageNX MTP Responder"))) { set_error("string descriptor failed"); return false; }
     if (R_FAILED(usbDsAddUsbStringDescriptor(&iSerial, "0000000000000001"))) { set_error("string descriptor failed"); return false; }
 
     struct usb_device_descriptor dev = {
@@ -766,7 +766,13 @@ bool MtpServer::usb_init() {
         .bDeviceProtocol    = 0x00,
         .bMaxPacketSize0    = 0x40,
         .idVendor           = 0x057E,   // Nintendo
-        .idProduct          = 0x3000,
+        // 057e:201d is the id libmtp's device database knows as "Nintendo
+        // Switch / Switch Lite". Without it the host falls through to the
+        // generic PTP/camera backend (libgphoto2): the device mounts as
+        // gphoto2:// with a camera icon and storages named "store_XXXXXXXX",
+        // and mtp-detect reports no raw devices at all. This id is what puts us
+        // on the libmtp path.
+        .idProduct          = 0x201D,
         .bcdDevice          = 0x0100,
         .iManufacturer      = iManufacturer,
         .iProduct           = iProduct,
