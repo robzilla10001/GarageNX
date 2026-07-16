@@ -1,0 +1,46 @@
+# ─── Build output ─────────────────────────────────────────────────────────────
+.ai/
+build/
+build-pc/
+build-*/
+cmake-build-*/
+*.nro
+*.nso
+*.nacp
+*.elf
+*.map
+
+# CMake artifacts
+CMakeCache.txt
+CMakeLists.txt
+CMakeFiles/
+*.cmake
+Makefile
+compile_commands.json
+
+# Keep the README.txt notes, .gitkeep placeholders.
+!assets/icons/README.txt
+!assets/**/.gitkeep
+
+# ─── Editor / IDE ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# ─── Runtime / local data ─────────────────────────────────────────────────────
+# PC stub build writes its data here
+GarageNX_data/
+
+# ─── Misc ─────────────────────────────────────────────────────────────────────
+*.log
+*.tmp
+tags
+.cache/
+.aider*
+setup_github_remote.sh
+export_hex.py
