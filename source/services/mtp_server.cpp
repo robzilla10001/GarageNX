@@ -332,6 +332,18 @@ bool MtpServer::recv_install(uint32_t storage_id, const std::string& filename, u
 #ifdef PLATFORM_SWITCH
     const auto dest = (storage_id == kStorageNandInstall) ? Core::Ncm::Storage::BuiltIn
                                                           : Core::Ncm::Storage::SdCard;
+
+    // get() is only valid after load(); without this the installer receives an
+    // empty keyset and the CNMT fails to decrypt.
+    if (!Core::Keys::available()) Core::Keys::load();
+    if (!Core::Keys::available()) {
+        m_install_progress.reset();
+        m_install_progress.message = Core::Keys::requirement_message();
+        m_install_progress.push_log("ERROR: " + Core::Keys::requirement_message());
+        save_install_log(filename, false);
+        return false;
+    }
+
     m_install = std::make_unique<Install::StreamInstaller>(
         dest, Core::Keys::get(), m_install_progress);
 
@@ -626,6 +638,18 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
                         ": stream install currently accepts .nsp only");
                     send_response(Rc::InvalidParameter, tid);
                     break;
+                }
+
+                // Keys live in a singleton that must be load()ed before get()
+                // is valid — a service thread gets nothing for free. Check here
+                // rather than after the data phase, so a keyless console fails
+                // instantly instead of eating a multi-GB transfer first.
+                if (!Core::Keys::available()) {
+                    Core::Keys::load();
+                    if (!Core::Keys::available()) {
+                        send_response(Rc::AccessDenied, tid);
+                        break;
+                    }
                 }
                 m_pending_storage = storage;
                 m_pending_path    = filename;   // name only; nothing is written to a filesystem
