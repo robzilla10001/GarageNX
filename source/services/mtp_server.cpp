@@ -27,7 +27,7 @@ using namespace Services::Mtp;
 namespace {
 
 // StorageIDs are (physical << 16) | logical. Beyond the browsable SD card we
-// expose two write-only "drop zones": an NSP written to one is streamed straight
+// expose two write-only "drop zones": an NSP or NSZ written to one is streamed straight
 // into NCM instead of onto the filesystem, which is what lets a >4 GiB title
 // install to a FAT32 card. This mirrors how DBI presents install targets.
 constexpr uint32_t kStorageSd          = 0x00010001;
@@ -685,12 +685,21 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
                 // Reject what we cannot install *now*, before the data phase.
                 // Failing after the host has pushed several GB is both rude and
                 // (since the endpoint stops being drained) a hang.
+                //
+                // .nsz joined .nsp in slice 4b: an NSZ is a PFS0 exactly like an
+                // NSP, just with .ncz entries in place of .nca, so StreamInstaller
+                // parses the container identically and NczWindow handles the
+                // compressed entries. .xci/.xcz stay out — an XCI is HFS0 and
+                // needs its own front-end (slice 4c).
                 std::string low = filename;
                 for (auto& ch : low) ch = (char)tolower((unsigned char)ch);
-                const bool is_nsp = low.size() > 4 && low.compare(low.size()-4, 4, ".nsp") == 0;
-                if (!is_nsp) {
+                auto has_ext = [&low](const char* ext) {
+                    const size_t n = std::strlen(ext);
+                    return low.size() > n && low.compare(low.size() - n, n, ext) == 0;
+                };
+                if (!has_ext(".nsp") && !has_ext(".nsz")) {
                     m_install_progress.push_log("Rejected " + filename +
-                        ": stream install currently accepts .nsp only");
+                        ": stream install accepts .nsp and .nsz (.xci/.xcz not yet supported)");
                     send_response(Rc::InvalidParameter, tid);
                     break;
                 }
