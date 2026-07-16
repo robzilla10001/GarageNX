@@ -1,6 +1,6 @@
 # GarageNX — Architecture & Design Reference
 **Version:** 0.1.0-planning  
-**Last Updated:** 2026-07-08 (rev 2)  
+**Last Updated:** 2026-07-16 (rev 3)  
 **Status:** Living reference — Milestones 1–5 complete and hardware-validated; Milestone 6 (Services) in progress (shared net/service foundation + FTP server landed).
 
 ---
@@ -16,11 +16,22 @@
 | Platform SDK | libnx (latest devkitPro) |
 | Renderer | SDL2 + SDL2_ttf + SDL2_image |
 | Build system | CMake (devkitPro toolchain) |
-| License | MIT (FOSS, fork-friendly) |
+| License | AGPLv3 (§13 source disclosure via `APP_SOURCE_URL`) |
 
 ---
 
 ## 2. Repository Structure
+
+> **This tree is the original plan, not the current repo, and has drifted.** Known
+> divergences as of rev 3: `toolchain-pc.cmake` and the PC stub target were never
+> built (`source/stubs/` holds only a `.gitkeep`, and `toolchain-switch.cmake` is
+> the only toolchain file); `nsz_reader.{hpp,cpp}` shipped as `ncz.{hpp,cpp}`;
+> `nca_writer.{hpp,cpp}` was never created — `stream_installer.cpp` calls the
+> libnx `ncm*` C functions directly; and the M6 files (`stream_installer`,
+> `overlap_buffer`, `mtp_data`, `mtp_server`, `rate_meter`, `net`, `keys`,
+> `ncz_window`) are absent below. `find source -type f` is the authority; this
+> section is intent. Trust it for *where a new module belongs*, not for what
+> exists.
 
 ```
 GarageNX/
@@ -789,7 +800,7 @@ An `.nsz`/`.xcz` is **not** a zipped NSP. Each `.nca` inside the PFS0/HFS0 is re
 ---
 
 ### Milestone 6 — Services
-**Goal:** three network/USB transfer services (FTP, HTTP, MTP), each with a status screen, plus QR codes and access-point mode. Clean-room (no ftpd/libmicrohttpd/ftpsrv dependency) — FTP and HTTP are implemented directly on BSD sockets (libnx provides them; the same code compiles as POSIX for the PC stub build, enabling loopback testing).
+**Goal:** three network/USB transfer services (FTP, HTTP, MTP), each with a status screen, plus QR codes and access-point mode. Clean-room (no ftpd/libmicrohttpd/ftpsrv dependency) — FTP and HTTP are implemented directly on BSD sockets (libnx provides them). *Planned:* the same code would compile as POSIX for a PC stub build to enable loopback testing. **That stub build was never created**; all FTP/HTTP validation to date is on hardware.
 
 **Shared foundation (implemented first):**
 - `nifm` is already initialized in `main`; **add `socketInitialize()`/`socketExit()`** to the startup/shutdown sequence (BSD socket backing).
@@ -817,7 +828,9 @@ Unlike QR (where capping at v6 kept scope small) MTP has **no scope escape hatch
 
 **MTP host detection (hardware-learned).** The USB `idProduct` decides which host stack picks the device up. With an arbitrary id (`057e:3000`) libmtp's device database does not recognise it, so Linux falls through to the generic PTP/camera backend (libgphoto2): the device mounts as `gphoto2://`, shows a camera icon, names storages `store_XXXXXXXX` instead of using `StorageDescription`, and `mtp-detect` reports "No raw devices found". Using **`057e:201d`** — the id libmtp knows as *"Nintendo Switch / Switch Lite"*, and the one DBI uses — puts the device on the libmtp/`mtp://` path. `DeviceFriendlyName` (device property 0xD402) is also answered; without any device property a host falls back to the USB `iProduct` string for the device label.
 
-**64-bit object sizes (implemented, hardware validated ✓).** MTP's `ObjectCompressedSize` and the data-container length are both 32-bit, so a >4 GiB object arrives with `0xFFFFFFFF` in both — which would have silently capped a large stream install at 4 GiB, the very limit the feature exists to defeat. Rather than implement MTP object properties to recover a 64-bit size, `StreamInstaller::container_size()` derives the true length from the PFS0 entry table (64-bit and exact) and `recv_install` adopts it as soon as the header lands — well before a large transfer nears the 4 GiB mark. Unit-tested exact at 764 MB, just under 4 GiB, just over 4 GiB, and a 14 GiB multi-entry container. **Hardware validated ✓** — 232 MB, ~4 GB (the boundary that previously capped), and 4.8 GB all install and launch.
+**Transfer overlap (`services/overlap_buffer.{hpp,cpp}`, implemented).** The receive paths used to read a chunk from USB, write it to storage, then read the next — strictly alternating, so the bulk endpoint idled for the whole write and the storage idled for the whole read. Measured on hardware that cost about half the achievable rate (~18 MB/s installing vs ~36 MB/s for a plain copy over the same link). `OverlapBuffer` lends the caller one of two page-aligned buffers to fill while a worker thread drains the other. The sink is a callback, so the same class serves an NCM placeholder write, an `fwrite` to SD, or a future FTP/HTTP path; the thread primitive follows `NetworkService` (libnx `Thread` on Switch, `std::thread` on PC). `flush()` fences the worker before `finish()` touches the installer from the calling thread, so `StreamInstaller` needs no locking of its own. If the buffers or worker cannot be created the callers fall back to the original direct path rather than failing. Was exercised during development for byte-exact in-order delivery, single-chunk-in-flight (no buffer reuse under the worker), latched sink failure without deadlock, prompt destruction mid-flight, and a measured ~54% of serial time, clean under ThreadSanitizer and ASan/UBSan — but **that harness was never committed and no longer exists** (see *Testing reality* below). Only the hardware validation below is reproducible today. **Hardware validated ✓** — install throughput went from ~18 MB/s to 24-38 MB/s, i.e. parity with a plain file copy over the same link, so installing now costs essentially nothing over transferring. The remaining variance is the SD card, not the transport: a ~4 GB title runs high-30s while a 5 GB title drops to mid-20s, the signature of pseudo-SLC write-cache exhaustion, and a 350 MB title averages low-30s because the fixed finalisation cost (CNMT parse, meta registration, ticket import) does not scale with size. Further transport tuning would be chasing the card; the path is now storage-bound.
+
+**64-bit object sizes (implemented, hardware validated ✓).** MTP's `ObjectCompressedSize` and the data-container length are both 32-bit, so a >4 GiB object arrives with `0xFFFFFFFF` in both — which would have silently capped a large stream install at 4 GiB, the very limit the feature exists to defeat. Rather than implement MTP object properties to recover a 64-bit size, `StreamInstaller::container_size()` derives the true length from the PFS0 entry table (64-bit and exact) and `recv_install` adopts it as soon as the header lands — well before a large transfer nears the 4 GiB mark. Was checked during development at 764 MB, just under 4 GiB, just over 4 GiB, and a 14 GiB multi-entry container; **that harness was never committed** (see *Testing reality*). **Hardware validated ✓** — 232 MB, ~4 GB (the boundary that previously capped), and 4.8 GB all install and launch.
 
 **Keys are not ambient (hardware-learned).** `Core::Keys::get()` is only valid after `Core::Keys::load()` — the keyset lives in a singleton that nothing loads implicitly. The file-browser install path calls `load()` before `get()`; a service thread that skips it receives an *empty* keyset and the install fails at "failed to decrypt/parse: CNMT", long after the transfer has completed. Any new install entry point must `load()` first, and should check `Core::Keys::available()` **before** the data phase so a keyless console fails instantly instead of after a multi-GB transfer.
 
@@ -827,14 +840,49 @@ Unlike QR (where capping at v6 kept scope small) MTP has **no scope escape hatch
 
 The resolution turns on an existing property of `install()`: it **skips any NCA that is already registered, without ever calling `read()`**. So `StreamInstaller` parses the PFS0 header/table as it arrives (every entry's byte range is known before its data does), streams each NCA straight into an NCM placeholder and registers it as its last byte lands, and tees the small entries (`.cnmt.nca`, `.tik`, `.cert`) into RAM as they pass. `finish()` then hands the entry list to the **existing, hardware-validated `install()`** with those small entries served from RAM: every NCA hits the skip path, and meta registration plus ticket import run exactly as they do for a local NSP. **`install()` and `installer.hpp` are untouched** — the only change to the validated code was dropping `static` from `content_id_from_name` so both paths share one hex-decode rather than duplicating a security-relevant parse.
 
-The state machine is unit-tested off-device against synthetic PFS0 containers fed at chunk sizes of 1, 7, 64, 4096 and whole-file, verifying entry boundaries hold across arbitrary transfer splits, that the RAM tee is byte-exact, and that `.ncz` and bad magic are rejected rather than half-installed.
+The state machine was exercised off-device during development against synthetic PFS0 containers fed at chunk sizes of 1, 7, 64, 4096 and whole-file, verifying entry boundaries hold across arbitrary transfer splits, that the RAM tee is byte-exact, and that `.ncz` and bad magic are rejected rather than half-installed. **That harness was never committed** (see *Testing reality*); the behaviour is currently guarded only by hardware runs.
 
 **Access-point mode — SHELVED (Chief Architect ruling).** No implementation path exists: `nifm` exposes no access-point API, and `ldn` is Nintendo's *local network communications* for Switch-to-Switch play — tied to a `local_communication_id` that must match the NACP, carrying game `advertise_data`, and not joinable by a PC. Ruled superfluous: WiFi is ubiquitous and the feature was a nice-to-have, never a requirement. The `config.ftp` AP fields (`start_access_point`, `ssid`, `password`, `use_5ghz`, `hidden_ssid`) are now dead and should be removed when the Settings screen lands in M8.
 
+**Testing reality (rev 3 — read this before trusting any "unit-tested" claim above).**
+This repo contains **no tests and no PC build**. There is no `toolchain-pc.cmake`,
+`source/stubs/` is empty, and until rev 3 there was no `tests/` directory. The
+off-device suites this document credited for OverlapBuffer, the StreamInstaller
+state machine, container sizing, and MTP wire format were written and run inside
+disposable AI-session containers during development and **were never committed**;
+they are gone. Everything M1-M6 was ultimately validated on Switch hardware, which
+is real evidence but cannot catch a data race — a passing install proves the
+scheduler happened to cooperate that run. Treat the qualified claims above as
+development history, not as a live regression net.
+
+`tests/ncz_window_test.cpp` (rev 3) is the first committed test. It is plain C++17
+with asserts and no framework — the coding standard bars new third-party
+dependencies without an approved task — and builds against `source/` directly
+because `NczWindow` uses only `std::mutex`/`std::condition_variable`. Any future
+module that keeps its logic free of libnx (as `mtp_data` and `NczWindow` do
+deliberately) can be tested the same way with no stub layer.
+
 **Remaining M6 work:**
-- **Slice 4b:** NSZ stream install. Needs a producer/consumer ring buffer and an install thread, because the NCZ decompressor *pulls* through a `ReadFn` while USB *pushes*.
+- **Slice 4b:** NSZ stream install. **Window landed (rev 3): `install/ncz_window.{hpp,cpp}` + `tests/ncz_window_test.cpp`. StreamInstaller wiring outstanding.**
+
+  The conflict is not merely that the NCZ decompressor *pulls* while USB *pushes*; it pulls **by offset**:
+
+      using ReadFn = std::function<size_t(uint64_t offset_in_entry, void* buf, size_t len)>;
+
+  A plain producer/consumer pipe does **not** serve it, and the earlier "ring buffer + install thread" sketch is insufficient. Reading `ncz.cpp` establishes the real access pattern, which is worse than "the header is read twice":
+
+  - `get_decompressed_size()` reads `NczHeader` at `0x4000`, then the optional `NczBlockHeader`, then seeks **back to offset 0** for `0xC00` bytes. `begin_entry` must call it before `CreatePlaceHolder`, because the placeholder is sized to the *decompressed* NCA.
+  - `decompress()` then re-reads the entire region from scratch — offset 0 for `0x4000`, `0x4000` again, the section table, block header, block sizes — and finally sniffs 4 bytes of zstd magic at `compressed_start` before re-reading from `compressed_start` for real.
+  - Above `compressed_start` both paths advance strictly monotonically (block loop: `block_read_off += cmp_size`; stream loop: `src_off += got`). Verified line by line — this is what makes a forward window viable at all.
+
+  **`safe_read()` in `ncz.cpp` is `fn(off, buf, len) == len` — it does not loop on short reads.** So the window must serve a full request in one call, including one that straddles the prefix/window seam (a ~1 MB block read crossing the 8 MB prefix does exactly that). Short reads are legal only at end-of-stream.
+
+  The shape that fits is a **retained prefix + forward-only sliding window** (`NczWindow`): hold the first 8 MB of the entry in RAM for its lifetime and serve every re-read from it; serve everything above from a window that blocks until the MTP thread has pushed that far, and hard-fail a below-watermark read rather than return wrong bytes. The prefix is sized by bound, not by parsing: the re-read region ends at `compressed_start` = `0x4000 + sizeof(NczHeader) + 0x40 * total_sections + sizeof(NczBlockHeader) + 4 * total_blocks`, which is ~74 KB for a 14 GiB NCA at the typical 1 MB block exponent and ~3.6 MB in the pathological 16 KB-exponent case. 8 MB clears both with margin; sizing it exactly would mean duplicating `ncz.cpp`'s header parse for no gain. Without the prefix the whole NCZ would need buffering — precisely what stream install exists to avoid (FAT32's 4 GiB ceiling).
+
+  Sync is `std::mutex`/`std::condition_variable`, following `OverlapBuffer`, which uses them unguarded on both targets and is hardware-validated — so `NczWindow` needs no `PLATFORM_SWITCH` guard and no libnx stub, and is testable off-device as-is. Decompression runs on its own thread; reuse `OverlapBuffer`'s thread and sink-callback shape rather than inventing a second one. Keys are not ambient — `Core::Keys::load()` then `available()` **before** the data phase (see below).
+
+  Remaining: drive `NczWindow` from `StreamInstaller` (decompression thread, `CreatePlaceHolder` sized from `get_decompressed_size()`, `write_cb` into the placeholder), then remove the `.ncz` rejection at `stream_installer.cpp:138`. Note `stream_installer.cpp:315` already sets `ce.is_ncz` on the `ContentEntry` handed to `install()`, and `install()` already decompresses NCZ for the file path (M5) — 4b supplies a `ReadFn`, it does not teach the installer about NCZ.
 - **Slice 4c:** XCI/XCZ stream install. `StreamInstaller` parses PFS0 (NSP); an XCI is an HFS0 gamecard image and needs its own front-end. Currently rejected at `SendObjectInfo` with a clear message rather than mid-transfer.
-**Transfer overlap (`services/overlap_buffer.{hpp,cpp}`, implemented).** The receive paths used to read a chunk from USB, write it to storage, then read the next — strictly alternating, so the bulk endpoint idled for the whole write and the storage idled for the whole read. Measured on hardware that cost about half the achievable rate (~18 MB/s installing vs ~36 MB/s for a plain copy over the same link). `OverlapBuffer` lends the caller one of two page-aligned buffers to fill while a worker thread drains the other. The sink is a callback, so the same class serves an NCM placeholder write, an `fwrite` to SD, or a future FTP/HTTP path; the thread primitive follows `NetworkService` (libnx `Thread` on Switch, `std::thread` on PC). `flush()` fences the worker before `finish()` touches the installer from the calling thread, so `StreamInstaller` needs no locking of its own. If the buffers or worker cannot be created the callers fall back to the original direct path rather than failing. Unit-tested for byte-exact in-order delivery, single-chunk-in-flight (no buffer reuse under the worker), latched sink failure without deadlock, prompt destruction mid-flight, and a measured ~54% of serial time; clean under ThreadSanitizer and ASan/UBSan.
 
 **Exit criteria:** FTP, HTTP, and MTP transfer modes functional; the network screens (FTP/HTTP) show a scannable address. MTP has no address to scan; access-point mode is shelved.
 
@@ -881,7 +929,7 @@ The state machine is unit-tested off-device against synthetic PFS0 containers fe
 - [ ] SD ↔ NAND move — validate against established practice before implementing
 - [ ] NRO forwarder template blob — source from ITotalJustice reference when implementing Milestone 7
 - [x] ~~NSZ decompression — confirm zstd block format specifics against nsz spec~~ **DONE (M5):** stream + block (`NCZBLOCK`) variants both handled; per-section re-encryption with absolute-offset persistent CTR context. See Milestone 5 notes.
-- [ ] **M6 sockets** — `socketInitialize()` must be added to startup (before any service) and `socketExit()` to shutdown; `nifm` is already initialized. FTP/HTTP are clean-room BSD-socket implementations (compile as POSIX for the PC stub → loopback-testable).
+- [ ] **M6 sockets** — `socketInitialize()` must be added to startup (before any service) and `socketExit()` to shutdown; `nifm` is already initialized. FTP/HTTP are clean-room BSD-socket implementations (would compile as POSIX for a PC stub, but no such target exists — see *Testing reality*).
 - [ ] **Date/time selectors** — `behavior.date_format` / `behavior.time_24h` exist and drive the clock + log names now; the settings-screen UI to pick them lands in M8 (currently `config.json`-editable).
 - [ ] GitHub browser — pagination handled via GitHub REST API (`Link` header); authenticated (token present) uses 5,000 req/hr, unauthenticated uses 60 req/hr with graceful rate-limit messaging in UI
 - [ ] Full `en.json` — to be completed key-by-key as each screen is implemented; must be 100% complete before v1.0.0
