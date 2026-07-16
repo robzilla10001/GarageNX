@@ -15,10 +15,12 @@
 // network-specific API, only start/stop/status/last_error.
 
 #include "services/service_manager.hpp"
+#include "install/stream_installer.hpp"
 
 #include <atomic>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -98,6 +100,17 @@ private:
     std::string m_pending_path;
     uint64_t    m_pending_size  = 0;
     bool        m_pending_valid = false;
+
+    // ── Install storages ─────────────────────────────────────────────────────
+    // Writing an NSP to one of these streams it straight into NCM rather than
+    // onto the filesystem — no staging file, so the FAT32 4 GiB ceiling never
+    // applies. m_install is live only between SendObjectInfo and SendObject.
+    bool  storage_enabled(uint32_t storage_id) const;
+    bool  recv_install(uint32_t storage_id, const std::string& filename, uint64_t size);
+
+    std::unique_ptr<Install::StreamInstaller> m_install;
+    Install::Progress                         m_install_progress;
+    uint32_t                                  m_pending_storage = 0;
 
     // usb:ds requires page-aligned DMA buffers; these are allocated aligned.
     uint8_t* m_buf = nullptr;

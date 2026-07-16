@@ -40,6 +40,13 @@ constexpr uint16_t GetDevicePropDesc  = 0x1014;
 constexpr uint16_t GetDevicePropValue = 0x1015;
 }
 
+// ─── Device properties ───────────────────────────────────────────────────────
+namespace Prop {
+constexpr uint16_t DeviceFriendlyName = 0xD402;
+}
+/// PTP datatype code for a string property.
+constexpr uint16_t kTypeStr = 0xFFFF;
+
 // ─── Object formats ──────────────────────────────────────────────────────────
 namespace Fmt {
 constexpr uint16_t Undefined   = 0x3000;   // any file

@@ -276,7 +276,7 @@ static ParsedCnmt decrypt_and_parse_cnmt(const ReadFn& read_fn, uint64_t nca_siz
 
 // ── Content ID from hex name ──────────────────────────────────────────────────
 
-static bool content_id_from_name(const std::string& name, NcmContentId& out) {
+bool content_id_from_name(const std::string& name, NcmContentId& out) {
     // NCA names are "<32 hex chars>.nca" or "<32 hex chars>.cnmt.nca".
     if (name.size() < 32) return false;
     for (int i = 0; i < 0x10; ++i) {

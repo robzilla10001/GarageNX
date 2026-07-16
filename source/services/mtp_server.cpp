@@ -4,6 +4,8 @@
 #include "services/mtp_data.hpp"
 #include "core/storage.hpp"
 #include "core/fs.hpp"
+#include "core/keys.hpp"
+#include "config/config.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -19,15 +21,31 @@ using namespace Services::Mtp;
 
 namespace {
 
-// Only one storage in slice 1: the SD card. StorageIDs are (physical << 16) |
-// logical; 0x00010001 is the conventional "first physical, first logical".
-constexpr uint32_t kStorageSd = 0x00010001;
+// StorageIDs are (physical << 16) | logical. Beyond the browsable SD card we
+// expose two write-only "drop zones": an NSP written to one is streamed straight
+// into NCM instead of onto the filesystem, which is what lets a >4 GiB title
+// install to a FAT32 card. This mirrors how DBI presents install targets.
+constexpr uint32_t kStorageSd          = 0x00010001;
+constexpr uint32_t kStorageSdInstall   = 0x00020001;
+constexpr uint32_t kStorageNandInstall = 0x00030001;
+
+bool is_install_storage(uint32_t id) {
+    return id == kStorageSdInstall || id == kStorageNandInstall;
+}
 
 // usb:ds transfers must come from page-aligned memory. 1 MiB keeps future file
 // transfers from thrashing; slice 1 barely uses it.
 constexpr size_t kBufSize = 1024 * 1024;
 
 } // namespace
+
+bool MtpServer::storage_enabled(uint32_t id) const {
+    const auto& m = Config::get().mtp;
+    if (id == kStorageSd)          return m.sd_card;
+    if (id == kStorageSdInstall)   return m.sd_install;
+    if (id == kStorageNandInstall) return m.nand_install;
+    return false;
+}
 
 // ─── Datasets ────────────────────────────────────────────────────────────────
 
@@ -46,9 +64,10 @@ std::vector<uint8_t> MtpServer::build_device_info() const {
         Op::GetStorageIDs, Op::GetStorageInfo,
         Op::GetNumObjects, Op::GetObjectHandles, Op::GetObjectInfo, Op::GetObject,
         Op::SendObjectInfo, Op::SendObject, Op::DeleteObject,
+        Op::GetDevicePropDesc, Op::GetDevicePropValue,
     });
     w.au16({});                       // EventsSupported — none yet
-    w.au16({});                       // DevicePropertiesSupported
+    w.au16({Mtp::Prop::DeviceFriendlyName});   // DevicePropertiesSupported
     w.au16({});                       // CaptureFormats
     w.au16({});                       // PlaybackFormats
 
@@ -61,7 +80,22 @@ std::vector<uint8_t> MtpServer::build_device_info() const {
 
 std::vector<uint8_t> MtpServer::build_storage_info(uint32_t storage_id) const {
     Writer w;
-    if (storage_id != kStorageSd) return w.data();
+    if (!storage_enabled(storage_id)) return w.data();
+
+    if (is_install_storage(storage_id)) {
+        const bool nand = (storage_id == kStorageNandInstall);
+        const Core::Storage::SpaceInfo sp = nand ? Core::Storage::nand_user()
+                                                 : Core::Storage::sd_card();
+        w.u16(0x0003);                     // StorageType: FixedRAM — not removable media
+        w.u16(0x0002);                     // FilesystemType: GenericHierarchical
+        w.u16(0x0000);                     // AccessCapability: read-write (hosts refuse to write otherwise)
+        w.u64(sp.total_bytes);
+        w.u64(sp.free_bytes);
+        w.u32(0xFFFFFFFF);
+        w.str(nand ? "Install to NAND" : "Install to SD");   // StorageDescription
+        w.str(nand ? "NANDINSTALL" : "SDINSTALL");            // VolumeIdentifier
+        return w.data();
+    }
 
     const Core::Storage::SpaceInfo sd = Core::Storage::sd_card();
 
@@ -72,7 +106,7 @@ std::vector<uint8_t> MtpServer::build_storage_info(uint32_t storage_id) const {
     w.u64(sd.free_bytes);             // FreeSpaceInBytes
     w.u32(0xFFFFFFFF);                // FreeSpaceInObjects: not tracked
     w.str("SD Card");                 // StorageDescription
-    w.str("");                        // VolumeIdentifier
+    w.str("SDCARD");                  // VolumeIdentifier
     return w.data();
 }
 
@@ -253,6 +287,67 @@ bool MtpServer::recv_file_data(const std::string& vfs_path, uint64_t expected) {
 #endif
 }
 
+
+// Stream an NSP arriving over USB straight into NCM. Nothing touches the
+// filesystem, so a title larger than 4 GiB installs fine to a FAT32 card — the
+// bytes go from the bulk endpoint into a placeholder and never exist as a file.
+bool MtpServer::recv_install(uint32_t storage_id, const std::string& filename, uint64_t size) {
+#ifdef PLATFORM_SWITCH
+    const auto dest = (storage_id == kStorageNandInstall) ? Core::Ncm::Storage::BuiltIn
+                                                          : Core::Ncm::Storage::SdCard;
+    m_install = std::make_unique<Install::StreamInstaller>(
+        dest, Core::Keys::get(), m_install_progress);
+
+    if (!m_install->begin(filename, size)) { m_install.reset(); return false; }
+
+    // First transfer carries the data-container header plus the first payload.
+    size_t got = 0;
+    if (!ep_read(m_buf, m_buf_size, &got, 10000000000ULL)) { m_install->abort(); m_install.reset(); return false; }
+    if (got < Mtp::kHeaderSize) { m_install->abort(); m_install.reset(); return false; }
+
+    Mtp::Header h;
+    if (!parse_header(m_buf, got, h) || h.type != Mtp::Type::Data) {
+        m_install->abort(); m_install.reset(); return false;
+    }
+    const uint64_t payload = (h.length == 0xFFFFFFFFu) ? size
+                                                       : (h.length - Mtp::kHeaderSize);
+
+    uint64_t fed = 0;
+    size_t first = got - Mtp::kHeaderSize;
+    if (first > payload) first = (size_t)payload;
+    if (first > 0 && !m_install->feed(m_buf + Mtp::kHeaderSize, first)) {
+        m_install->abort(); m_install.reset(); return false;
+    }
+    fed += first;
+    m_bytes_recv.fetch_add(got);
+
+    while (fed < payload && !should_stop()) {
+        if (!ep_read(m_buf, m_buf_size, &got, 10000000000ULL)) break;
+        if (got == 0) break;
+        size_t take = got;
+        if (fed + take > payload) take = (size_t)(payload - fed);   // ignore ZLP/padding
+        if (!m_install->feed(m_buf, take)) { m_install->abort(); m_install.reset(); return false; }
+        m_bytes_recv.fetch_add(got);
+        fed += take;
+    }
+
+    if (fed != payload) {
+        // Truncated transfer: drop the open placeholder rather than registering
+        // a half-written NCA.
+        m_install->abort();
+        m_install.reset();
+        return false;
+    }
+
+    const bool ok = m_install->finish();
+    m_install.reset();
+    return ok;
+#else
+    (void)storage_id; (void)filename; (void)size;
+    return false;
+#endif
+}
+
 // ─── Dispatch ────────────────────────────────────────────────────────────────
 
 bool MtpServer::send_response(uint16_t code, uint32_t tid,
@@ -327,8 +422,12 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             break;
 
         case Op::GetStorageIDs: {
+            std::vector<uint32_t> ids;
+            if (storage_enabled(kStorageSd))          ids.push_back(kStorageSd);
+            if (storage_enabled(kStorageSdInstall))   ids.push_back(kStorageSdInstall);
+            if (storage_enabled(kStorageNandInstall)) ids.push_back(kStorageNandInstall);
             Writer w;
-            w.au32({kStorageSd});
+            w.au32(ids);
             if (send_data(Op::GetStorageIDs, tid, w.data()))
                 send_response(Rc::Ok, tid);
             break;
@@ -349,6 +448,17 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             if (c.nparams < 1) { send_response(Rc::InvalidParameter, tid); break; }
             // param[0] storage (0xFFFFFFFF = any), param[1] format filter,
             // param[2] parent handle.
+            if (is_install_storage(c.param[0])) {
+                // Write-only drop zone: nothing to enumerate.
+                if (c.hdr.code == Op::GetNumObjects) {
+                    const uint32_t zero = 0;
+                    send_response(Rc::Ok, tid, &zero, 1);
+                } else {
+                    Writer w; w.au32({});
+                    if (send_data(Op::GetObjectHandles, tid, w.data())) send_response(Rc::Ok, tid);
+                }
+                break;
+            }
             if (c.param[0] != kStorageSd && c.param[0] != 0xFFFFFFFF) {
                 send_response(Rc::InvalidStorageId, tid); break;
             }
@@ -412,7 +522,7 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             // dataset naming the object; SendObject supplies the bytes after.
             const uint32_t storage = (c.nparams >= 1) ? c.param[0] : kStorageSd;
             uint32_t parent        = (c.nparams >= 2) ? c.param[1] : Mtp::kRootParent;
-            if (storage != kStorageSd && storage != 0) { send_response(Rc::InvalidStorageId, tid); break; }
+            if (storage != 0 && !storage_enabled(storage)) { send_response(Rc::InvalidStorageId, tid); break; }
 
             std::vector<uint8_t> data;
             if (!read_data_container(data)) { send_response(Rc::IncompleteTransfer, tid); break; }
@@ -444,6 +554,19 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
                 send_response(Rc::InvalidParameter, tid); break;
             }
 
+            // An install storage takes the file into NCM, not onto disk.
+            if (is_install_storage(storage)) {
+                if (fmt == Mtp::Fmt::Association) { send_response(Rc::AccessDenied, tid); break; }
+                m_pending_storage = storage;
+                m_pending_path    = filename;   // name only; nothing is written to a filesystem
+                m_pending_size    = comp_size;
+                m_pending_valid   = true;
+                const uint32_t h = intern("install:" + filename);
+                const uint32_t rp[3] = {storage, Mtp::kRootParent, h};
+                send_response(Rc::Ok, tid, rp, 3);
+                break;
+            }
+
             std::string dir;
             if (parent == Mtp::kRootParent || parent == 0) {
                 dir = "sdmc:/";
@@ -453,6 +576,7 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
                 dir = *pp;
             }
             const std::string dest = Fs::join(dir, filename);
+            m_pending_storage = storage;
 
             if (fmt == Mtp::Fmt::Association) {
                 // A folder is complete at SendObjectInfo time; no SendObject follows.
@@ -478,10 +602,16 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             // Must be preceded by SendObjectInfo — the spec has no other way to
             // know where the bytes belong.
             if (!m_pending_valid) { send_response(Rc::GeneralError, tid); break; }
-            const std::string dest = m_pending_path;
-            const uint64_t    size = m_pending_size;
+            const std::string dest    = m_pending_path;
+            const uint64_t    size    = m_pending_size;
+            const uint32_t    storage = m_pending_storage;
             m_pending_valid = false;   // one SendObject per SendObjectInfo
-            send_response(recv_file_data(dest, size) ? Rc::Ok : Rc::IncompleteTransfer, tid);
+
+            if (is_install_storage(storage)) {
+                send_response(recv_install(storage, dest, size) ? Rc::Ok : Rc::GeneralError, tid);
+            } else {
+                send_response(recv_file_data(dest, size) ? Rc::Ok : Rc::IncompleteTransfer, tid);
+            }
             break;
         }
 
@@ -493,6 +623,34 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             const bool ok = Fs::is_directory(path) ? Fs::remove_directory_recursive(path)
                                                    : Fs::remove_file(path);
             send_response(ok ? Rc::Ok : Rc::AccessDenied, tid);
+            break;
+        }
+
+
+        case Op::GetDevicePropDesc: {
+            if (c.nparams < 1 || c.param[0] != Mtp::Prop::DeviceFriendlyName) {
+                send_response(Rc::ParameterNotSupported, tid); break;
+            }
+            Writer w;
+            w.u16(Mtp::Prop::DeviceFriendlyName);
+            w.u16(Mtp::kTypeStr);      // DataType: string
+            w.u8(0);                   // GetSet: read-only
+            w.str("GarageNX");         // DefaultValue
+            w.str("GarageNX");         // CurrentValue
+            w.u8(0);                   // FormFlag: none
+            if (send_data(Op::GetDevicePropDesc, tid, w.data()))
+                send_response(Rc::Ok, tid);
+            break;
+        }
+
+        case Op::GetDevicePropValue: {
+            if (c.nparams < 1 || c.param[0] != Mtp::Prop::DeviceFriendlyName) {
+                send_response(Rc::ParameterNotSupported, tid); break;
+            }
+            Writer w;
+            w.str("GarageNX");
+            if (send_data(Op::GetDevicePropValue, tid, w.data()))
+                send_response(Rc::Ok, tid);
             break;
         }
 
