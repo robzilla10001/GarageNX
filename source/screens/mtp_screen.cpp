@@ -10,6 +10,7 @@
 #include "ui/widgets.hpp"
 #include "ui/input.hpp"
 
+#include <algorithm>
 #include <cstdio>
 
 void MTPScreen::start_server() {
@@ -96,9 +97,33 @@ void MTPScreen::draw() {
         }
         y += 44;
 
-        Widgets::draw_text(cx, y, Lang::t("mtp.hint_connect"),
-                           Font::Size::Small, Font::Weight::Regular, Theme::Token::FgSecondary);
-        y += 28;
+        // Surface the installer. A stream install has no overlay of its own, so
+        // without this a failure is just an opaque host-side error.
+        const auto& ip = m_server->install_progress();
+        const std::string msg = ip.message;
+        if (m_server->installing() || !msg.empty()) {
+            const auto lines = ip.log_snapshot();
+            const int show = (int)std::min<size_t>(lines.size(), 4);
+            for (int i = 0; i < show; i++) {
+                const std::string& raw = lines[lines.size() - show + i];
+                const bool err = raw.rfind("ERROR", 0) == 0;
+                std::string ln = raw;
+                if (ln.size() > 92) ln = ln.substr(0, 89) + "...";
+                Widgets::draw_text(cx, y, ln, Font::Size::Small, Font::Weight::Regular,
+                                   err ? Theme::Token::AccentDanger : Theme::Token::FgSecondary);
+                y += 20;
+            }
+            if (!msg.empty()) {
+                Widgets::draw_text(cx, y, msg, Font::Size::Small, Font::Weight::Bold,
+                                   ip.success.load() ? Theme::Token::AccentOk
+                                                     : Theme::Token::AccentDanger);
+                y += 24;
+            }
+        } else {
+            Widgets::draw_text(cx, y, Lang::t("mtp.hint_connect"),
+                               Font::Size::Small, Font::Weight::Regular, Theme::Token::FgSecondary);
+            y += 28;
+        }
 
         // AGPLv3 section 13: users interacting with this service must be
         // offered its corresponding source.

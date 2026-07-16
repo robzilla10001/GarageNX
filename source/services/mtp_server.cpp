@@ -6,7 +6,11 @@
 #include "core/fs.hpp"
 #include "core/keys.hpp"
 #include "config/config.hpp"
+#include "core/datetime.hpp"
 
+#include <SDL2/SDL.h>
+
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -288,6 +292,39 @@ bool MtpServer::recv_file_data(const std::string& vfs_path, uint64_t expected) {
 }
 
 
+// Persist the install log. A stream install has no on-screen overlay to scroll
+// back through, so the file is the only forensic record of why it failed.
+void MtpServer::save_install_log(const std::string& filename, bool ok) {
+    const std::string dir = Config::get().paths.log_folder;
+    if (!dir.empty() && !Fs::exists(dir)) Fs::make_directory(dir);
+    const std::string path = (dir.empty() ? std::string("sdmc:/switch/GarageNX/logs") : dir)
+                           + "/" + Core::DateTime::log_stamp_now() + "_mtp.log";
+    FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f) return;
+    std::fprintf(f, "GarageNX MTP stream install — %s\n",
+                 Core::DateTime::clock_string_now().c_str());
+    std::fprintf(f, "Source: %s\nResult: %s\n\n", filename.c_str(), ok ? "SUCCESS" : "FAILED");
+    for (const auto& line : m_install_progress.log_snapshot())
+        std::fprintf(f, "%s\n", line.c_str());
+    if (!m_install_progress.message.empty())
+        std::fprintf(f, "\n> %s\n", m_install_progress.message.c_str());
+    std::fclose(f);
+    SDL_Log("MTP: install log -> %s", path.c_str());
+}
+
+void MtpServer::drain_data(uint64_t remaining) {
+#ifdef PLATFORM_SWITCH
+    size_t got = 0;
+    while (remaining > 0 && !should_stop()) {
+        if (!ep_read(m_buf, m_buf_size, &got, 10000000000ULL)) break;
+        if (got == 0) break;
+        remaining -= (got < remaining) ? got : remaining;
+    }
+#else
+    (void)remaining;
+#endif
+}
+
 // Stream an NSP arriving over USB straight into NCM. Nothing touches the
 // filesystem, so a title larger than 4 GiB installs fine to a FAT32 card — the
 // bytes go from the bulk endpoint into a placeholder and never exist as a file.
@@ -298,7 +335,11 @@ bool MtpServer::recv_install(uint32_t storage_id, const std::string& filename, u
     m_install = std::make_unique<Install::StreamInstaller>(
         dest, Core::Keys::get(), m_install_progress);
 
-    if (!m_install->begin(filename, size)) { m_install.reset(); return false; }
+    m_installing.store(true);
+    if (!m_install->begin(filename, size)) {
+        save_install_log(filename, false);
+        m_install.reset(); m_installing.store(false); return false;
+    }
 
     // First transfer carries the data-container header plus the first payload.
     size_t got = 0;
@@ -316,7 +357,11 @@ bool MtpServer::recv_install(uint32_t storage_id, const std::string& filename, u
     size_t first = got - Mtp::kHeaderSize;
     if (first > payload) first = (size_t)payload;
     if (first > 0 && !m_install->feed(m_buf + Mtp::kHeaderSize, first)) {
-        m_install->abort(); m_install.reset(); return false;
+        m_install->abort();
+        save_install_log(filename, false);
+        m_install.reset(); m_installing.store(false);
+        drain_data(payload - first);   // let the host finish; do not wedge it
+        return false;
     }
     fed += first;
     m_bytes_recv.fetch_add(got);
@@ -326,7 +371,13 @@ bool MtpServer::recv_install(uint32_t storage_id, const std::string& filename, u
         if (got == 0) break;
         size_t take = got;
         if (fed + take > payload) take = (size_t)(payload - fed);   // ignore ZLP/padding
-        if (!m_install->feed(m_buf, take)) { m_install->abort(); m_install.reset(); return false; }
+        if (!m_install->feed(m_buf, take)) {
+            m_install->abort();
+            save_install_log(filename, false);
+            m_install.reset(); m_installing.store(false);
+            drain_data(payload - fed - take);
+            return false;
+        }
         m_bytes_recv.fetch_add(got);
         fed += take;
     }
@@ -334,13 +385,19 @@ bool MtpServer::recv_install(uint32_t storage_id, const std::string& filename, u
     if (fed != payload) {
         // Truncated transfer: drop the open placeholder rather than registering
         // a half-written NCA.
+        m_install_progress.push_log("ERROR: transfer ended early (" +
+            std::to_string(fed) + " of " + std::to_string(payload) + " bytes)");
         m_install->abort();
+        save_install_log(filename, false);
         m_install.reset();
+        m_installing.store(false);
         return false;
     }
 
     const bool ok = m_install->finish();
+    save_install_log(filename, ok);
     m_install.reset();
+    m_installing.store(false);
     return ok;
 #else
     (void)storage_id; (void)filename; (void)size;
@@ -557,6 +614,19 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             // An install storage takes the file into NCM, not onto disk.
             if (is_install_storage(storage)) {
                 if (fmt == Mtp::Fmt::Association) { send_response(Rc::AccessDenied, tid); break; }
+
+                // Reject what we cannot install *now*, before the data phase.
+                // Failing after the host has pushed several GB is both rude and
+                // (since the endpoint stops being drained) a hang.
+                std::string low = filename;
+                for (auto& ch : low) ch = (char)tolower((unsigned char)ch);
+                const bool is_nsp = low.size() > 4 && low.compare(low.size()-4, 4, ".nsp") == 0;
+                if (!is_nsp) {
+                    m_install_progress.push_log("Rejected " + filename +
+                        ": stream install currently accepts .nsp only");
+                    send_response(Rc::InvalidParameter, tid);
+                    break;
+                }
                 m_pending_storage = storage;
                 m_pending_path    = filename;   // name only; nothing is written to a filesystem
                 m_pending_size    = comp_size;

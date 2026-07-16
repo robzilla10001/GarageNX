@@ -41,6 +41,10 @@ public:
     /// True between OpenSession and CloseSession.
     bool     session_open()   const { return m_session.load(); }
     int      request_count()  const { return (int)m_requests.load(); }
+    /// Live install state, so the screen can show what the installer is doing
+    /// instead of leaving a failed transfer as an opaque host-side error.
+    const Install::Progress& install_progress() const { return m_install_progress; }
+    bool     installing()     const { return m_installing.load(); }
     uint64_t bytes_sent()     const { return m_bytes_sent.load(); }
     uint64_t bytes_recv()     const { return m_bytes_recv.load(); }
 
@@ -108,6 +112,14 @@ private:
     bool  storage_enabled(uint32_t storage_id) const;
     bool  recv_install(uint32_t storage_id, const std::string& filename, uint64_t size);
 
+    // Read and discard the rest of a data phase. A host that is mid-send blocks
+    // forever if the device simply stops reading, so every early exit has to
+    // consume what is still coming before answering.
+    void  drain_data(uint64_t remaining);
+
+    void save_install_log(const std::string& filename, bool ok);
+
+    std::atomic<bool>                        m_installing{false};
     std::unique_ptr<Install::StreamInstaller> m_install;
     Install::Progress                         m_install_progress;
     uint32_t                                  m_pending_storage = 0;
