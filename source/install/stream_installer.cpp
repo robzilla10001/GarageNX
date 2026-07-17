@@ -51,12 +51,10 @@ bool StreamInstaller::fail(const std::string& why) {
 bool StreamInstaller::begin(const std::string& filename, uint64_t total_size) {
     m_filename = filename;
     m_total    = total_size;
-    m_phase    = Phase::Header;
     m_pos      = 0;
     m_cur      = 0;
     m_entry_open = false;
-    m_hdr.clear();
-    m_table.clear();
+    m_blob.clear();
     m_entries.clear();
     m_small.clear();
     m_container_size = 0;
@@ -68,6 +66,10 @@ bool StreamInstaller::begin(const std::string& filename, uint64_t total_size) {
     m_progress.push_log(std::string("Target: ") +
         (m_storage == Core::Ncm::Storage::SdCard ? "SD card" : "internal (NAND)"));
 
+    // Arm the first collection. An XCI front-end (4c) starts instead at
+    // want(0x100, 4, Step::XciMagic) — the only difference is which step runs.
+    if (!want(0, kPfs0HeaderSize, Step::Pfs0Header)) return false;
+
 #ifdef PLATFORM_SWITCH
     const NcmStorageId sid = (m_storage == Core::Ncm::Storage::SdCard)
                            ? NcmStorageId_SdCard : NcmStorageId_BuiltInUser;
@@ -78,35 +80,67 @@ bool StreamInstaller::begin(const std::string& filename, uint64_t total_size) {
     return true;
 }
 
-// ─── PFS0 header ─────────────────────────────────────────────────────────────
+// ─── The collector ───────────────────────────────────────────────────────────
+//
+// One rule: collect N bytes at absolute offset X, then run step S, discarding
+// everything in between. PFS0 is two contiguous steps; XCI (4c) is four
+// scattered ones over the same machinery.
 
-bool StreamInstaller::parse_header() {
-    if (std::memcmp(m_hdr.data(), "PFS0", 4) != 0)
-        return fail("Not an NSP (bad PFS0 magic)");
+bool StreamInstaller::want(uint64_t off, size_t len, Step step) {
+    // A stream cannot rewind. Asking for bytes that have already gone past is a
+    // caller bug — a step that computed an offset wrongly — not a runtime
+    // condition, so it is refused here rather than silently mis-collected.
+    if (off < m_pos)
+        return fail("Internal: collector asked to rewind to an earlier offset");
 
-    const uint32_t count = rd32(m_hdr.data() + 4);
-    const uint32_t sts   = rd32(m_hdr.data() + 8);
-    if (count == 0 || count > 4096) return fail("PFS0: implausible file count");
-
-    m_table_size = (size_t)count * kPfs0EntrySize + sts;
-    m_table.clear();
-    m_table.reserve(m_table_size);
-    m_phase = Phase::Table;
+    m_want_off = off;
+    m_want_len = len;
+    m_step     = step;
+    m_blob.clear();
+    m_blob.reserve(len);
+    m_phase = Phase::Collect;
     return true;
 }
 
-bool StreamInstaller::parse_table() {
-    const uint32_t count = rd32(m_hdr.data() + 4);
-    const uint32_t sts   = rd32(m_hdr.data() + 8);
+bool StreamInstaller::run_step() {
+    switch (m_step) {
+        case Step::Pfs0Header: return parse_pfs0_header();
+        case Step::Pfs0Table:  return parse_pfs0_table();
+    }
+    return fail("Internal: unknown collector step");
+}
+
+// ─── PFS0 front-end ──────────────────────────────────────────────────────────
+
+bool StreamInstaller::parse_pfs0_header() {
+    if (std::memcmp(m_blob.data(), "PFS0", 4) != 0)
+        return fail("Not an NSP (bad PFS0 magic)");
+
+    // Stashed, not re-read later: by the time the table is parsed, m_blob holds
+    // the table, not this header. See the members' comment in the header file.
+    m_pfs0_count = rd32(m_blob.data() + 4);
+    m_pfs0_sts   = rd32(m_blob.data() + 8);
+    if (m_pfs0_count == 0 || m_pfs0_count > 4096)
+        return fail("PFS0: implausible file count");
+
+    // The table follows the header immediately.
+    const size_t table_size = (size_t)m_pfs0_count * kPfs0EntrySize + m_pfs0_sts;
+    return want(kPfs0HeaderSize, table_size, Step::Pfs0Table);
+}
+
+bool StreamInstaller::parse_pfs0_table() {
+    const uint32_t count    = m_pfs0_count;
+    const uint32_t sts      = m_pfs0_sts;
     const size_t   names_at = (size_t)count * kPfs0EntrySize;
 
-    // Data begins right after the header, entry table and string table.
-    const uint64_t data_start = kPfs0HeaderSize + m_table_size;
+    // Data begins right after the header, entry table and string table — which
+    // is exactly where this collection ends.
+    const uint64_t data_start = m_want_off + m_want_len;
 
     m_entries.clear();
     m_entries.reserve(count);
     for (uint32_t i = 0; i < count; i++) {
-        const uint8_t* e = m_table.data() + (size_t)i * kPfs0EntrySize;
+        const uint8_t* e = m_blob.data() + (size_t)i * kPfs0EntrySize;
         StreamEntry se;
         se.abs_off = data_start + rd64(e);
         se.size    = rd64(e + 8);
@@ -115,7 +149,7 @@ bool StreamInstaller::parse_table() {
 
         // The string table is host-supplied: scan for the terminator without
         // running past the table (strnlen is not available on this toolchain).
-        const char*  np     = (const char*)m_table.data() + names_at + noff;
+        const char*  np     = (const char*)m_blob.data() + names_at + noff;
         const size_t maxlen = sts - noff;
         size_t nlen = 0;
         while (nlen < maxlen && np[nlen] != '\0') nlen++;
@@ -130,6 +164,19 @@ bool StreamInstaller::parse_table() {
         m_entries.push_back(std::move(se));
     }
 
+    // A PFS0's last entry ends at the file's end, so its table yields the exact
+    // container size. This is the one part of the tail that is format-specific:
+    // an XCI continues past `secure` into gamecard padding and must report 0.
+    uint64_t csz = data_start;
+    for (const auto& e : m_entries)
+        if (e.abs_end() > csz) csz = e.abs_end();
+
+    return finalize_entries(csz);
+}
+
+// ─── Format-independent tail ─────────────────────────────────────────────────
+
+bool StreamInstaller::finalize_entries(uint64_t container_size) {
     // The stream can only go forwards, so the entries must be walked in the
     // order their bytes actually arrive — the table is not required to be sorted.
     std::sort(m_entries.begin(), m_entries.end(),
@@ -154,11 +201,7 @@ bool StreamInstaller::parse_table() {
             : "NSZ install needs prod.keys: " + why);
     }
 
-    // The container ends after its last entry. Derived from 64-bit PFS0 fields,
-    // so this stays exact where MTP's 32-bit size fields cannot.
-    m_container_size = data_start;
-    for (const auto& e : m_entries)
-        if (e.abs_end() > m_container_size) m_container_size = e.abs_end();
+    m_container_size = container_size;
 
     int ncas = 0;
     for (const auto& e : m_entries) if (e.is_nca) ncas++;
@@ -319,18 +362,21 @@ size_t StreamInstaller::feed_data(const uint8_t* data, size_t len) {
 bool StreamInstaller::feed(const uint8_t* data, size_t len) {
     while (len > 0) {
         switch (m_phase) {
-            case Phase::Header: {
-                const size_t take = std::min(kPfs0HeaderSize - m_hdr.size(), len);
-                m_hdr.insert(m_hdr.end(), data, data + take);
+            case Phase::Collect: {
+                // Bytes before the window belong to no step: drop them as they
+                // pass. PFS0's two collections are contiguous so this never
+                // fires; XCI's are not, and it is how the gamecard header, the
+                // root HFS0 and the update/normal partitions discard themselves.
+                if (m_pos < m_want_off) {
+                    const size_t drop =
+                        (size_t)std::min<uint64_t>(m_want_off - m_pos, len);
+                    data += drop; len -= drop; m_pos += drop;
+                    break;
+                }
+                const size_t take = std::min(m_want_len - m_blob.size(), len);
+                m_blob.insert(m_blob.end(), data, data + take);
                 data += take; len -= take; m_pos += take;
-                if (m_hdr.size() == kPfs0HeaderSize && !parse_header()) return false;
-                break;
-            }
-            case Phase::Table: {
-                const size_t take = std::min(m_table_size - m_table.size(), len);
-                m_table.insert(m_table.end(), data, data + take);
-                data += take; len -= take; m_pos += take;
-                if (m_table.size() == m_table_size && !parse_table()) return false;
+                if (m_blob.size() == m_want_len && !run_step()) return false;
                 break;
             }
             case Phase::Data: {

@@ -79,18 +79,42 @@ public:
     /// True once every entry has been consumed.
     bool complete() const { return m_phase == Phase::Done; }
 
-    /// The container's true size in bytes, derived from the PFS0 header — 0
-    /// until the header and table have arrived. This is the authority for how
-    /// much to read: MTP's ObjectCompressedSize and data-container length are
-    /// both 32-bit and carry 0xFFFFFFFF for anything over 4 GiB, whereas the
-    /// PFS0 entry table is 64-bit and always exact.
+    /// The container's size as derived from its own entry table — 0 until the
+    /// table has arrived, and 0 for formats that cannot express it.
+    ///
+    /// This is NOT the authority for how much to read, and has not been since
+    /// Option C: a host-declared 64-bit size (SendObjectPropList) outranks it,
+    /// and this demotes to a cross-check that logs disagreements. The host's
+    /// number describes the TRANSFER; this one describes its CONTENTS. They
+    /// coincide for PFS0, whose last entry ends at the file's end, which is why
+    /// the old inverted rule worked.
+    ///
+    /// They do not coincide for XCI, whose trailing padding — an untrimmed image
+    /// is padded to the gamecard capacity — belongs to the transfer but to no
+    /// entry. An XCI front-end must therefore report 0 here rather than infer a
+    /// length from `secure`: coming up short does not fail an install, it leaves
+    /// unread bytes in the endpoint and desyncs the session.
     uint64_t container_size() const { return m_container_size; }
 
     bool ok() const { return m_phase != Phase::Failed; }
     const std::string& error() const { return m_error; }
 
 private:
-    enum class Phase { Header, Table, Data, Done, Failed };
+    // The collector runs one rule: COLLECT `m_want_len` bytes at absolute offset
+    // `m_want_off`, then run `m_step`. Everything between the current position
+    // and `m_want_off` is discarded as it passes — a stream cannot rewind, so
+    // bytes we do not want are simply dropped.
+    //
+    // PFS0 is two steps (header, then table) that happen to be contiguous. XCI
+    // (slice 4c) is four steps at scattered offsets — magic at 0x100, the root
+    // HFS0 wherever 0x130 points, then the `secure` HFS0 potentially gigabytes
+    // downstream — and needs no new machinery, only new steps.
+    enum class Phase { Collect, Data, Done, Failed };
+
+    enum class Step {
+        Pfs0Header,   // 0x10 bytes at 0: magic, file count, string-table size
+        Pfs0Table,    // count*0x18 + sts bytes at 0x10: entry table + names
+    };
 
     struct StreamEntry {
         std::string name;
@@ -101,8 +125,23 @@ private:
         uint64_t abs_end() const { return abs_off + size; }
     };
 
-    bool   parse_header();
-    bool   parse_table();
+    /// Ask for `len` bytes at absolute offset `off`, to be handed to `step`.
+    /// Refuses a backwards `off` outright: a stream cannot rewind, so asking is
+    /// a caller bug, not a runtime condition. `off == m_pos` (contiguous) is
+    /// normal; `off > m_pos` skips the bytes between.
+    bool   want(uint64_t off, size_t len, Step step);
+    /// Dispatch the completed collection to whichever step asked for it.
+    bool   run_step();
+
+    bool   parse_pfs0_header();
+    bool   parse_pfs0_table();
+    /// The format-independent tail: sort into stream order, NSZ key
+    /// precondition, container size, NCA count, enter Phase::Data. Nothing below
+    /// this line knows whether the bytes came from a PFS0 or an XCI's secure
+    /// partition — which is what makes 4c a front-end rather than a rewrite.
+    /// `container_size` is the front-end's business: exact for PFS0, 0 for XCI.
+    bool   finalize_entries(uint64_t container_size);
+
     size_t feed_data(const uint8_t* data, size_t len);
     bool   begin_entry();
     bool   write_entry(const uint8_t* data, size_t len);
@@ -128,16 +167,26 @@ private:
     const Core::Keys::Keyset& m_keys;
     Progress&                 m_progress;
 
-    Phase       m_phase = Phase::Header;
+    Phase       m_phase = Phase::Collect;
     std::string m_error;
     std::string m_filename;
     uint64_t    m_total = 0;
     uint64_t    m_pos   = 0;          // absolute read position in the container
     uint64_t    m_container_size = 0; // known once the table is parsed
 
-    std::vector<uint8_t> m_hdr;       // first 0x10 bytes
-    std::vector<uint8_t> m_table;     // entry table + string table
-    size_t               m_table_size = 0;
+    // ── The collector (see Phase/Step above) ─────────────────────────────────
+    std::vector<uint8_t> m_blob;      // the bytes of the collection in flight
+    uint64_t             m_want_off = 0;
+    size_t               m_want_len = 0;
+    Step                 m_step = Step::Pfs0Header;
+
+    // Stashed by parse_pfs0_header(). parse_pfs0_table() cannot re-read these
+    // from the header: the old design kept a header buffer and a table buffer
+    // alive at once, whereas one general blob holds only the collection in
+    // flight — by table-parse time it holds the TABLE, and reading counts out of
+    // it would yield plausible garbage rather than an error.
+    uint32_t m_pfs0_count = 0;
+    uint32_t m_pfs0_sts   = 0;
 
     std::vector<StreamEntry> m_entries;
     size_t                   m_cur = 0;
