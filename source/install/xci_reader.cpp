@@ -1,5 +1,4 @@
 // source/install/xci_reader.cpp
-// source/install/xci_reader.cpp
 // XCI (game card image) parser. Locates the Secure HFS0 partition and exposes
 // its NCAs as PfsEntry records, identical in shape to what NspReader produces.
 
@@ -12,24 +11,11 @@ namespace Install {
 
 // ── On-disk structures ────────────────────────────────────────────────────────
 
-// XCI file header starts at offset 0x000. We only need a few fields.
-struct XciHeader {
-    uint8_t  magic[4];          // "HEAD" at 0x100 (after RSA sig at 0x000)
-    // Full header is 0x200 bytes. We care about:
-    //   0x104: u32 header_size (usually 0x200)
-    //   0x108: u64 package_id
-    //   0x110: u64 valid_data_end_page (for size)
-    //   0x120: u64 root_partition_offset  (absolute, usually 0x200 for HFS0 root)
-    //   0x128: u64 root_partition_size
-    // We just need to find the root HFS0 at 0x120.
-    uint8_t pad0[0xFC];          // 0x104 - 0x004
-    uint8_t reserved1[0x1C];     // through 0x120
-    uint64_t root_hfs0_offset;   // 0x120
-    uint64_t root_hfs0_size;     // 0x128
-    // rest not needed
-};
-// Rather than a struct (the layout doesn't pack cleanly), we read fields by
-// absolute offset.
+// The XCI header's fields are read by absolute offset in parse() below rather
+// than through a struct: the layout does not pack cleanly, and a struct that
+// disagrees with the code is worse than no struct. There was one here until
+// slice 4c — unreferenced, and documenting the root HFS0 offset at 0x120, which
+// is the gamecard IV. parse() reads 0x130 and always did.
 
 struct Hfs0Header {
     uint8_t  magic[4];           // "HFS0"

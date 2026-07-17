@@ -276,6 +276,63 @@ static void test_ncz_without_keys_is_refused_at_the_table() {
     std::printf("  ok: keyless NSZ refused at the table, before the data phase\n");
 }
 
+// NOTE — everything below POSTDATES the 4c refactor, unlike everything above.
+// The suite above is a characterization record: it pins behaviour that already
+// existed. This is a new claim about new behaviour, and is marked so that a
+// later reader does not mistake it for evidence about the original design.
+//
+// The file count was bounded from the start; the string-table size never was.
+// Both are host-supplied u32s feeding straight into a reserve(), so a corrupt
+// NSP declaring 0xFFFFFFFF asks for a 4 GiB allocation and takes the process out
+// via bad_alloc — a crash, on a console, from a bad file. Found while writing
+// the XCI front-end, which needed the same guard on HFS0.
+static void test_hostile_string_table_cannot_exhaust_memory() {
+    {   // The 4 GiB ask. The count stays legal, so only the string-table bound
+        // stands between this and the allocation.
+        std::vector<uint8_t> v(0x10, 0);
+        std::memcpy(v.data(), "PFS0", 4);
+        put32(v, 4, 4);                 // a plausible file count
+        put32(v, 8, 0xFFFFFFFFu);       // a 4 GiB string table
+        Rig r;
+        r.inst.begin("hostile.nsp", 0x10);
+        r.inst.feed(v.data(), v.size());
+        CHECK(!r.inst.ok(), "a 4 GiB string table is refused rather than allocated");
+        CHECK(r.inst.error().find("string table") != std::string::npos,
+              "error names the string table");
+    }
+    {   // One byte over the derived bound: four entries can name at most
+        // 4 * kMaxNameBytes of string table.
+        std::vector<uint8_t> v(0x10, 0);
+        std::memcpy(v.data(), "PFS0", 4);
+        put32(v, 4, 4);
+        put32(v, 8, 4 * 256 + 1);
+        Rig r;
+        r.inst.begin("hostile.nsp", 0x10);
+        r.inst.feed(v.data(), v.size());
+        CHECK(!r.inst.ok(), "a string table larger than its entries could name is refused");
+    }
+    {   // The other side of the bound, and the more important one: this guard
+        // is new on a path that installs real titles, so it must be shown NOT
+        // to refuse an ordinary container. Real NSP names are ~40 bytes against
+        // a 256-byte allowance, so the margin is wide — but "wide" is a claim,
+        // and this is the check that makes it one the suite can hold.
+        const std::vector<FakeEntry> es = {
+            {"0123456789abcdef0123456789abcdef.cnmt.nca", 0,    0x40},
+            {"fedcba9876543210fedcba9876543210.nca",      0x40, 0x80},
+            {"0123456789abcdef0123456789abcdef.tik",      0xC0, 0x20},
+            {"0123456789abcdef0123456789abcdef.cert",     0xE0, 0x20},
+        };
+        uint64_t ds = 0;
+        const std::vector<uint8_t> full = build_pfs0(es, &ds);
+        Rig r;
+        r.inst.begin("fine.nsp", full.size());
+        CHECK(r.inst.feed(full.data(), full.size()), "a realistic container feeds");
+        CHECK(r.inst.ok(), "a realistic container is not caught by the new bound");
+        CHECK(r.inst.complete(), "and still installs end to end");
+    }
+    std::printf("  ok: hostile string tables refused; realistic ones untouched\n");
+}
+
 int main() {
     std::printf("StreamInstaller container harness (PFS0 characterization)\n");
     test_chunk_size_invariance();
@@ -284,6 +341,7 @@ int main() {
     test_gaps_between_entries_are_skipped();
     test_malformed_containers_are_rejected();
     test_ncz_without_keys_is_refused_at_the_table();
+    test_hostile_string_table_cannot_exhaust_memory();
     std::printf("ALL PASS (%d checks)\n", g_checks);
     return 0;
 }

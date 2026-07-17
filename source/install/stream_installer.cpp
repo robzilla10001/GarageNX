@@ -31,7 +31,48 @@ bool ends_with(const std::string& s, const std::string& suffix) {
 constexpr size_t kPfs0HeaderSize = 0x10;
 constexpr size_t kPfs0EntrySize  = 0x18;
 
+// ── XCI / HFS0 ───────────────────────────────────────────────────────────────
+// An HFS0 header has the same shape as a PFS0's (magic, count, string-table
+// size) but its entries are 0x40 rather than 0x18: the extra space is a
+// SHA-256, a hash region size, and reserved bytes. These figures and the XCI
+// header offsets below match xci_reader.cpp, which is hardware-validated.
+constexpr size_t   kHfs0HeaderSize = 0x10;
+constexpr size_t   kHfs0EntrySize  = 0x40;
+constexpr uint64_t kXciMagicOff    = 0x100;   // "HEAD"
+constexpr size_t   kXciHeadLen     = 0x38;    // 0x100..0x137 — magic at +0, root offset at +0x30
+constexpr size_t   kXciRootOffAt   = 0x30;    // 0x130, relative to the collection at 0x100
+constexpr uint32_t kMaxHfs0Files   = 1024;    // matches XciReader::parse_hfs0
+
+// A string table holds `count` NUL-terminated names and nothing else, so it
+// cannot legitimately exceed count * (255 + 1) — 255 being the conventional
+// filename ceiling, and every name that actually appears here (a 32-hex NCA id
+// plus a suffix, or a partition name like "secure") far shorter than that.
+//
+// Both entry counts are already bounded above, so deriving the string table's
+// bound from the count bounds the whole allocation. Without it a host-chosen
+// string-table size of 0xFFFFFFFF reserves 4 GiB and takes the process out via
+// bad_alloc — a crash, on a console, from a bad file. Deriving rather than
+// picking a flat constant means a three-file container gets a three-file bound.
+constexpr uint32_t kMaxNameBytes = 256;
+
+/// Case-insensitive suffix test. The MTP host controls the filename's case, and
+/// a host that sends GAME.XCI must not be routed to the PFS0 front-end.
+bool ends_with_ci(const std::string& s, const char* suffix) {
+    const size_t n = std::strlen(suffix);
+    if (s.size() < n) return false;
+    for (size_t i = 0; i < n; i++) {
+        const char a = (char)tolower((unsigned char)s[s.size() - n + i]);
+        if (a != suffix[i]) return false;
+    }
+    return true;
+}
+
 } // namespace
+
+StreamInstaller::Format StreamInstaller::format_from_name(const std::string& name) {
+    if (ends_with_ci(name, ".xci") || ends_with_ci(name, ".xcz")) return Format::Xci;
+    return Format::Pfs0;
+}
 
 StreamInstaller::StreamInstaller(Core::Ncm::Storage storage,
                                  const Core::Keys::Keyset& keys,
@@ -66,9 +107,17 @@ bool StreamInstaller::begin(const std::string& filename, uint64_t total_size) {
     m_progress.push_log(std::string("Target: ") +
         (m_storage == Core::Ncm::Storage::SdCard ? "SD card" : "internal (NAND)"));
 
-    // Arm the first collection. An XCI front-end (4c) starts instead at
-    // want(0x100, 4, Step::XciMagic) — the only difference is which step runs.
-    if (!want(0, kPfs0HeaderSize, Step::Pfs0Header)) return false;
+    // Arm the first collection. A stream carries no format marker before its
+    // first bytes, so the front-end is chosen from the name — the MTP gate has
+    // already established that the extension is one we accept. An unrecognised
+    // name falls to PFS0, which then fails on the magic, exactly as before.
+    m_format = format_from_name(filename);
+    if (m_format == Format::Xci) {
+        m_progress.push_log("Container: XCI/XCZ (gamecard image)");
+        if (!want(kXciMagicOff, kXciHeadLen, Step::XciHead)) return false;
+    } else {
+        if (!want(0, kPfs0HeaderSize, Step::Pfs0Header)) return false;
+    }
 
 #ifdef PLATFORM_SWITCH
     const NcmStorageId sid = (m_storage == Core::Ncm::Storage::SdCard)
@@ -102,10 +151,23 @@ bool StreamInstaller::want(uint64_t off, size_t len, Step step) {
     return true;
 }
 
+void StreamInstaller::classify(StreamEntry& se) {
+    se.is_ncz      = ends_with(se.name, ".ncz");
+    se.is_nca      = ends_with(se.name, ".nca") || se.is_ncz;
+    se.is_cnmt_nca = ends_with(se.name, ".cnmt.nca") || ends_with(se.name, ".cnmt.ncz");
+    se.is_tik      = ends_with(se.name, ".tik");
+    se.is_cert     = ends_with(se.name, ".cert");
+}
+
 bool StreamInstaller::run_step() {
     switch (m_step) {
-        case Step::Pfs0Header: return parse_pfs0_header();
-        case Step::Pfs0Table:  return parse_pfs0_table();
+        case Step::Pfs0Header:      return parse_pfs0_header();
+        case Step::Pfs0Table:       return parse_pfs0_table();
+        case Step::XciHead:         return parse_xci_head();
+        case Step::XciRootHeader:   return parse_xci_root_header();
+        case Step::XciRootTable:    return parse_xci_root_table();
+        case Step::XciSecureHeader: return parse_xci_secure_header();
+        case Step::XciSecureTable:  return parse_xci_secure_table();
     }
     return fail("Internal: unknown collector step");
 }
@@ -118,19 +180,25 @@ bool StreamInstaller::parse_pfs0_header() {
 
     // Stashed, not re-read later: by the time the table is parsed, m_blob holds
     // the table, not this header. See the members' comment in the header file.
-    m_pfs0_count = rd32(m_blob.data() + 4);
-    m_pfs0_sts   = rd32(m_blob.data() + 8);
-    if (m_pfs0_count == 0 || m_pfs0_count > 4096)
+    m_ent_count = rd32(m_blob.data() + 4);
+    m_str_size  = rd32(m_blob.data() + 8);
+    if (m_ent_count == 0 || m_ent_count > 4096)
         return fail("PFS0: implausible file count");
 
+    // Both fields are host-supplied and feed straight into a reserve(). See
+    // kMaxNameBytes: this is the only thing standing between a corrupt NSP and
+    // a 4 GiB allocation.
+    if (m_str_size > (uint64_t)m_ent_count * kMaxNameBytes)
+        return fail("PFS0: implausible string table size");
+
     // The table follows the header immediately.
-    const size_t table_size = (size_t)m_pfs0_count * kPfs0EntrySize + m_pfs0_sts;
+    const size_t table_size = (size_t)m_ent_count * kPfs0EntrySize + m_str_size;
     return want(kPfs0HeaderSize, table_size, Step::Pfs0Table);
 }
 
 bool StreamInstaller::parse_pfs0_table() {
-    const uint32_t count    = m_pfs0_count;
-    const uint32_t sts      = m_pfs0_sts;
+    const uint32_t count    = m_ent_count;
+    const uint32_t sts      = m_str_size;
     const size_t   names_at = (size_t)count * kPfs0EntrySize;
 
     // Data begins right after the header, entry table and string table — which
@@ -156,11 +224,7 @@ bool StreamInstaller::parse_pfs0_table() {
         se.name.assign(np, nlen);
         if (se.name.empty()) return fail("PFS0: empty filename");
 
-        se.is_ncz      = ends_with(se.name, ".ncz");
-        se.is_nca      = ends_with(se.name, ".nca") || se.is_ncz;
-        se.is_cnmt_nca = ends_with(se.name, ".cnmt.nca") || ends_with(se.name, ".cnmt.ncz");
-        se.is_tik      = ends_with(se.name, ".tik");
-        se.is_cert     = ends_with(se.name, ".cert");
+        classify(se);
         m_entries.push_back(std::move(se));
     }
 
@@ -173,6 +237,136 @@ bool StreamInstaller::parse_pfs0_table() {
 
     return finalize_entries(csz);
 }
+
+// ─── XCI front-end (slice 4c) ────────────────────────────────────────────────
+//
+// Five collections, all forward, everything between them discarded by
+// Phase::Collect as it passes: the RSA signature, the rest of the gamecard
+// header, and the update/normal partitions all drop on the floor for free.
+//
+// Offsets follow xci_reader.cpp's parse(), which is hardware-validated. Note
+// that the root HFS0 offset is at 0x130 and NOT at 0x120, which is the gamecard
+// IV — an unreferenced struct in xci_reader.cpp documented 0x120 for a long
+// time; slice 4c deleted it. If you are checking this against a reference,
+// check it against parse(), not against anything's field list.
+
+bool StreamInstaller::parse_xci_head() {
+    if (std::memcmp(m_blob.data(), "HEAD", 4) != 0)
+        return fail("Not an XCI (bad HEAD magic at 0x100)");
+
+    const uint64_t root_off = rd64(m_blob.data() + kXciRootOffAt);
+
+    // Host-supplied. want() would already refuse a backwards offset, but a wild
+    // forward one is worse: it would skip silently to the end of a multi-GB
+    // transfer before failing. m_total is trustworthy here because the MTP gate
+    // refuses an XCI whose size the host could not declare exactly.
+    if (m_total > 0 && root_off >= m_total)
+        return fail("XCI: root HFS0 offset lies past the end of the image");
+
+    m_progress.push_log("XCI: root HFS0 at 0x" + [&]{
+        char b[24]; std::snprintf(b, sizeof(b), "%llX", (unsigned long long)root_off); return std::string(b);
+    }());
+    return want(root_off, kHfs0HeaderSize, Step::XciRootHeader);
+}
+
+bool StreamInstaller::parse_hfs0_header(Step table_step, const char* what) {
+    if (std::memcmp(m_blob.data(), "HFS0", 4) != 0)
+        return fail(std::string("XCI: bad HFS0 magic in the ") + what + " partition");
+
+    m_ent_count = rd32(m_blob.data() + 4);
+    m_str_size  = rd32(m_blob.data() + 8);
+    if (m_ent_count == 0 || m_ent_count > kMaxHfs0Files)
+        return fail(std::string("XCI: implausible file count in the ") + what + " partition");
+
+    // As on the PFS0 path — see kMaxNameBytes.
+    if (m_str_size > (uint64_t)m_ent_count * kMaxNameBytes)
+        return fail(std::string("XCI: implausible string table size in the ") + what + " partition");
+
+    // count is bounded above, so this cannot overflow a 64-bit width; the cast
+    // to size_t below is safe for the same reason.
+    const uint64_t table_size = (uint64_t)m_ent_count * kHfs0EntrySize + m_str_size;
+
+    // The table follows its header immediately.
+    return want(m_want_off + kHfs0HeaderSize, (size_t)table_size, table_step);
+}
+
+bool StreamInstaller::decode_hfs0_table(uint64_t data_start, std::vector<StreamEntry>& out) {
+    const uint32_t count    = m_ent_count;
+    const uint32_t sts      = m_str_size;
+    const size_t   names_at = (size_t)count * kHfs0EntrySize;
+
+    out.clear();
+    out.reserve(count);
+    for (uint32_t i = 0; i < count; i++) {
+        // HFS0 entry: u64 data_offset, u64 data_size, u32 name_offset,
+        // u32 hash_region_size, u64 reserved, u8[0x20] sha256.
+        const uint8_t* e = m_blob.data() + (size_t)i * kHfs0EntrySize;
+        StreamEntry se;
+        se.abs_off = data_start + rd64(e);
+        se.size    = rd64(e + 8);
+        const uint32_t noff = rd32(e + 16);
+        if (noff >= sts) return fail("XCI: name offset out of range");
+
+        // Same reasoning as the PFS0 path: the string table is host-supplied,
+        // so scan for the terminator without running past the table.
+        const char*  np     = (const char*)m_blob.data() + names_at + noff;
+        const size_t maxlen = sts - noff;
+        size_t nlen = 0;
+        while (nlen < maxlen && np[nlen] != '\0') nlen++;
+        se.name.assign(np, nlen);
+        if (se.name.empty()) return fail("XCI: empty filename");
+
+        classify(se);
+        out.push_back(std::move(se));
+    }
+    return true;
+}
+
+bool StreamInstaller::parse_xci_root_header() {
+    return parse_hfs0_header(Step::XciRootTable, "root");
+}
+
+bool StreamInstaller::parse_xci_root_table() {
+    // The root partition table's data region begins where this collection ends.
+    const uint64_t root_data_start = m_want_off + m_want_len;
+
+    std::vector<StreamEntry> parts;
+    if (!decode_hfs0_table(root_data_start, parts)) return false;
+
+    const StreamEntry* secure = nullptr;
+    for (const auto& p : parts)
+        if (p.name == "secure") { secure = &p; break; }
+    if (!secure)
+        return fail("XCI: no 'secure' partition in the root HFS0");
+
+    // secure->abs_off is already absolute and >= root_data_start >= m_pos, so
+    // this is always a forward seek — update/normal, if they precede it,
+    // discard themselves in Phase::Collect.
+    m_secure_abs = secure->abs_off;
+    m_progress.push_log("XCI: " + std::to_string(parts.size()) +
+                        " partition(s); secure is " + std::to_string(secure->size) + " bytes");
+    return want(m_secure_abs, kHfs0HeaderSize, Step::XciSecureHeader);
+}
+
+bool StreamInstaller::parse_xci_secure_header() {
+    return parse_hfs0_header(Step::XciSecureTable, "secure");
+}
+
+bool StreamInstaller::parse_xci_secure_table() {
+    const uint64_t data_start = m_want_off + m_want_len;
+
+    if (!decode_hfs0_table(data_start, m_entries)) return false;
+
+    // container_size() is 0 for XCI, deliberately. A PFS0's last entry ends at
+    // the file's end, so its table yields an exact size; a gamecard image
+    // continues past `secure` into padding that belongs to the transfer but to
+    // no entry. Inferring a length from the entries would come up short, which
+    // does not fail an install — it leaves unread bytes in the endpoint and
+    // desyncs the session. The host's declared size is the only authority, and
+    // the MTP gate refuses an XCI whose size the host cannot declare exactly.
+    return finalize_entries(0);
+}
+
 
 // ─── Format-independent tail ─────────────────────────────────────────────────
 
@@ -195,10 +389,16 @@ bool StreamInstaller::finalize_entries(uint64_t container_size) {
         // last cached, which is not necessarily this reference. header_key is
         // the actual precondition — get_decompressed_size() decrypts the NCA
         // header to recover the size for a stream NCZ.
+        //
+        // Name the container the user actually sent. Both formats reach here
+        // by the same route — a compressed entry with no key to read it — but
+        // a message that says NSZ to someone installing an XCZ reads as a bug
+        // in us, and this text is the only thing they will see.
+        const char* what = (m_format == Format::Xci) ? "XCZ" : "NSZ";
         const std::string why = Core::Keys::requirement_message();
         return fail(why.empty()
-            ? std::string("NSZ install needs prod.keys (header_key) — none are loaded")
-            : "NSZ install needs prod.keys: " + why);
+            ? std::string(what) + " install needs prod.keys (header_key) — none are loaded"
+            : std::string(what) + " install needs prod.keys: " + why);
     }
 
     m_container_size = container_size;

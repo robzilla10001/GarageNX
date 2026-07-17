@@ -375,18 +375,42 @@ void MtpServer::arm_incoming_object(uint32_t storage, uint32_t parent, uint16_t 
         // .nsz joined .nsp in slice 4b: an NSZ is a PFS0 exactly like an
         // NSP, just with .ncz entries in place of .nca, so StreamInstaller
         // parses the container identically and NczWindow handles the
-        // compressed entries. .xci/.xcz stay out — an XCI is HFS0 and
-        // needs its own front-end (slice 4c).
+        // compressed entries. .xci/.xcz joined in 4c, which gave
+        // StreamInstaller an HFS0 front-end; an XCZ is likewise just an XCI
+        // whose secure partition holds .ncz files.
         std::string low = filename;
         for (auto& ch : low) ch = (char)tolower((unsigned char)ch);
         auto has_ext = [&low](const char* ext) {
             const size_t n = std::strlen(ext);
             return low.size() > n && low.compare(low.size() - n, n, ext) == 0;
         };
-        if (!has_ext(".nsp") && !has_ext(".nsz")) {
+        const bool is_xci = has_ext(".xci") || has_ext(".xcz");
+        if (!has_ext(".nsp") && !has_ext(".nsz") && !is_xci) {
             reject_install(filename,
-                "stream install accepts .nsp and .nsz only "
-                "(.xci/.xcz are not supported yet)");
+                "stream install accepts .nsp, .nsz, .xci and .xcz only");
+            send_response(Rc::InvalidParameter, tid);
+            return;
+        }
+
+        // An XCI is the one container whose length we cannot recover from its
+        // own contents. A PFS0's last entry ends at the file's end, so
+        // container_size() corrects a saturated 32-bit size as soon as the
+        // header lands; a gamecard image continues past `secure` into padding
+        // that belongs to the transfer but to no entry, so StreamInstaller
+        // reports 0 and there is nothing to correct with. Without an exact
+        // size the data phase has no bound: recv_install would read until the
+        // host happened to send a ZLP, and a session that desyncs is worse
+        // than a transfer that is refused.
+        //
+        // size_exact is false only when the host saturated at 0xFFFFFFFF, so
+        // this refuses exactly the >= 4 GiB XCIs from hosts that never sent
+        // SendObjectPropList. A smaller XCI over plain SendObjectInfo still
+        // carries an exact size and is fine. This is what Option C bought.
+        if (is_xci && !size_exact) {
+            reject_install(filename,
+                "an XCI of 4 GiB or more needs an exact 64-bit size, which this "
+                "host did not send (MTP 1.1 SendObjectPropList). Try another "
+                "client, or install this image from the SD card.");
             send_response(Rc::InvalidParameter, tid);
             return;
         }
