@@ -176,6 +176,100 @@ bool Reader::str(std::string& out) {
     return true;
 }
 
+// ─── ObjectPropList dataset ──────────────────────────────────────────────────
+
+bool parse_object_prop_list(const uint8_t* p, size_t n,
+                            std::vector<ObjectProp>& out, uint32_t* out_bad_index) {
+    out.clear();
+    if (out_bad_index) *out_bad_index = 0;
+    Reader r(p, n);
+
+    uint32_t count = 0;
+    if (!r.u32(count)) return false;
+    // A host sending an object declares a handful of properties. This bound is
+    // not politeness: count is host-supplied and reserve()ing it directly would
+    // let a corrupt dataset ask for 4 billion elements.
+    if (count > 256) return false;
+    out.reserve(count);
+
+    for (uint32_t i = 0; i < count; i++) {
+        ObjectProp e;
+        if (!r.u32(e.handle) || !r.u16(e.code) || !r.u16(e.type)) return false;
+
+        switch (e.type) {
+            case DataType::Int8:
+            case DataType::UInt8:   { uint8_t  v; if (!r.u8(v))  return false; e.num = v; break; }
+            case DataType::Int16:
+            case DataType::UInt16:  { uint16_t v; if (!r.u16(v)) return false; e.num = v; break; }
+            case DataType::Int32:
+            case DataType::UInt32:  { uint32_t v; if (!r.u32(v)) return false; e.num = v; break; }
+            case DataType::Int64:
+            case DataType::UInt64:  { uint64_t v; if (!r.u64(v)) return false; e.num = v; break; }
+            case DataType::Int128:
+            case DataType::UInt128: {
+                // Consumed but not represented: nothing we read is 128-bit, and
+                // silently truncating to 64 would be worse than ignoring it.
+                uint64_t lo, hi;
+                if (!r.u64(lo) || !r.u64(hi)) return false;
+                break;
+            }
+            case DataType::Str:     { if (!r.str(e.text)) return false; break; }
+            default:
+                // Unknown datatype: its value length is unknowable, so every
+                // element after this one is unparseable too. Report which one.
+                if (out_bad_index) *out_bad_index = i;
+                return false;
+        }
+        out.push_back(std::move(e));
+    }
+    return r.ok();
+}
+
+bool build_object_prop_desc(uint16_t code, Writer& w) {
+    uint16_t type;
+    uint8_t  get_set;   // 1 = the host may set this on an object it is sending
+
+    switch (code) {
+        case ObjProp::StorageId:        type = DataType::UInt32; get_set = 1; break;
+        case ObjProp::ObjectFormat:     type = DataType::UInt16; get_set = 1; break;
+        case ObjProp::ProtectionStatus: type = DataType::UInt16; get_set = 1; break;
+        // Read-only: the device computes an object's size, it is not something a
+        // host assigns. The size of an INCOMING object travels in
+        // SendObjectPropList's parameters instead, which is the whole reason
+        // that operation exists.
+        case ObjProp::ObjectSize:       type = DataType::UInt64; get_set = 0; break;
+        case ObjProp::ObjectFileName:   type = DataType::Str;    get_set = 1; break;
+        case ObjProp::ParentObject:     type = DataType::UInt32; get_set = 1; break;
+        default:
+            return false;
+    }
+
+    w.u16(code);
+    w.u16(type);
+    w.u8(get_set);
+
+    // Default value, encoded in `type`. A host reads this by datatype, exactly
+    // as it reads an ObjectPropList element — get the width wrong here and the
+    // host desynchronises on the rest of the dataset.
+    switch (type) {
+        case DataType::UInt16: w.u16(0); break;
+        case DataType::UInt32: w.u32(0); break;
+        case DataType::UInt64: w.u64(0); break;
+        case DataType::Str:    w.str(""); break;   // one 0 byte: zero characters
+        default:               w.u32(0); break;
+    }
+
+    w.u32(0);   // group code: ungrouped
+    w.u8(0);    // form flag: none — and so no form field follows
+    return true;
+}
+
+const ObjectProp* find_prop(const std::vector<ObjectProp>& props, uint16_t code) {
+    for (const auto& p : props)
+        if (p.code == code) return &p;
+    return nullptr;
+}
+
 // ─── Container builders ──────────────────────────────────────────────────────
 std::vector<uint8_t> make_response(uint16_t code, uint32_t tid,
                                    const uint32_t* params, int nparams) {

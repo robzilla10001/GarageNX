@@ -883,6 +883,33 @@ ThreadSanitizer, once under Address/UB, since the two are mutually exclusive.
 Harnesses are plain C++17 with asserts and no framework (the coding standard bars
 new third-party dependencies without an approved task).
 
+**`ncz.cpp` is not portable, and that matters for what these suites mean.** Its
+`#else` branch (`ncz.cpp:438`) stubs the whole decompressor out on the host —
+`get_decompressed_size()` returns 0, `decompress()` returns "not supported on
+this platform" — because the real implementation uses libnx crypto
+(`aes128CtrCrypt`, `aes128XtsDecrypt`). So `stream_installer.cpp` *links* on the
+host, which is what makes `stream_container_test` possible, but **any host test
+of NCZ decompression would be testing that stub**. `stream_container_test`
+therefore asserts on container parsing only and says nothing about NCZ.
+`NczWindow` is the genuinely portable piece and is tested for real.
+
+**Link stubs vs behavioural stubs.** `tests/link_stubs.cpp` supplies
+`Install::install()` (libnx-bound via `installer.cpp`) and
+`Core::Keys::requirement_message()`. This is not a hole in the admission rule.
+A *behavioural* stub stands in for logic while the test runs, so the result
+depends on it — forbidden. A *link* stub satisfies the linker for code the test
+never reaches. The safeguard is that `install()` **aborts**: if a suite ever
+calls `finish()`, it dies loudly rather than passing against a fiction. Tests
+assert that a refusal happened, never on stubbed message text.
+
+**Suites as of rev 3** (`cmake -S tests -B build-tests`, 6 targets — each suite
+built once under TSan and once under ASan/UBSan):
+| Suite | Covers | Does NOT cover |
+|---|---|---|
+| `ncz_window_test` | `NczWindow` for real: races, deadlock, back-pressure, byte-exactness, loud failure on design violations | — |
+| `mtp_protocol_test` | `mtp_data`: container header codec, UTF-16LE strings, ObjectPropList parsing, u64 sizes past 4 GiB | `mtp_server` — the transport is hardware-only |
+| `stream_container_test` | PFS0 parsing, entry boundaries, gap skipping, `container_size()` arithmetic to 14 GiB, malformed-input refusal | anything NCZ (stubbed on host), `finish()` (aborts by design) |
+
 **Admission rule:** a module belongs in `tests/` only if it is free of libnx.
 `mtp_data` and `NczWindow` are written that way deliberately, so they compile
 against `source/` with no stub layer. Anything touching `usb:ds`, `ncm`, `es`, or
@@ -909,6 +936,26 @@ what determines whether something is testable.
 
   Sync is `std::mutex`/`std::condition_variable`, following `OverlapBuffer`, which uses them unguarded on both targets and is hardware-validated — so `NczWindow` needs no `PLATFORM_SWITCH` guard and no libnx stub, and is testable off-device as-is. Decompression runs on its own thread; reuse `OverlapBuffer`'s thread and sink-callback shape rather than inventing a second one. Keys are not ambient — `Core::Keys::load()` then `available()` **before** the data phase (see below).
 
+  **Slice 4c groundwork — MTP 1.1 object properties (rev 3, NOT hardware-validated).** `container_size()` was the sole authority for the data phase (`recv_install`: *"if (m_install->container_size() > 0) payload = ..."*). That works only because a PFS0's last entry ends at the file's end. **It is false for XCI**, whose trailing padding — an untrimmed image is padded to the gamecard capacity — belongs to the transfer but to no entry. Coming up short there does not fail an install; it leaves unread bytes in the endpoint, and the next command parses file data as a container header. A desynced session is worse than a refused one.
+
+  Fixed by asking the host instead of inferring: **`SendObjectPropList` (0x9808)** carries `ObjectCompressedSize` split high/low across command parameters 4 and 5 — the only route by which a host can declare an object of 4 GiB or more. (`SendObjectInfo`'s `ObjectCompressedSize` is u32 and saturates at `0xFFFFFFFF`.) **`GetObjectPropsSupported` (0x9801)** ships with it and is not optional: libmtp calls it *before* 0x9808 and gives up if it fails, so advertising 0x9808 alone leaves it unreachable.
+
+  **And 0x9801 obligates `GetObjectPropDesc` (0x9802)** — found the hard way on hardware (`Error: could not get property description`, on plain NSP as well as NSZ). Answering 0x9801 is not the end of it: the host then asks for a *description* of **every** code that answer names, to learn its datatype before it can encode a value, and libmtp abandons the entire send if a single one is missing. The three operations are a package; implementing two of them is strictly worse than implementing none, because 0x9801 diverts the host onto a road that then dead-ends.
+
+  So the advertised list carries a two-way obligation: every code named must be **describable** by `build_object_prop_desc()` *and* **decodable** by `parse_object_prop_list()`. Naming an undecodable property would make the host send a value we reject, taking the dataset with it. `tests/mtp_protocol_test.cpp` asserts both directions over exactly that list — including that each ObjectPropDesc dataset is consumed to the byte, since a wrong default-value width desynchronises the host on the rest of it.
+
+  The authority now inverts: a host-declared 64-bit size outranks `container_size()`, which demotes to a cross-check that logs disagreements. The host's number describes the **transfer**; the container's table describes its **contents**. They coincide for PFS0, which is why the old approach worked, and they will not for XCI.
+
+  `SendObjectInfo` and `SendObjectPropList` converge on `arm_incoming_object()`. That is deliberate: two copies of the install gate is how one of them silently stays open. **Risk on the record:** once 0x9808 is advertised, libmtp uses it for `.nsp` too — the validated install path now runs on this code. Re-test a plain NSP first. The log line *"Host declared an exact 64-bit size"* is the proof the new route is live; its absence means libmtp fell back to `SendObjectInfo`.
+
+  **A successful stream install reported itself as a no-op (fixed rev 3).** Every line of an MTP install log came from `install()`, and read `[n/m] <hash>.nca - already installed, skipped` for every content — on titles downloaded minutes earlier. Nothing was broken; the log was.
+
+  Two causes, one root. `install()` opened with `progress.reset()`, which clears `log_lines` under the mutex — erasing StreamInstaller's entire account of the transfer that had just happened. What survived was `install()`'s own view, and by design that view is a no-op: `finish()` hands it content **already registered**, so it correctly takes its "already installed" path for every entry (this is the trick that lets `install()` be reused unchanged — see `finish()`). The log was therefore structurally incapable of showing the real install and could only show the redundant second pass.
+
+  `install()` gains `contents_preregistered` (defaulted false, so the file-browser path is untouched — it owns its Progress outright and for it "already installed" genuinely means pre-existing). When true: do not reset the caller's Progress, suppress the per-content skip lines (accurate, but reporting on work that happened elsewhere), and say *"Content already written by the transfer; registering metadata..."* once. **A function should not reset a Progress it did not start** — that is the general rule this violated.
+
+  **Rejection reasons used to be discarded (fixed rev 3).** `save_install_log()` was only ever reached from `recv_install()`, so a `SendObjectInfo` refusal pushed its reason into `m_install_progress` and then returned — nothing ever read it. MTP can only answer the host with a bare response code, which libmtp renders as "Could not send object info", so the reason existed on neither side. `MtpServer::reject_install()` now handles all three refusals (folder, extension, keys): it `reset()`s the progress buffer (it may still hold the previous install's lines), records the reason, `SDL_Log`s it for nxlink, and writes `sdmc:/switch/GarageNX/logs/<stamp>_mtp.log`. **Any new pre-data-phase refusal must go through it**, or it will be silent in exactly the same way.
+
   **Two gates had to open, not one.** `mtp_server.cpp`'s `SendObjectInfo` tested `.nsp` and nothing else, rejecting `.nsz` before the data phase ever began — a host-side "Could not send object info" with the reason only in the on-screen install log. That gate is deliberate and correct in shape (refusing after several GB have been pushed is both rude and, since the endpoint stops being drained, a hang); it simply needed `.nsz` added. `.xci`/`.xcz` stay rejected there — an XCI is HFS0 and needs its own front-end (slice 4c). Note `SendObjectInfo` *already* required keys for any install, so the `parse_table()` keys check below is a second line of defence that matters for the future FTP/HTTP paths rather than for MTP.
 
   **StreamInstaller wiring (rev 3, NOT hardware-validated).** The `.ncz` rejection at `parse_table()` is gone, replaced by a keys precondition: an NSZ cannot be decompressed without `header_key`, so it is refused up front rather than partway through a multi-gigabyte transfer. The check reads `m_keys.has_header_key` on the keyset actually passed in, not the global `Core::Keys::available()`, which answers for whatever `load()` last cached and is not necessarily the same object.
@@ -926,8 +973,32 @@ what determines whether something is testable.
 
   A `.cnmt.ncz` needs both paths: decompressed into a placeholder and registered, *and* teed to RAM as **compressed** bytes for `finish()`. That is correct — `ce.is_ncz` is set, `install()` decompresses it on the way in exactly as for a local NSZ, and RAM gives it the random access it needs. `install()` already handles NCZ for the file path (M5) and `stream_installer.cpp` already tagged `ce.is_ncz` — 4b supplies a `ReadFn`, it does not teach the installer about NCZ.
 
-  **Verification status: syntax only.** Both the Switch and PC paths compile clean under `-Wall -Wextra` (the Switch path against a transcribed libnx surface, in scratch — not committed). That catches typos and arity errors, nothing more; the check validates against a hand-written stand-in, so it is weaker than a real build. The stronger guarantee is that every libnx call mirrors an existing hardware-validated call site in the same file, and the thread creation copies `OverlapBuffer`'s exact shape (`0x2C`, `-2`; stack raised `0x8000` → `0x10000` for zstd's frame). **The join ordering and every `ncm` interaction are unproven until they run on hardware.**
-- **Slice 4c:** XCI/XCZ stream install. `StreamInstaller` parses PFS0 (NSP); an XCI is an HFS0 gamecard image and needs its own front-end. Currently rejected at `SendObjectInfo` with a clear message rather than mid-transfer.
+  **`abort()` validated on hardware (rev 3): PASSED.** USB pulled mid-transfer during a large NSZ: no hang, no crash, and the SD card's free space returned to its total — i.e. the placeholder was deleted. That is the full ordering working: window aborted → worker unwound out of `decompress()` → joined → *then* `DeletePlaceHolder`. A wrong order gives a hang or a crash; a wrong `m_ph_open` leaves an orphaned multi-gigabyte placeholder with no file to account for it. Still untested: **UI cancel**, which is a different route (`m_progress.cancel` → `write_cb` returns false → `decompress()` unwinds from the inside, rather than the window failing from the outside).
+
+  **Hardware validation (rev 3): PASSED.** Three NSZ titles installed over MTP from a Debian host — one under 1 GB, one at ~4 GB (straddling the FAT32 file-size ceiling), one at 6 GB (above it). All clean. This exercises the retained prefix against real NCZ headers, thousands of real crossings of the 8 MB seam, placeholder sizing from `get_decompressed_size()` (a wrong size yields a `content_id` hash mismatch, not a crash — so a pass here is meaningful), and sustained `push()` back-pressure, since zstd decompression is slower than USB.
+
+  **Still unproven, in rough order of risk:**
+  - **`abort()` mid-NSZ.** The happy path never calls it. Cancel during a large NSZ, and yank the USB cable during one — this is the ordering the whole design turns on and it has never run.
+  - **`.cnmt.ncz`.** The dual path (decompress → placeholder → register, *and* tee the **compressed** bytes to RAM for `install()`) only runs if the packer compressed the meta NCA. Most `nsz` builds leave `.cnmt.nca` uncompressed because it is tiny, in which case these three installs never touched that branch. Check an install log's entry list for a `.cnmt.ncz` before assuming it is covered.
+  - **Prefix overflow.** A container built with a small block exponent (16 KB → ~3.6 MB of `block_sizes` for a 14 GiB NCA) approaches the 8 MB prefix. It fails loudly rather than corrupting, but it has never been seen.
+  - **Keys missing.** Both the `SendObjectInfo` and `parse_table()` refusals are untested on device.
+
+  **Prior verification status was syntax only.** Both the Switch and PC paths compile clean under `-Wall -Wextra` (the Switch path against a transcribed libnx surface, in scratch — not committed). That catches typos and arity errors, nothing more; the check validates against a hand-written stand-in, so it is weaker than a real build. The stronger guarantee is that every libnx call mirrors an existing hardware-validated call site in the same file, and the thread creation copies `OverlapBuffer`'s exact shape (`0x2C`, `-2`; stack raised `0x8000` → `0x10000` for zstd's frame). **The join ordering and every `ncm` interaction are unproven until they run on hardware.**
+- **Slice 4c:** XCI/XCZ stream install. **Collector generalised (rev 3); XCI front-end not yet written.**
+
+  `Phase{Header,Table,Data}` could not express XCI: it hard-codes "one contiguous table at offset 0". XCI needs four collections at scattered offsets — magic at `0x100`, the root HFS0 wherever `0x130` points, then the `secure` HFS0 potentially gigabytes downstream past the update partition. `Phase` is now `{Collect,Data,Done,Failed}` plus a `Step`, over one general rule: **collect N bytes at absolute offset X, then run step S**, discarding everything in between. `want()` refuses a backwards `off` outright — a stream cannot rewind, and asking is a caller bug, not a runtime condition.
+
+  Two things surfaced that review would not have:
+  - `parse_table()` **re-read `count` and `sts` from `m_hdr`**. The old collector kept header and table buffers alive at once; one general blob cannot. They are now stashed into `m_ent_count`/`m_str_size` at header-parse time.
+  - The tail of `parse_table()` — sort into stream order, NSZ key precondition, `container_size()`, NCA count, enter `Phase::Data` — is **format-independent**. Extracted as `finalize_entries()`. Below it, nothing knows whether the bytes came from a PFS0 or an XCI's secure partition.
+
+  Behaviour is unchanged: `stream_container_test`'s 65 checks pass untouched, which is the entire reason that suite was written before this refactor rather than after.
+
+  **Still to do:** the four XCI steps; `feed_data()`'s existing gap-skip then discards the XCI header, root HFS0 and update/normal partitions for free, since entries carry absolute offsets. Then open the `SendObjectInfo`/`SendObjectPropList` gate to `.xci`/`.xcz`, and delete `xci_reader.hpp`'s dead `XciHeader` struct, which documents `root_hfs0_offset` at **`0x120`** — the gamecard IV. The `.cpp` reads `0x130` and is correct.
+
+  **`container_size()` must return 0 for XCI.** For PFS0 it is exact (the last entry ends at the file's end); for XCI the file continues past `secure` — an untrimmed image is padded to the gamecard capacity — so entries cannot yield it. With Option C the host declares the true size and `container_size()` is only a cross-check, so 0 is safe. But an XCI arriving **without** an exact declaration must be **refused**, not have a length inferred from `secure`: coming up short leaves unread bytes in the endpoint and desyncs the session.
+
+- **Slice 4c (original note):** XCI/XCZ stream install. `StreamInstaller` parses PFS0 (NSP); an XCI is an HFS0 gamecard image and needs its own front-end. Currently rejected at `SendObjectInfo` with a clear message rather than mid-transfer.
 
 **Exit criteria:** FTP, HTTP, and MTP transfer modes functional; the network screens (FTP/HTTP) show a scannable address. MTP has no address to scan; access-point mode is shelved.
 
@@ -963,6 +1034,18 @@ what determines whether something is testable.
       `appletGetAppletType()` to confirm we're a LibraryApplet; (2) whether the
       close needs `appletMainLoop()` pumping vs SDL_QUIT surfacing; (3) whether
       DBI uses a different primitive. Exit-to-hbmenu works fine meanwhile.
+- [ ] **Menu Reformat**
+
+| Menu | Sub-Menu Items|  
+|---|---|
+|Installed Titles              |← kept top-level  |  
+|Browse...                     |→ SD Card, System Partition, User Partition,  |  
+|                              |  USB Drives, Network, Homebrew, Tickets, Save Data  |  
+|Install from Cartridge        |← kept top-level  |  
+|Connectivity...               |→ USB-MTP, FTP Server, HTTP Server  |  
+|System...                     |→ Tools, Settings, Activity Log  |  
+|Exit...                       |→ Home Menu, hbmenu, Bootloader, Shutdown  |  
+
 - [ ] **Activity stats (deferred to M4)** — first-gameplay date, session counts,
       playtime totals must come from the per-user save archive
       `SYSTEM:/save/80000000000000F0` (DBI/NX-Activity-Log source), not the pdm

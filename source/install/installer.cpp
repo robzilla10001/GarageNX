@@ -315,8 +315,14 @@ static std::vector<uint8_t> make_empty_cert(size_t size = 0x700) {
 bool install(std::vector<ContentEntry> contents,
              Core::Ncm::Storage storage,
              const Core::Keys::Keyset& keys,
-             Progress& progress) {
-    progress.reset();
+             Progress& progress,
+             bool contents_preregistered) {
+    // Do NOT reset a Progress we did not start. When StreamInstaller calls here,
+    // this log already contains the only record of the transfer that just
+    // happened — entry sizes, decompressed sizes, registrations. reset() clears
+    // log_lines under the mutex, and what survives is this function narrating a
+    // no-op over content the caller already installed. See installer.hpp.
+    if (!contents_preregistered) progress.reset();
     progress.running = true;
 
     NcmStorageId storage_id = (storage == Core::Ncm::Storage::SdCard)
@@ -391,7 +397,9 @@ bool install(std::vector<ContentEntry> contents,
 
     // ── 4. Install each NCA ──────────────────────────────────────────────────
     progress.stage = "installing";
-    progress.push_log("Installing content...");
+    progress.push_log(contents_preregistered
+        ? "Content already written by the transfer; registering metadata..."
+        : "Installing content...");
 
     std::vector<NcmContentId> installed;
     bool ok = true;
@@ -418,10 +426,17 @@ bool install(std::vector<ContentEntry> contents,
         if (R_SUCCEEDED(ncmContentStorageHas(&dst_cs, &has, &content_id)) && has) {
             progress.bytes_done.fetch_add(e.size);
             progress.ncas_done.fetch_add(1);
-            char lb[128];
-            std::snprintf(lb, sizeof(lb), "[%d/%d] %s - already installed, skipped",
-                          nca_index, nca_total, e.name.c_str());
-            progress.push_log(lb);
+            // When the caller pre-registered this content, "already installed"
+            // is true but says nothing a reader wants: the content arrived
+            // moments ago over USB and the log above already reports it. Logging
+            // it again, once per content, is how a successful stream install
+            // came to look like it had done nothing at all.
+            if (!contents_preregistered) {
+                char lb[128];
+                std::snprintf(lb, sizeof(lb), "[%d/%d] %s - already installed, skipped",
+                              nca_index, nca_total, e.name.c_str());
+                progress.push_log(lb);
+            }
             continue;
         }
 

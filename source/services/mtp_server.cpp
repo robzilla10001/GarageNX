@@ -70,6 +70,14 @@ std::vector<uint8_t> MtpServer::build_device_info() const {
         Op::GetNumObjects, Op::GetObjectHandles, Op::GetObjectInfo, Op::GetObject,
         Op::SendObjectInfo, Op::SendObject, Op::DeleteObject,
         Op::GetDevicePropDesc, Op::GetDevicePropValue,
+        // MTP 1.1. A host uses SendObjectPropList only if we claim it here, and
+        // libmtp reaches it via GetObjectPropsSupported — advertising 0x9808
+        // alone leaves it unreachable. Together they are the only way an object
+        // of 4 GiB or more gets a truthful size: SendObjectInfo cannot express
+        // one. Both routes converge on arm_incoming_object().
+        // GetObjectPropDesc is not optional alongside these two: a host asks
+        // for a description of every property GetObjectPropsSupported names.
+        Op::GetObjectPropsSupported, Op::GetObjectPropDesc, Op::SendObjectPropList,
     });
     w.au16({});                       // EventsSupported — none yet
     w.au16({Mtp::Prop::DeviceFriendlyName});   // DevicePropertiesSupported
@@ -327,6 +335,117 @@ void MtpServer::save_install_log(const std::string& filename, bool ok) {
     SDL_Log("MTP: install log -> %s", path.c_str());
 }
 
+// Refuse an install and leave a trace. MTP can only answer the host with a bare
+// response code — libmtp turns that into "Could not send object info", which
+// says nothing about why — so the reason has to be recorded on this side or it
+// is lost. reset() first: m_install_progress may still hold the previous
+// install's lines, and a rejection log stapled to an unrelated transfer's
+// history is worse than none.
+void MtpServer::reject_install(const std::string& filename, const std::string& reason) {
+    m_install_progress.reset();
+    m_install_progress.push_log("Rejected: " + filename);
+    m_install_progress.push_log(reason);
+    m_install_progress.message = reason;
+    SDL_Log("MTP: rejected %s — %s", filename.c_str(), reason.c_str());
+    save_install_log(filename, false);
+}
+
+void MtpServer::arm_incoming_object(uint32_t storage, uint32_t parent, uint16_t fmt,
+                                    const std::string& filename, uint64_t size,
+                                    bool size_exact, uint32_t tid) {
+    // Refuse anything that could escape the storage root.
+    if (filename.find('/') != std::string::npos ||
+        filename.find('\\') != std::string::npos ||
+        filename == "." || filename == "..") {
+        send_response(Rc::InvalidParameter, tid); return;
+    }
+
+    // An install storage takes the file into NCM, not onto disk.
+    if (is_install_storage(storage)) {
+        if (fmt == Mtp::Fmt::Association) {
+            reject_install(filename, "an install target takes files, not folders");
+            send_response(Rc::AccessDenied, tid);
+            return;
+        }
+
+        // Reject what we cannot install *now*, before the data phase.
+        // Failing after the host has pushed several GB is both rude and
+        // (since the endpoint stops being drained) a hang.
+        //
+        // .nsz joined .nsp in slice 4b: an NSZ is a PFS0 exactly like an
+        // NSP, just with .ncz entries in place of .nca, so StreamInstaller
+        // parses the container identically and NczWindow handles the
+        // compressed entries. .xci/.xcz stay out — an XCI is HFS0 and
+        // needs its own front-end (slice 4c).
+        std::string low = filename;
+        for (auto& ch : low) ch = (char)tolower((unsigned char)ch);
+        auto has_ext = [&low](const char* ext) {
+            const size_t n = std::strlen(ext);
+            return low.size() > n && low.compare(low.size() - n, n, ext) == 0;
+        };
+        if (!has_ext(".nsp") && !has_ext(".nsz")) {
+            reject_install(filename,
+                "stream install accepts .nsp and .nsz only "
+                "(.xci/.xcz are not supported yet)");
+            send_response(Rc::InvalidParameter, tid);
+            return;
+        }
+
+        // Keys live in a singleton that must be load()ed before get()
+        // is valid — a service thread gets nothing for free. Check here
+        // rather than after the data phase, so a keyless console fails
+        // instantly instead of eating a multi-GB transfer first.
+        if (!Core::Keys::available()) {
+            Core::Keys::load();
+            if (!Core::Keys::available()) {
+                reject_install(filename, Core::Keys::requirement_message());
+                send_response(Rc::AccessDenied, tid);
+                return;
+            }
+        }
+        m_pending_storage    = storage;
+        m_pending_path       = filename;   // name only; nothing is written to a filesystem
+        m_pending_size       = size;
+        m_pending_size_exact = size_exact;
+        m_pending_valid      = true;
+        const uint32_t h = intern("install:" + filename);
+        const uint32_t rp[3] = {storage, Mtp::kRootParent, h};
+        send_response(Rc::Ok, tid, rp, 3);
+        return;
+    }
+
+    std::string dir;
+    if (parent == Mtp::kRootParent || parent == 0) {
+        dir = "sdmc:/";
+    } else {
+        const std::string* pp = path_for(parent);
+        if (!pp) { send_response(Rc::InvalidParentObject, tid); return; }
+        dir = *pp;
+    }
+    const std::string dest = Fs::join(dir, filename);
+    m_pending_storage = storage;
+
+    if (fmt == Mtp::Fmt::Association) {
+        // A folder is complete at SendObjectInfo time; no SendObject follows.
+        if (!Fs::make_directory(dest)) { send_response(Rc::GeneralError, tid); return; }
+        m_pending_valid = false;
+        const uint32_t h = intern(dest);
+        const uint32_t rp[3] = {kStorageSd, parent, h};
+        send_response(Rc::Ok, tid, rp, 3);
+        return;
+    }
+
+    m_pending_path       = dest;
+    m_pending_size       = size;
+    m_pending_size_exact = size_exact;
+    m_pending_valid      = true;
+
+    const uint32_t h = intern(dest);
+    const uint32_t rp[3] = {kStorageSd, parent, h};
+    send_response(Rc::Ok, tid, rp, 3);
+    return;
+}
+
 void MtpServer::drain_data(uint64_t remaining) {
 #ifdef PLATFORM_SWITCH
     size_t got = 0;
@@ -343,7 +462,8 @@ void MtpServer::drain_data(uint64_t remaining) {
 // Stream an NSP arriving over USB straight into NCM. Nothing touches the
 // filesystem, so a title larger than 4 GiB installs fine to a FAT32 card — the
 // bytes go from the bulk endpoint into a placeholder and never exist as a file.
-bool MtpServer::recv_install(uint32_t storage_id, const std::string& filename, uint64_t size) {
+bool MtpServer::recv_install(uint32_t storage_id, const std::string& filename,
+                             uint64_t size, bool size_exact) {
 #ifdef PLATFORM_SWITCH
     const auto dest = (storage_id == kStorageNandInstall) ? Core::Ncm::Storage::BuiltIn
                                                           : Core::Ncm::Storage::SdCard;
@@ -388,6 +508,19 @@ bool MtpServer::recv_install(uint32_t storage_id, const std::string& filename, u
     if (!undefined_len && payload != size && size != 0xFFFFFFFFu)
         m_install_progress.push_log("Note: container length and declared size disagree");
 
+    // A size the host declared in 64 bits (SendObjectPropList) outranks
+    // everything else, because it is the only value that describes the TRANSFER
+    // rather than the container's contents. The two coincide for PFS0 — an
+    // NSP's last entry ends at the file's end — which is why reading the length
+    // out of the entry table has worked so far. They will NOT coincide for an
+    // XCI, whose trailing padding belongs to the transfer but to no entry.
+    // Coming up short there does not fail an install; it leaves unread bytes in
+    // the endpoint and the next command parses file data as a header.
+    if (size_exact && size > 0) {
+        payload = size;
+        m_install_progress.push_log("Host declared an exact 64-bit size");
+    }
+
     uint64_t fed = 0;
     size_t first = got - Mtp::kHeaderSize;
     if (first > payload) first = (size_t)payload;
@@ -401,10 +534,22 @@ bool MtpServer::recv_install(uint32_t storage_id, const std::string& filename, u
     fed += first;
     m_bytes_recv.fetch_add(got);
 
-    // The PFS0 header lands in the first few bytes, so the true length is known
-    // almost immediately — long before a large transfer would have run past the
-    // 4 GiB mark.
-    if (m_install->container_size() > 0) payload = m_install->container_size();
+    // Fallback only. Without a 64-bit declaration, the container's own table is
+    // the best available answer: the PFS0 header lands in the first few bytes,
+    // so the true length is known long before a transfer runs past 4 GiB. When
+    // the host DID declare a size, this becomes a cross-check instead — a
+    // disagreement is worth recording, but the host still wins.
+    if (!size_exact && m_install->container_size() > 0) {
+        payload = m_install->container_size();
+    } else if (size_exact && m_install->container_size() > 0 &&
+               m_install->container_size() != payload) {
+        char nb[128];
+        std::snprintf(nb, sizeof(nb),
+                      "Note: declared %llu bytes, container table says %llu",
+                      (unsigned long long)payload,
+                      (unsigned long long)m_install->container_size());
+        m_install_progress.push_log(nb);
+    }
 
     // Overlap the USB reads with the placeholder writes. StreamInstaller::feed is
     // only ever touched by the worker thread here, and flush() fences it before
@@ -419,7 +564,7 @@ bool MtpServer::recv_install(uint32_t storage_id, const std::string& filename, u
         if (!ep_read(dst, m_buf_size, &got, 10000000000ULL)) break;
         if (got == 0) break;                       // ZLP terminates the data phase
         if (payload == UINT64_MAX && m_install->container_size() > 0)
-            payload = m_install->container_size();
+            payload = m_install->container_size();   // still no declaration; use the table
         size_t take = got;
         if (fed + take > payload) take = (size_t)(payload - fed);   // ignore ZLP/padding
         if (ov.valid() && !ov.submit(take)) {
@@ -671,102 +816,101 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             r.str(filename);
             if (!r.ok() || filename.empty()) { send_response(Rc::InvalidParameter, tid); break; }
 
-            // Refuse anything that could escape the storage root.
-            if (filename.find('/') != std::string::npos ||
-                filename.find('\\') != std::string::npos ||
-                filename == "." || filename == "..") {
-                send_response(Rc::InvalidParameter, tid); break;
+            // ObjectCompressedSize is u32. A host reports 0xFFFFFFFF for
+            // anything >= 4 GiB, so the value is only meaningful below that —
+            // which is exactly why SendObjectPropList exists.
+            arm_incoming_object(storage, parent, fmt, filename, comp_size,
+                                comp_size != 0xFFFFFFFFu, tid);
+            break;
+        }
+
+        case Op::SendObjectPropList: {
+            // MTP 1.1. Parameters: storage, parent, format, then
+            // ObjectCompressedSize split HIGH/LOW across params 4 and 5. That
+            // split is the whole point: it is the only route by which a host can
+            // tell us an object is larger than 4 GiB.
+            if (c.nparams < 5) { send_response(Rc::InvalidParameter, tid); break; }
+            const uint32_t storage = c.param[0];
+            const uint32_t parent  = c.param[1];
+            const uint16_t fmt     = (uint16_t)c.param[2];
+            const uint64_t size    = ((uint64_t)c.param[3] << 32) | (uint64_t)c.param[4];
+            if (storage != 0 && !storage_enabled(storage)) {
+                send_response(Rc::InvalidStorageId, tid); break;
             }
 
-            // An install storage takes the file into NCM, not onto disk.
-            if (is_install_storage(storage)) {
-                if (fmt == Mtp::Fmt::Association) { send_response(Rc::AccessDenied, tid); break; }
+            std::vector<uint8_t> data;
+            if (!read_data_container(data)) { send_response(Rc::IncompleteTransfer, tid); break; }
 
-                // Reject what we cannot install *now*, before the data phase.
-                // Failing after the host has pushed several GB is both rude and
-                // (since the endpoint stops being drained) a hang.
-                //
-                // .nsz joined .nsp in slice 4b: an NSZ is a PFS0 exactly like an
-                // NSP, just with .ncz entries in place of .nca, so StreamInstaller
-                // parses the container identically and NczWindow handles the
-                // compressed entries. .xci/.xcz stay out — an XCI is HFS0 and
-                // needs its own front-end (slice 4c).
-                std::string low = filename;
-                for (auto& ch : low) ch = (char)tolower((unsigned char)ch);
-                auto has_ext = [&low](const char* ext) {
-                    const size_t n = std::strlen(ext);
-                    return low.size() > n && low.compare(low.size() - n, n, ext) == 0;
-                };
-                if (!has_ext(".nsp") && !has_ext(".nsz")) {
-                    m_install_progress.push_log("Rejected " + filename +
-                        ": stream install accepts .nsp and .nsz (.xci/.xcz not yet supported)");
-                    send_response(Rc::InvalidParameter, tid);
-                    break;
-                }
-
-                // Keys live in a singleton that must be load()ed before get()
-                // is valid — a service thread gets nothing for free. Check here
-                // rather than after the data phase, so a keyless console fails
-                // instantly instead of eating a multi-GB transfer first.
-                if (!Core::Keys::available()) {
-                    Core::Keys::load();
-                    if (!Core::Keys::available()) {
-                        send_response(Rc::AccessDenied, tid);
-                        break;
-                    }
-                }
-                m_pending_storage = storage;
-                m_pending_path    = filename;   // name only; nothing is written to a filesystem
-                m_pending_size    = comp_size;
-                m_pending_valid   = true;
-                const uint32_t h = intern("install:" + filename);
-                const uint32_t rp[3] = {storage, Mtp::kRootParent, h};
-                send_response(Rc::Ok, tid, rp, 3);
+            std::vector<Mtp::ObjectProp> props;
+            uint32_t bad = 0;
+            if (!Mtp::parse_object_prop_list(data.data(), data.size(), props, &bad)) {
+                // The spec expects the index of the offending element back, so
+                // the host can tell which property we choked on.
+                const uint32_t rp[1] = {bad};
+                send_response(Rc::InvalidObjectPropFormat, tid, rp, 1);
                 break;
             }
 
-            std::string dir;
-            if (parent == Mtp::kRootParent || parent == 0) {
-                dir = "sdmc:/";
-            } else {
-                const std::string* pp = path_for(parent);
-                if (!pp) { send_response(Rc::InvalidParentObject, tid); break; }
-                dir = *pp;
-            }
-            const std::string dest = Fs::join(dir, filename);
-            m_pending_storage = storage;
+            // The filename lives in the dataset, not the parameters.
+            const Mtp::ObjectProp* fn = Mtp::find_prop(props, Mtp::ObjProp::ObjectFileName);
+            if (!fn || fn->text.empty()) { send_response(Rc::InvalidDataset, tid); break; }
 
-            if (fmt == Mtp::Fmt::Association) {
-                // A folder is complete at SendObjectInfo time; no SendObject follows.
-                if (!Fs::make_directory(dest)) { send_response(Rc::GeneralError, tid); break; }
-                m_pending_valid = false;
-                const uint32_t h = intern(dest);
-                const uint32_t rp[3] = {kStorageSd, parent, h};
-                send_response(Rc::Ok, tid, rp, 3);
+            arm_incoming_object(storage, parent, fmt, fn->text, size, true, tid);
+            break;
+        }
+
+        case Op::GetObjectPropDesc: {
+            // Params: property code, object format. A host asks this about EVERY
+            // property GetObjectPropsSupported named, to learn its datatype
+            // before it can encode a value. libmtp abandons the whole send if
+            // one fails — "could not get property description" — so this is a
+            // hard obligation created by the answer above, not an extra.
+            if (c.nparams < 1) { send_response(Rc::InvalidParameter, tid); break; }
+            Writer w;
+            if (!Mtp::build_object_prop_desc((uint16_t)c.param[0], w)) {
+                send_response(Rc::ObjectPropNotSupported, tid);
                 break;
             }
+            if (send_data(Op::GetObjectPropDesc, tid, w.data()))
+                send_response(Rc::Ok, tid);
+            break;
+        }
 
-            m_pending_path  = dest;
-            m_pending_size  = comp_size;
-            m_pending_valid = true;
-
-            const uint32_t h = intern(dest);
-            const uint32_t rp[3] = {kStorageSd, parent, h};
-            send_response(Rc::Ok, tid, rp, 3);
+        case Op::GetObjectPropsSupported: {
+            if (c.nparams < 1) { send_response(Rc::InvalidParameter, tid); break; }
+            // Not decoration: libmtp calls this BEFORE SendObjectPropList and
+            // gives up if it fails, so 0x9808 is unreachable without it.
+            //
+            // Answering here creates an obligation. The host then calls
+            // GetObjectPropDesc for EVERY code named below, and abandons the
+            // send if any one is missing. So this list must satisfy both:
+            //   * build_object_prop_desc() can describe it, and
+            //   * parse_object_prop_list() can decode the value it invites.
+            // tests/mtp_protocol_test.cpp asserts both directions over exactly
+            // this list; keep them in step.
+            Writer w;
+            w.au16({Mtp::ObjProp::StorageId, Mtp::ObjProp::ObjectFormat,
+                    Mtp::ObjProp::ProtectionStatus, Mtp::ObjProp::ObjectSize,
+                    Mtp::ObjProp::ObjectFileName, Mtp::ObjProp::ParentObject});
+            if (send_data(Op::GetObjectPropsSupported, tid, w.data()))
+                send_response(Rc::Ok, tid);
             break;
         }
 
         case Op::SendObject: {
-            // Must be preceded by SendObjectInfo — the spec has no other way to
-            // know where the bytes belong.
+            // Must be preceded by SendObjectInfo or SendObjectPropList — the
+            // spec has no other way to know where the bytes belong. Both arm the
+            // same m_pending_* state; they differ only in whether the declared
+            // size can be trusted at or above 4 GiB.
             if (!m_pending_valid) { send_response(Rc::GeneralError, tid); break; }
             const std::string dest    = m_pending_path;
             const uint64_t    size    = m_pending_size;
             const uint32_t    storage = m_pending_storage;
-            m_pending_valid = false;   // one SendObject per SendObjectInfo
+            const bool        exact   = m_pending_size_exact;
+            m_pending_valid = false;   // one SendObject per declaration
 
             if (is_install_storage(storage)) {
-                send_response(recv_install(storage, dest, size) ? Rc::Ok : Rc::GeneralError, tid);
+                send_response(recv_install(storage, dest, size, exact) ? Rc::Ok : Rc::GeneralError, tid);
             } else {
                 send_response(recv_file_data(dest, size) ? Rc::Ok : Rc::IncompleteTransfer, tid);
             }

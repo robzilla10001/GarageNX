@@ -104,13 +104,30 @@ private:
     std::string m_pending_path;
     uint64_t    m_pending_size  = 0;
     bool        m_pending_valid = false;
+    /// False when m_pending_size came from SendObjectInfo and was saturated at
+    /// 0xFFFFFFFF. See recv_install(): it decides whether the host's declared
+    /// length or the container's own table is the authority for the data phase.
+    bool        m_pending_size_exact = false;
 
     // ── Install storages ─────────────────────────────────────────────────────
     // Writing an NSP to one of these streams it straight into NCM rather than
     // onto the filesystem — no staging file, so the FAT32 4 GiB ceiling never
     // applies. m_install is live only between SendObjectInfo and SendObject.
     bool  storage_enabled(uint32_t storage_id) const;
-    bool  recv_install(uint32_t storage_id, const std::string& filename, uint64_t size);
+    /// `size_exact` distinguishes a 64-bit size the host actually declared
+    /// (SendObjectPropList) from SendObjectInfo's u32, which saturates at
+    /// 0xFFFFFFFF and is therefore meaningless at or above 4 GiB.
+    bool  recv_install(uint32_t storage_id, const std::string& filename,
+                       uint64_t size, bool size_exact);
+
+    /// Arm m_pending_* for an incoming object and answer the host. Shared by
+    /// SendObjectInfo and SendObjectPropList: those operations differ only in
+    /// HOW the host declares an object — a fixed dataset vs a property list —
+    /// not in what we do about it. Keeping one body means the install gate
+    /// cannot drift between the two routes and leave one of them open.
+    void  arm_incoming_object(uint32_t storage, uint32_t parent, uint16_t fmt,
+                              const std::string& filename, uint64_t size,
+                              bool size_exact, uint32_t tid);
 
     // Read and discard the rest of a data phase. A host that is mid-send blocks
     // forever if the device simply stops reading, so every early exit has to
@@ -118,6 +135,13 @@ private:
     void  drain_data(uint64_t remaining);
 
     void save_install_log(const std::string& filename, bool ok);
+    /// Refuse an install before the data phase and leave a trace of WHY.
+    /// save_install_log() is otherwise only reached from recv_install(), so a
+    /// SendObjectInfo rejection used to push its reason into m_install_progress
+    /// and then discard it unread — the host sees a bare PTP response code and
+    /// the user sees nothing at all. Always use this instead of a raw push_log
+    /// when refusing in the SendObjectInfo handler.
+    void reject_install(const std::string& filename, const std::string& reason);
 
     std::atomic<bool>                        m_installing{false};
     std::unique_ptr<Install::StreamInstaller> m_install;

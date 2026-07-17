@@ -113,10 +113,27 @@ struct ContentEntry {
 // `keys` must contain at least header_key (for CNMT NCA decryption).
 // `storage` is the destination (SD or NAND).
 // Returns true on success.
+/// `contents_preregistered`: the caller has ALREADY written and registered every
+/// large NCA — StreamInstaller does exactly that as the bytes arrive off USB, so
+/// by the time it calls here only metadata and tickets remain. Two consequences,
+/// both from that one fact:
+///
+///   * `progress` already holds the real account of the install, so it must NOT
+///     be reset. Resetting it erases the transfer's log and leaves only this
+///     function's view — which, since everything really is already registered,
+///     reads as "already installed, skipped" for every content and looks exactly
+///     like an install that never happened.
+///   * The per-content skip lines are then noise. They are accurate, but they
+///     report on work that DID occur, just not here. They are suppressed and
+///     replaced with a single line naming the hand-off.
+///
+/// Leave false for the file-browser path, which owns its Progress outright and
+/// for which "already installed" genuinely means pre-existing.
 bool install(std::vector<ContentEntry> contents,
              Core::Ncm::Storage storage,
              const Core::Keys::Keyset& keys,
-             Progress& progress);
+             Progress& progress,
+             bool contents_preregistered = false);
 
 // Convenience: build a ContentEntry list from an already-opened NspReader or
 // XciReader (both expose the same PfsEntry vector + read() method). This is

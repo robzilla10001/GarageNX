@@ -1,0 +1,1397 @@
+.
+├── assets
+│   ├── bg
+│   │   └── garageNX.png
+│   ├── fonts
+│   │   ├── DejaVuSansMono.ttf
+│   │   ├── Inter-Bold.ttf
+│   │   ├── Inter-Regular.ttf
+│   │   └── README.txt
+│   ├── icons
+│   │   ├── icon.jpg
+│   │   └── README.txt
+│   └── lang
+│       └── en.json
+├── build
+│   ├── assets
+│   │   ├── bg
+│   │   │   └── garageNX.png
+│   │   ├── fonts
+│   │   │   ├── DejaVuSansMono.ttf
+│   │   │   ├── Inter-Bold.ttf
+│   │   │   ├── Inter-Regular.ttf
+│   │   │   └── README.txt
+│   │   ├── icons
+│   │   │   ├── icon.jpg
+│   │   │   └── README.txt
+│   │   └── lang
+│   │       └── en.json
+│   ├── build.log
+│   ├── CMakeCache.txt
+│   ├── CMakeFiles
+│   │   ├── 3.31.6
+│   │   │   ├── CMakeASMCompiler.cmake
+│   │   │   ├── CMakeCCompiler.cmake
+│   │   │   ├── CMakeCXXCompiler.cmake
+│   │   │   ├── CMakeDetermineCompilerABI_C.bin
+│   │   │   ├── CMakeDetermineCompilerABI_CXX.bin
+│   │   │   ├── CMakeSystem.cmake
+│   │   │   ├── CompilerIdASM
+│   │   │   ├── CompilerIdC
+│   │   │   │   ├── a.out
+│   │   │   │   ├── CMakeCCompilerId.c
+│   │   │   │   └── tmp
+│   │   │   └── CompilerIdCXX
+│   │   │       ├── a.out
+│   │   │       ├── CMakeCXXCompilerId.cpp
+│   │   │       └── tmp
+│   │   ├── cmake.check_cache
+│   │   ├── CMakeConfigureLog.yaml
+│   │   ├── CMakeDirectoryInformation.cmake
+│   │   ├── CMakeRuleHashes.txt
+│   │   ├── GarageNX.dir
+│   │   │   ├── build.make
+│   │   │   ├── cmake_clean.cmake
+│   │   │   ├── compiler_depend.internal
+│   │   │   ├── compiler_depend.make
+│   │   │   ├── compiler_depend.ts
+│   │   │   ├── DependInfo.cmake
+│   │   │   ├── depend.make
+│   │   │   ├── flags.make
+│   │   │   ├── link.txt
+│   │   │   ├── progress.make
+│   │   │   └── source
+│   │   │       ├── config
+│   │   │       │   ├── config.cpp.obj
+│   │   │       │   └── config.cpp.obj.d
+│   │   │       ├── core
+│   │   │       │   ├── activity.cpp.obj
+│   │   │       │   ├── activity.cpp.obj.d
+│   │   │       │   ├── atmosphere.cpp.obj
+│   │   │       │   ├── atmosphere.cpp.obj.d
+│   │   │       │   ├── battery.cpp.obj
+│   │   │       │   ├── battery.cpp.obj.d
+│   │   │       │   ├── datetime.cpp.obj
+│   │   │       │   ├── datetime.cpp.obj.d
+│   │   │       │   ├── dump.cpp.obj
+│   │   │       │   ├── dump.cpp.obj.d
+│   │   │       │   ├── es.cpp.obj
+│   │   │       │   ├── es.cpp.obj.d
+│   │   │       │   ├── fs.cpp.obj
+│   │   │       │   ├── fs.cpp.obj.d
+│   │   │       │   ├── keys.cpp.obj
+│   │   │       │   ├── keys.cpp.obj.d
+│   │   │       │   ├── nca.cpp.obj
+│   │   │       │   ├── nca.cpp.obj.d
+│   │   │       │   ├── ncm.cpp.obj
+│   │   │       │   ├── ncm.cpp.obj.d
+│   │   │       │   ├── net.cpp.obj
+│   │   │       │   ├── net.cpp.obj.d
+│   │   │       │   ├── ntp.cpp.obj
+│   │   │       │   ├── ntp.cpp.obj.d
+│   │   │       │   ├── qr.cpp.obj
+│   │   │       │   ├── qr.cpp.obj.d
+│   │   │       │   ├── record_probe.cpp.obj
+│   │   │       │   ├── record_probe.cpp.obj.d
+│   │   │       │   ├── storage.cpp.obj
+│   │   │       │   ├── storage.cpp.obj.d
+│   │   │       │   ├── system.cpp.obj
+│   │   │       │   ├── system.cpp.obj.d
+│   │   │       │   ├── title_ops.cpp.obj
+│   │   │       │   └── title_ops.cpp.obj.d
+│   │   │       ├── install
+│   │   │       │   ├── installer.cpp.obj
+│   │   │       │   ├── installer.cpp.obj.d
+│   │   │       │   ├── ncz.cpp.obj
+│   │   │       │   ├── ncz.cpp.obj.d
+│   │   │       │   ├── ncz_window.cpp.obj
+│   │   │       │   ├── ncz_window.cpp.obj.d
+│   │   │       │   ├── nsp_reader.cpp.obj
+│   │   │       │   ├── nsp_reader.cpp.obj.d
+│   │   │       │   ├── stream_installer.cpp.obj
+│   │   │       │   ├── stream_installer.cpp.obj.d
+│   │   │       │   ├── xci_reader.cpp.obj
+│   │   │       │   └── xci_reader.cpp.obj.d
+│   │   │       ├── lang
+│   │   │       │   ├── localization.cpp.obj
+│   │   │       │   └── localization.cpp.obj.d
+│   │   │       ├── main.cpp.obj
+│   │   │       ├── main.cpp.obj.d
+│   │   │       ├── screens
+│   │   │       │   ├── file_browser.cpp.obj
+│   │   │       │   ├── file_browser.cpp.obj.d
+│   │   │       │   ├── file_viewer.cpp.obj
+│   │   │       │   ├── file_viewer.cpp.obj.d
+│   │   │       │   ├── ftp_screen.cpp.obj
+│   │   │       │   ├── ftp_screen.cpp.obj.d
+│   │   │       │   ├── http_screen.cpp.obj
+│   │   │       │   ├── http_screen.cpp.obj.d
+│   │   │       │   ├── main_menu.cpp.obj
+│   │   │       │   ├── main_menu.cpp.obj.d
+│   │   │       │   ├── mtp_screen.cpp.obj
+│   │   │       │   ├── mtp_screen.cpp.obj.d
+│   │   │       │   ├── system_info.cpp.obj
+│   │   │       │   ├── system_info.cpp.obj.d
+│   │   │       │   ├── title_detail.cpp.obj
+│   │   │       │   ├── title_detail.cpp.obj.d
+│   │   │       │   ├── title_list.cpp.obj
+│   │   │       │   ├── title_list.cpp.obj.d
+│   │   │       │   ├── title_test.cpp.obj
+│   │   │       │   └── title_test.cpp.obj.d
+│   │   │       ├── services
+│   │   │       │   ├── ftp_server.cpp.obj
+│   │   │       │   ├── ftp_server.cpp.obj.d
+│   │   │       │   ├── http_server.cpp.obj
+│   │   │       │   ├── http_server.cpp.obj.d
+│   │   │       │   ├── mtp_data.cpp.obj
+│   │   │       │   ├── mtp_data.cpp.obj.d
+│   │   │       │   ├── mtp_server.cpp.obj
+│   │   │       │   ├── mtp_server.cpp.obj.d
+│   │   │       │   ├── overlap_buffer.cpp.obj
+│   │   │       │   ├── overlap_buffer.cpp.obj.d
+│   │   │       │   ├── rate_meter.cpp.obj
+│   │   │       │   ├── rate_meter.cpp.obj.d
+│   │   │       │   ├── service_manager.cpp.obj
+│   │   │       │   └── service_manager.cpp.obj.d
+│   │   │       └── ui
+│   │   │           ├── font.cpp.obj
+│   │   │           ├── font.cpp.obj.d
+│   │   │           ├── input.cpp.obj
+│   │   │           ├── input.cpp.obj.d
+│   │   │           ├── keyboard.cpp.obj
+│   │   │           ├── keyboard.cpp.obj.d
+│   │   │           ├── layout.cpp.obj
+│   │   │           ├── layout.cpp.obj.d
+│   │   │           ├── modal.cpp.obj
+│   │   │           ├── modal.cpp.obj.d
+│   │   │           ├── renderer.cpp.obj
+│   │   │           ├── renderer.cpp.obj.d
+│   │   │           ├── splash.cpp.obj
+│   │   │           ├── splash.cpp.obj.d
+│   │   │           ├── status_bar.cpp.obj
+│   │   │           ├── status_bar.cpp.obj.d
+│   │   │           ├── theme.cpp.obj
+│   │   │           ├── theme.cpp.obj.d
+│   │   │           ├── title_bar.cpp.obj
+│   │   │           ├── title_bar.cpp.obj.d
+│   │   │           ├── widgets.cpp.obj
+│   │   │           └── widgets.cpp.obj.d
+│   │   ├── Makefile2
+│   │   ├── Makefile.cmake
+│   │   ├── ns_probe.dir
+│   │   │   ├── build.make
+│   │   │   ├── cmake_clean.cmake
+│   │   │   ├── compiler_depend.internal
+│   │   │   ├── compiler_depend.make
+│   │   │   ├── compiler_depend.ts
+│   │   │   ├── DependInfo.cmake
+│   │   │   ├── depend.make
+│   │   │   ├── flags.make
+│   │   │   ├── link.txt
+│   │   │   ├── progress.make
+│   │   │   └── tools
+│   │   │       └── ns_probe
+│   │   │           ├── ns_probe.cpp.obj
+│   │   │           └── ns_probe.cpp.obj.d
+│   │   ├── pkgRedirects
+│   │   ├── progress.marks
+│   │   └── TargetDirectories.txt
+│   ├── cmake_install.cmake
+│   ├── _deps
+│   │   ├── zstd-build
+│   │   │   ├── CMakeFiles
+│   │   │   │   ├── clean-all.dir
+│   │   │   │   │   ├── build.make
+│   │   │   │   │   ├── cmake_clean.cmake
+│   │   │   │   │   ├── compiler_depend.make
+│   │   │   │   │   ├── compiler_depend.ts
+│   │   │   │   │   ├── DependInfo.cmake
+│   │   │   │   │   └── progress.make
+│   │   │   │   ├── CMakeDirectoryInformation.cmake
+│   │   │   │   ├── Export
+│   │   │   │   │   └── 24b5c28278294f635c8f75e4f2508fe8
+│   │   │   │   │       ├── zstdTargets.cmake
+│   │   │   │   │       └── zstdTargets-release.cmake
+│   │   │   │   └── progress.marks
+│   │   │   ├── cmake_install.cmake
+│   │   │   ├── lib
+│   │   │   │   ├── CMakeFiles
+│   │   │   │   │   ├── CMakeDirectoryInformation.cmake
+│   │   │   │   │   ├── libzstd_static.dir
+│   │   │   │   │   │   ├── __
+│   │   │   │   │   │   │   └── __
+│   │   │   │   │   │   │       └── __
+│   │   │   │   │   │   │           └── lib
+│   │   │   │   │   │   │               ├── common
+│   │   │   │   │   │   │               │   ├── debug.c.obj
+│   │   │   │   │   │   │               │   ├── debug.c.obj.d
+│   │   │   │   │   │   │               │   ├── entropy_common.c.obj
+│   │   │   │   │   │   │               │   ├── entropy_common.c.obj.d
+│   │   │   │   │   │   │               │   ├── error_private.c.obj
+│   │   │   │   │   │   │               │   ├── error_private.c.obj.d
+│   │   │   │   │   │   │               │   ├── fse_decompress.c.obj
+│   │   │   │   │   │   │               │   ├── fse_decompress.c.obj.d
+│   │   │   │   │   │   │               │   ├── pool.c.obj
+│   │   │   │   │   │   │               │   ├── pool.c.obj.d
+│   │   │   │   │   │   │               │   ├── threading.c.obj
+│   │   │   │   │   │   │               │   ├── threading.c.obj.d
+│   │   │   │   │   │   │               │   ├── xxhash.c.obj
+│   │   │   │   │   │   │               │   ├── xxhash.c.obj.d
+│   │   │   │   │   │   │               │   ├── zstd_common.c.obj
+│   │   │   │   │   │   │               │   └── zstd_common.c.obj.d
+│   │   │   │   │   │   │               ├── compress
+│   │   │   │   │   │   │               │   ├── fse_compress.c.obj
+│   │   │   │   │   │   │               │   ├── fse_compress.c.obj.d
+│   │   │   │   │   │   │               │   ├── hist.c.obj
+│   │   │   │   │   │   │               │   ├── hist.c.obj.d
+│   │   │   │   │   │   │               │   ├── huf_compress.c.obj
+│   │   │   │   │   │   │               │   ├── huf_compress.c.obj.d
+│   │   │   │   │   │   │               │   ├── zstd_compress.c.obj
+│   │   │   │   │   │   │               │   ├── zstd_compress.c.obj.d
+│   │   │   │   │   │   │               │   ├── zstd_compress_literals.c.obj
+│   │   │   │   │   │   │               │   ├── zstd_compress_literals.c.obj.d
+│   │   │   │   │   │   │               │   ├── zstd_compress_sequences.c.obj
+│   │   │   │   │   │   │               │   ├── zstd_compress_sequences.c.obj.d
+│   │   │   │   │   │   │               │   ├── zstd_compress_superblock.c.obj
+│   │   │   │   │   │   │               │   ├── zstd_compress_superblock.c.obj.d
+│   │   │   │   │   │   │               │   ├── zstd_double_fast.c.obj
+│   │   │   │   │   │   │               │   ├── zstd_double_fast.c.obj.d
+│   │   │   │   │   │   │               │   ├── zstd_fast.c.obj
+│   │   │   │   │   │   │               │   ├── zstd_fast.c.obj.d
+│   │   │   │   │   │   │               │   ├── zstd_lazy.c.obj
+│   │   │   │   │   │   │               │   ├── zstd_lazy.c.obj.d
+│   │   │   │   │   │   │               │   ├── zstd_ldm.c.obj
+│   │   │   │   │   │   │               │   ├── zstd_ldm.c.obj.d
+│   │   │   │   │   │   │               │   ├── zstdmt_compress.c.obj
+│   │   │   │   │   │   │               │   ├── zstdmt_compress.c.obj.d
+│   │   │   │   │   │   │               │   ├── zstd_opt.c.obj
+│   │   │   │   │   │   │               │   └── zstd_opt.c.obj.d
+│   │   │   │   │   │   │               ├── decompress
+│   │   │   │   │   │   │               │   ├── huf_decompress_amd64.S.obj
+│   │   │   │   │   │   │               │   ├── huf_decompress_amd64.S.obj.d
+│   │   │   │   │   │   │               │   ├── huf_decompress.c.obj
+│   │   │   │   │   │   │               │   ├── huf_decompress.c.obj.d
+│   │   │   │   │   │   │               │   ├── zstd_ddict.c.obj
+│   │   │   │   │   │   │               │   ├── zstd_ddict.c.obj.d
+│   │   │   │   │   │   │               │   ├── zstd_decompress_block.c.obj
+│   │   │   │   │   │   │               │   ├── zstd_decompress_block.c.obj.d
+│   │   │   │   │   │   │               │   ├── zstd_decompress.c.obj
+│   │   │   │   │   │   │               │   └── zstd_decompress.c.obj.d
+│   │   │   │   │   │   │               └── dictBuilder
+│   │   │   │   │   │   │                   ├── cover.c.obj
+│   │   │   │   │   │   │                   ├── cover.c.obj.d
+│   │   │   │   │   │   │                   ├── divsufsort.c.obj
+│   │   │   │   │   │   │                   ├── divsufsort.c.obj.d
+│   │   │   │   │   │   │                   ├── fastcover.c.obj
+│   │   │   │   │   │   │                   ├── fastcover.c.obj.d
+│   │   │   │   │   │   │                   ├── zdict.c.obj
+│   │   │   │   │   │   │                   └── zdict.c.obj.d
+│   │   │   │   │   │   ├── build.make
+│   │   │   │   │   │   ├── cmake_clean.cmake
+│   │   │   │   │   │   ├── cmake_clean_target.cmake
+│   │   │   │   │   │   ├── compiler_depend.internal
+│   │   │   │   │   │   ├── compiler_depend.make
+│   │   │   │   │   │   ├── compiler_depend.ts
+│   │   │   │   │   │   ├── DependInfo.cmake
+│   │   │   │   │   │   ├── depend.make
+│   │   │   │   │   │   ├── flags.make
+│   │   │   │   │   │   ├── link.txt
+│   │   │   │   │   │   └── progress.make
+│   │   │   │   │   ├── progress.marks
+│   │   │   │   │   └── uninstall.dir
+│   │   │   │   │       ├── build.make
+│   │   │   │   │       ├── cmake_clean.cmake
+│   │   │   │   │       ├── compiler_depend.make
+│   │   │   │   │       ├── compiler_depend.ts
+│   │   │   │   │       ├── DependInfo.cmake
+│   │   │   │   │       └── progress.make
+│   │   │   │   ├── cmake_install.cmake
+│   │   │   │   ├── cmake_uninstall.cmake
+│   │   │   │   ├── libzstd.a
+│   │   │   │   ├── libzstd.pc
+│   │   │   │   └── Makefile
+│   │   │   ├── Makefile
+│   │   │   ├── zstdConfig.cmake
+│   │   │   ├── zstdConfigVersion.cmake
+│   │   │   └── zstdTargets.cmake
+│   │   ├── zstd-src
+│   │   │   ├── appveyor.yml
+│   │   │   ├── build
+│   │   │   │   ├── cmake
+│   │   │   │   │   ├── CMakeLists.txt
+│   │   │   │   │   ├── CMakeModules
+│   │   │   │   │   │   ├── AddZstdCompilationFlags.cmake
+│   │   │   │   │   │   ├── FindLibLZ4.cmake
+│   │   │   │   │   │   ├── GetZstdLibraryVersion.cmake
+│   │   │   │   │   │   └── JoinPaths.cmake
+│   │   │   │   │   ├── contrib
+│   │   │   │   │   │   ├── CMakeLists.txt
+│   │   │   │   │   │   ├── gen_html
+│   │   │   │   │   │   │   └── CMakeLists.txt
+│   │   │   │   │   │   └── pzstd
+│   │   │   │   │   │       └── CMakeLists.txt
+│   │   │   │   │   ├── lib
+│   │   │   │   │   │   ├── CMakeLists.txt
+│   │   │   │   │   │   └── cmake_uninstall.cmake.in
+│   │   │   │   │   ├── programs
+│   │   │   │   │   │   └── CMakeLists.txt
+│   │   │   │   │   ├── README.md
+│   │   │   │   │   ├── tests
+│   │   │   │   │   │   └── CMakeLists.txt
+│   │   │   │   │   └── zstdConfig.cmake
+│   │   │   │   ├── LICENSE
+│   │   │   │   ├── meson
+│   │   │   │   │   ├── contrib
+│   │   │   │   │   │   ├── gen_html
+│   │   │   │   │   │   │   └── meson.build
+│   │   │   │   │   │   ├── meson.build
+│   │   │   │   │   │   └── pzstd
+│   │   │   │   │   │       └── meson.build
+│   │   │   │   │   ├── GetZstdLibraryVersion.py
+│   │   │   │   │   ├── InstallSymlink.py
+│   │   │   │   │   ├── lib
+│   │   │   │   │   │   └── meson.build
+│   │   │   │   │   ├── meson.build
+│   │   │   │   │   ├── meson_options.txt
+│   │   │   │   │   ├── programs
+│   │   │   │   │   │   └── meson.build
+│   │   │   │   │   ├── README.md
+│   │   │   │   │   └── tests
+│   │   │   │   │       ├── meson.build
+│   │   │   │   │       └── valgrindTest.py
+│   │   │   │   ├── README.md
+│   │   │   │   ├── single_file_libs
+│   │   │   │   │   ├── build_decoder_test.sh
+│   │   │   │   │   ├── build_library_test.sh
+│   │   │   │   │   ├── combine.py
+│   │   │   │   │   ├── combine.sh
+│   │   │   │   │   ├── create_single_file_decoder.sh
+│   │   │   │   │   ├── create_single_file_library.sh
+│   │   │   │   │   ├── examples
+│   │   │   │   │   │   ├── emscripten.c
+│   │   │   │   │   │   ├── README.md
+│   │   │   │   │   │   ├── roundtrip.c
+│   │   │   │   │   │   ├── shell.html
+│   │   │   │   │   │   ├── simple.c
+│   │   │   │   │   │   ├── testcard-dxt1.inl
+│   │   │   │   │   │   ├── testcard.png
+│   │   │   │   │   │   └── testcard-zstd.inl
+│   │   │   │   │   ├── README.md
+│   │   │   │   │   ├── zstddeclib-in.c
+│   │   │   │   │   └── zstd-in.c
+│   │   │   │   ├── VS2008
+│   │   │   │   │   ├── fullbench
+│   │   │   │   │   │   └── fullbench.vcproj
+│   │   │   │   │   ├── fuzzer
+│   │   │   │   │   │   └── fuzzer.vcproj
+│   │   │   │   │   ├── zstd
+│   │   │   │   │   │   └── zstd.vcproj
+│   │   │   │   │   ├── zstdlib
+│   │   │   │   │   │   └── zstdlib.vcproj
+│   │   │   │   │   └── zstd.sln
+│   │   │   │   ├── VS2010
+│   │   │   │   │   ├── CompileAsCpp.props
+│   │   │   │   │   ├── datagen
+│   │   │   │   │   │   └── datagen.vcxproj
+│   │   │   │   │   ├── fullbench
+│   │   │   │   │   │   └── fullbench.vcxproj
+│   │   │   │   │   ├── fullbench-dll
+│   │   │   │   │   │   └── fullbench-dll.vcxproj
+│   │   │   │   │   ├── fuzzer
+│   │   │   │   │   │   └── fuzzer.vcxproj
+│   │   │   │   │   ├── libzstd
+│   │   │   │   │   │   └── libzstd.vcxproj
+│   │   │   │   │   ├── libzstd-dll
+│   │   │   │   │   │   ├── libzstd-dll.rc
+│   │   │   │   │   │   └── libzstd-dll.vcxproj
+│   │   │   │   │   ├── zstd
+│   │   │   │   │   │   ├── zstd.rc
+│   │   │   │   │   │   └── zstd.vcxproj
+│   │   │   │   │   └── zstd.sln
+│   │   │   │   └── VS_scripts
+│   │   │   │       ├── build.generic.cmd
+│   │   │   │       ├── build.VS2010.cmd
+│   │   │   │       ├── build.VS2012.cmd
+│   │   │   │       ├── build.VS2013.cmd
+│   │   │   │       ├── build.VS2015.cmd
+│   │   │   │       ├── build.VS2017.cmd
+│   │   │   │       ├── build.VS2017Community.cmd
+│   │   │   │       ├── build.VS2017Enterprise.cmd
+│   │   │   │       ├── build.VS2017Professional.cmd
+│   │   │   │       └── README.md
+│   │   │   ├── CHANGELOG
+│   │   │   ├── CODE_OF_CONDUCT.md
+│   │   │   ├── contrib
+│   │   │   │   ├── cleanTabs
+│   │   │   │   ├── diagnose_corruption
+│   │   │   │   │   ├── check_flipped_bits.c
+│   │   │   │   │   └── Makefile
+│   │   │   │   ├── docker
+│   │   │   │   │   ├── Dockerfile
+│   │   │   │   │   └── README.md
+│   │   │   │   ├── externalSequenceProducer
+│   │   │   │   │   ├── main.c
+│   │   │   │   │   ├── Makefile
+│   │   │   │   │   ├── README.md
+│   │   │   │   │   ├── sequence_producer.c
+│   │   │   │   │   └── sequence_producer.h
+│   │   │   │   ├── freestanding_lib
+│   │   │   │   │   └── freestanding.py
+│   │   │   │   ├── gen_html
+│   │   │   │   │   ├── gen_html.cpp
+│   │   │   │   │   ├── gen-zstd-manual.sh
+│   │   │   │   │   ├── Makefile
+│   │   │   │   │   └── README.md
+│   │   │   │   ├── largeNbDicts
+│   │   │   │   │   ├── largeNbDicts.c
+│   │   │   │   │   ├── Makefile
+│   │   │   │   │   └── README.md
+│   │   │   │   ├── linux-kernel
+│   │   │   │   │   ├── btrfs-benchmark.sh
+│   │   │   │   │   ├── btrfs-extract-benchmark.sh
+│   │   │   │   │   ├── decompress_sources.h
+│   │   │   │   │   ├── linux.mk
+│   │   │   │   │   ├── linux_zstd.h
+│   │   │   │   │   ├── Makefile
+│   │   │   │   │   ├── mem.h
+│   │   │   │   │   ├── README.md
+│   │   │   │   │   ├── squashfs-benchmark.sh
+│   │   │   │   │   ├── test
+│   │   │   │   │   │   ├── include
+│   │   │   │   │   │   │   ├── asm
+│   │   │   │   │   │   │   │   └── unaligned.h
+│   │   │   │   │   │   │   └── linux
+│   │   │   │   │   │   │       ├── compiler.h
+│   │   │   │   │   │   │       ├── errno.h
+│   │   │   │   │   │   │       ├── kernel.h
+│   │   │   │   │   │   │       ├── limits.h
+│   │   │   │   │   │   │       ├── math64.h
+│   │   │   │   │   │   │       ├── module.h
+│   │   │   │   │   │   │       ├── printk.h
+│   │   │   │   │   │   │       ├── stddef.h
+│   │   │   │   │   │   │       ├── swab.h
+│   │   │   │   │   │   │       ├── types.h
+│   │   │   │   │   │   │       └── xxhash.h
+│   │   │   │   │   │   ├── macro-test.sh
+│   │   │   │   │   │   ├── Makefile
+│   │   │   │   │   │   ├── static_test.c
+│   │   │   │   │   │   └── test.c
+│   │   │   │   │   ├── zstd_common_module.c
+│   │   │   │   │   ├── zstd_compress_module.c
+│   │   │   │   │   ├── zstd_decompress_module.c
+│   │   │   │   │   └── zstd_deps.h
+│   │   │   │   ├── match_finders
+│   │   │   │   │   ├── README.md
+│   │   │   │   │   ├── zstd_edist.c
+│   │   │   │   │   └── zstd_edist.h
+│   │   │   │   ├── premake
+│   │   │   │   │   ├── premake4.lua
+│   │   │   │   │   └── zstd.lua
+│   │   │   │   ├── pzstd
+│   │   │   │   │   ├── BUCK
+│   │   │   │   │   ├── ErrorHolder.h
+│   │   │   │   │   ├── images
+│   │   │   │   │   │   ├── Cspeed.png
+│   │   │   │   │   │   └── Dspeed.png
+│   │   │   │   │   ├── Logging.h
+│   │   │   │   │   ├── main.cpp
+│   │   │   │   │   ├── Makefile
+│   │   │   │   │   ├── Options.cpp
+│   │   │   │   │   ├── Options.h
+│   │   │   │   │   ├── Pzstd.cpp
+│   │   │   │   │   ├── Pzstd.h
+│   │   │   │   │   ├── README.md
+│   │   │   │   │   ├── SkippableFrame.cpp
+│   │   │   │   │   ├── SkippableFrame.h
+│   │   │   │   │   ├── test
+│   │   │   │   │   │   ├── BUCK
+│   │   │   │   │   │   ├── OptionsTest.cpp
+│   │   │   │   │   │   ├── PzstdTest.cpp
+│   │   │   │   │   │   ├── RoundTrip.h
+│   │   │   │   │   │   └── RoundTripTest.cpp
+│   │   │   │   │   └── utils
+│   │   │   │   │       ├── BUCK
+│   │   │   │   │       ├── Buffer.h
+│   │   │   │   │       ├── FileSystem.h
+│   │   │   │   │       ├── Likely.h
+│   │   │   │   │       ├── Portability.h
+│   │   │   │   │       ├── Range.h
+│   │   │   │   │       ├── ResourcePool.h
+│   │   │   │   │       ├── ScopeGuard.h
+│   │   │   │   │       ├── test
+│   │   │   │   │       │   ├── BUCK
+│   │   │   │   │       │   ├── BufferTest.cpp
+│   │   │   │   │       │   ├── RangeTest.cpp
+│   │   │   │   │       │   ├── ResourcePoolTest.cpp
+│   │   │   │   │       │   ├── ScopeGuardTest.cpp
+│   │   │   │   │       │   ├── ThreadPoolTest.cpp
+│   │   │   │   │       │   └── WorkQueueTest.cpp
+│   │   │   │   │       ├── ThreadPool.h
+│   │   │   │   │       └── WorkQueue.h
+│   │   │   │   ├── recovery
+│   │   │   │   │   ├── Makefile
+│   │   │   │   │   └── recover_directory.c
+│   │   │   │   ├── seekable_format
+│   │   │   │   │   ├── examples
+│   │   │   │   │   │   ├── Makefile
+│   │   │   │   │   │   ├── parallel_compression.c
+│   │   │   │   │   │   ├── parallel_processing.c
+│   │   │   │   │   │   ├── seekable_compression.c
+│   │   │   │   │   │   ├── seekable_decompression.c
+│   │   │   │   │   │   └── seekable_decompression_mem.c
+│   │   │   │   │   ├── README.md
+│   │   │   │   │   ├── tests
+│   │   │   │   │   │   ├── Makefile
+│   │   │   │   │   │   └── seekable_tests.c
+│   │   │   │   │   ├── zstd_seekable_compression_format.md
+│   │   │   │   │   ├── zstd_seekable.h
+│   │   │   │   │   ├── zstdseek_compress.c
+│   │   │   │   │   └── zstdseek_decompress.c
+│   │   │   │   ├── seqBench
+│   │   │   │   │   ├── Makefile
+│   │   │   │   │   └── seqBench.c
+│   │   │   │   ├── snap
+│   │   │   │   │   └── snapcraft.yaml
+│   │   │   │   └── VS2005
+│   │   │   │       ├── fullbench
+│   │   │   │       │   └── fullbench.vcproj
+│   │   │   │       ├── fuzzer
+│   │   │   │       │   └── fuzzer.vcproj
+│   │   │   │       ├── README.md
+│   │   │   │       ├── zstd
+│   │   │   │       │   └── zstd.vcproj
+│   │   │   │       ├── zstdlib
+│   │   │   │       │   └── zstdlib.vcproj
+│   │   │   │       └── zstd.sln
+│   │   │   ├── CONTRIBUTING.md
+│   │   │   ├── COPYING
+│   │   │   ├── doc
+│   │   │   │   ├── decompressor_errata.md
+│   │   │   │   ├── educational_decoder
+│   │   │   │   │   ├── harness.c
+│   │   │   │   │   ├── Makefile
+│   │   │   │   │   ├── README.md
+│   │   │   │   │   ├── zstd_decompress.c
+│   │   │   │   │   └── zstd_decompress.h
+│   │   │   │   ├── images
+│   │   │   │   │   ├── cdict_v136.png
+│   │   │   │   │   ├── CSpeed2.png
+│   │   │   │   │   ├── DCspeed5.png
+│   │   │   │   │   ├── dict-cr.png
+│   │   │   │   │   ├── dict-cs.png
+│   │   │   │   │   ├── dict-ds.png
+│   │   │   │   │   ├── DSpeed3.png
+│   │   │   │   │   ├── zstd_cdict_v1_3_5.png
+│   │   │   │   │   └── zstd_logo86.png
+│   │   │   │   ├── README.md
+│   │   │   │   ├── zstd_compression_format.md
+│   │   │   │   └── zstd_manual.html
+│   │   │   ├── examples
+│   │   │   │   ├── common.h
+│   │   │   │   ├── dictionary_compression.c
+│   │   │   │   ├── dictionary_decompression.c
+│   │   │   │   ├── Makefile
+│   │   │   │   ├── multiple_simple_compression.c
+│   │   │   │   ├── multiple_streaming_compression.c
+│   │   │   │   ├── README.md
+│   │   │   │   ├── simple_compression.c
+│   │   │   │   ├── simple_decompression.c
+│   │   │   │   ├── streaming_compression.c
+│   │   │   │   ├── streaming_compression_thread_pool.c
+│   │   │   │   ├── streaming_decompression.c
+│   │   │   │   └── streaming_memory_usage.c
+│   │   │   ├── lib
+│   │   │   │   ├── BUCK
+│   │   │   │   ├── common
+│   │   │   │   │   ├── allocations.h
+│   │   │   │   │   ├── bits.h
+│   │   │   │   │   ├── bitstream.h
+│   │   │   │   │   ├── compiler.h
+│   │   │   │   │   ├── cpu.h
+│   │   │   │   │   ├── debug.c
+│   │   │   │   │   ├── debug.h
+│   │   │   │   │   ├── entropy_common.c
+│   │   │   │   │   ├── error_private.c
+│   │   │   │   │   ├── error_private.h
+│   │   │   │   │   ├── fse_decompress.c
+│   │   │   │   │   ├── fse.h
+│   │   │   │   │   ├── huf.h
+│   │   │   │   │   ├── mem.h
+│   │   │   │   │   ├── pool.c
+│   │   │   │   │   ├── pool.h
+│   │   │   │   │   ├── portability_macros.h
+│   │   │   │   │   ├── threading.c
+│   │   │   │   │   ├── threading.h
+│   │   │   │   │   ├── xxhash.c
+│   │   │   │   │   ├── xxhash.h
+│   │   │   │   │   ├── zstd_common.c
+│   │   │   │   │   ├── zstd_deps.h
+│   │   │   │   │   ├── zstd_internal.h
+│   │   │   │   │   └── zstd_trace.h
+│   │   │   │   ├── compress
+│   │   │   │   │   ├── clevels.h
+│   │   │   │   │   ├── fse_compress.c
+│   │   │   │   │   ├── hist.c
+│   │   │   │   │   ├── hist.h
+│   │   │   │   │   ├── huf_compress.c
+│   │   │   │   │   ├── zstd_compress.c
+│   │   │   │   │   ├── zstd_compress_internal.h
+│   │   │   │   │   ├── zstd_compress_literals.c
+│   │   │   │   │   ├── zstd_compress_literals.h
+│   │   │   │   │   ├── zstd_compress_sequences.c
+│   │   │   │   │   ├── zstd_compress_sequences.h
+│   │   │   │   │   ├── zstd_compress_superblock.c
+│   │   │   │   │   ├── zstd_compress_superblock.h
+│   │   │   │   │   ├── zstd_cwksp.h
+│   │   │   │   │   ├── zstd_double_fast.c
+│   │   │   │   │   ├── zstd_double_fast.h
+│   │   │   │   │   ├── zstd_fast.c
+│   │   │   │   │   ├── zstd_fast.h
+│   │   │   │   │   ├── zstd_lazy.c
+│   │   │   │   │   ├── zstd_lazy.h
+│   │   │   │   │   ├── zstd_ldm.c
+│   │   │   │   │   ├── zstd_ldm_geartab.h
+│   │   │   │   │   ├── zstd_ldm.h
+│   │   │   │   │   ├── zstdmt_compress.c
+│   │   │   │   │   ├── zstdmt_compress.h
+│   │   │   │   │   ├── zstd_opt.c
+│   │   │   │   │   └── zstd_opt.h
+│   │   │   │   ├── decompress
+│   │   │   │   │   ├── huf_decompress_amd64.S
+│   │   │   │   │   ├── huf_decompress.c
+│   │   │   │   │   ├── zstd_ddict.c
+│   │   │   │   │   ├── zstd_ddict.h
+│   │   │   │   │   ├── zstd_decompress_block.c
+│   │   │   │   │   ├── zstd_decompress_block.h
+│   │   │   │   │   ├── zstd_decompress.c
+│   │   │   │   │   └── zstd_decompress_internal.h
+│   │   │   │   ├── deprecated
+│   │   │   │   │   ├── zbuff_common.c
+│   │   │   │   │   ├── zbuff_compress.c
+│   │   │   │   │   ├── zbuff_decompress.c
+│   │   │   │   │   └── zbuff.h
+│   │   │   │   ├── dictBuilder
+│   │   │   │   │   ├── cover.c
+│   │   │   │   │   ├── cover.h
+│   │   │   │   │   ├── divsufsort.c
+│   │   │   │   │   ├── divsufsort.h
+│   │   │   │   │   ├── fastcover.c
+│   │   │   │   │   └── zdict.c
+│   │   │   │   ├── dll
+│   │   │   │   │   └── example
+│   │   │   │   │       ├── build_package.bat
+│   │   │   │   │       ├── fullbench-dll.sln
+│   │   │   │   │       ├── fullbench-dll.vcxproj
+│   │   │   │   │       ├── Makefile
+│   │   │   │   │       └── README.md
+│   │   │   │   ├── legacy
+│   │   │   │   │   ├── zstd_legacy.h
+│   │   │   │   │   ├── zstd_v01.c
+│   │   │   │   │   ├── zstd_v01.h
+│   │   │   │   │   ├── zstd_v02.c
+│   │   │   │   │   ├── zstd_v02.h
+│   │   │   │   │   ├── zstd_v03.c
+│   │   │   │   │   ├── zstd_v03.h
+│   │   │   │   │   ├── zstd_v04.c
+│   │   │   │   │   ├── zstd_v04.h
+│   │   │   │   │   ├── zstd_v05.c
+│   │   │   │   │   ├── zstd_v05.h
+│   │   │   │   │   ├── zstd_v06.c
+│   │   │   │   │   ├── zstd_v06.h
+│   │   │   │   │   ├── zstd_v07.c
+│   │   │   │   │   └── zstd_v07.h
+│   │   │   │   ├── libzstd.mk
+│   │   │   │   ├── libzstd.pc.in
+│   │   │   │   ├── Makefile
+│   │   │   │   ├── module.modulemap
+│   │   │   │   ├── README.md
+│   │   │   │   ├── zdict.h
+│   │   │   │   ├── zstd_errors.h
+│   │   │   │   └── zstd.h
+│   │   │   ├── LICENSE
+│   │   │   ├── Makefile
+│   │   │   ├── Package.swift
+│   │   │   ├── programs
+│   │   │   │   ├── benchfn.c
+│   │   │   │   ├── benchfn.h
+│   │   │   │   ├── benchzstd.c
+│   │   │   │   ├── benchzstd.h
+│   │   │   │   ├── BUCK
+│   │   │   │   ├── datagen.c
+│   │   │   │   ├── datagen.h
+│   │   │   │   ├── dibio.c
+│   │   │   │   ├── dibio.h
+│   │   │   │   ├── fileio_asyncio.c
+│   │   │   │   ├── fileio_asyncio.h
+│   │   │   │   ├── fileio.c
+│   │   │   │   ├── fileio_common.h
+│   │   │   │   ├── fileio.h
+│   │   │   │   ├── fileio_types.h
+│   │   │   │   ├── Makefile
+│   │   │   │   ├── platform.h
+│   │   │   │   ├── README.md
+│   │   │   │   ├── timefn.c
+│   │   │   │   ├── timefn.h
+│   │   │   │   ├── util.c
+│   │   │   │   ├── util.h
+│   │   │   │   ├── windres
+│   │   │   │   │   ├── verrsrc.h
+│   │   │   │   │   ├── zstd32.res
+│   │   │   │   │   ├── zstd64.res
+│   │   │   │   │   └── zstd.rc
+│   │   │   │   ├── zstd.1
+│   │   │   │   ├── zstd.1.md
+│   │   │   │   ├── zstdcli.c
+│   │   │   │   ├── zstdcli_trace.c
+│   │   │   │   ├── zstdcli_trace.h
+│   │   │   │   ├── zstdgrep
+│   │   │   │   ├── zstdgrep.1
+│   │   │   │   ├── zstdgrep.1.md
+│   │   │   │   ├── zstdless
+│   │   │   │   ├── zstdless.1
+│   │   │   │   └── zstdless.1.md
+│   │   │   ├── README.md
+│   │   │   ├── TESTING.md
+│   │   │   ├── tests
+│   │   │   │   ├── automated_benchmarking.py
+│   │   │   │   ├── bigdict.c
+│   │   │   │   ├── check_size.py
+│   │   │   │   ├── checkTag.c
+│   │   │   │   ├── cli-tests
+│   │   │   │   │   ├── basic
+│   │   │   │   │   │   ├── help.sh
+│   │   │   │   │   │   ├── help.sh.stdout.glob
+│   │   │   │   │   │   ├── memlimit.sh
+│   │   │   │   │   │   ├── memlimit.sh.stderr.exact
+│   │   │   │   │   │   ├── memlimit.sh.stdout.exact
+│   │   │   │   │   │   ├── output_dir.sh
+│   │   │   │   │   │   ├── output_dir.sh.stderr.exact
+│   │   │   │   │   │   ├── output_dir.sh.stdout.exact
+│   │   │   │   │   │   ├── version.sh
+│   │   │   │   │   │   └── version.sh.stdout.glob
+│   │   │   │   │   ├── bin
+│   │   │   │   │   │   ├── cmp_size
+│   │   │   │   │   │   ├── datagen
+│   │   │   │   │   │   ├── die
+│   │   │   │   │   │   ├── println
+│   │   │   │   │   │   ├── unzstd -> zstd
+│   │   │   │   │   │   ├── zstd
+│   │   │   │   │   │   ├── zstdcat -> zstd
+│   │   │   │   │   │   ├── zstdgrep
+│   │   │   │   │   │   └── zstdless
+│   │   │   │   │   ├── cltools
+│   │   │   │   │   │   ├── setup
+│   │   │   │   │   │   ├── zstdgrep.sh
+│   │   │   │   │   │   ├── zstdgrep.sh.exit
+│   │   │   │   │   │   ├── zstdgrep.sh.stderr.exact
+│   │   │   │   │   │   ├── zstdgrep.sh.stdout.glob
+│   │   │   │   │   │   ├── zstdless.sh
+│   │   │   │   │   │   ├── zstdless.sh.stderr.exact
+│   │   │   │   │   │   └── zstdless.sh.stdout.glob
+│   │   │   │   │   ├── common
+│   │   │   │   │   │   ├── format.sh
+│   │   │   │   │   │   ├── mtime.sh
+│   │   │   │   │   │   ├── permissions.sh
+│   │   │   │   │   │   └── platform.sh
+│   │   │   │   │   ├── compression
+│   │   │   │   │   │   ├── adapt.sh
+│   │   │   │   │   │   ├── basic.sh
+│   │   │   │   │   │   ├── compress-literals.sh
+│   │   │   │   │   │   ├── format.sh
+│   │   │   │   │   │   ├── golden.sh
+│   │   │   │   │   │   ├── gzip-compat.sh
+│   │   │   │   │   │   ├── levels.sh
+│   │   │   │   │   │   ├── levels.sh.stderr.exact
+│   │   │   │   │   │   ├── long-distance-matcher.sh
+│   │   │   │   │   │   ├── multiple-files.sh
+│   │   │   │   │   │   ├── multiple-files.sh.stdout.exact
+│   │   │   │   │   │   ├── multi-threaded.sh
+│   │   │   │   │   │   ├── multi-threaded.sh.stderr.exact
+│   │   │   │   │   │   ├── row-match-finder.sh
+│   │   │   │   │   │   ├── setup
+│   │   │   │   │   │   ├── stream-size.sh
+│   │   │   │   │   │   ├── verbose-wlog.sh
+│   │   │   │   │   │   ├── verbose-wlog.sh.stderr.glob
+│   │   │   │   │   │   ├── verbose-wlog.sh.stdout.glob
+│   │   │   │   │   │   ├── window-resize.sh
+│   │   │   │   │   │   ├── window-resize.sh.stderr.ignore
+│   │   │   │   │   │   └── window-resize.sh.stdout.glob
+│   │   │   │   │   ├── decompression
+│   │   │   │   │   │   ├── golden.sh
+│   │   │   │   │   │   ├── pass-through.sh
+│   │   │   │   │   │   ├── pass-through.sh.stderr.exact
+│   │   │   │   │   │   └── pass-through.sh.stdout.exact
+│   │   │   │   │   ├── dict-builder
+│   │   │   │   │   │   ├── empty-input.sh
+│   │   │   │   │   │   ├── empty-input.sh.stderr.exact
+│   │   │   │   │   │   ├── no-inputs.sh
+│   │   │   │   │   │   ├── no-inputs.sh.exit
+│   │   │   │   │   │   └── no-inputs.sh.stderr.exact
+│   │   │   │   │   ├── dictionaries
+│   │   │   │   │   │   ├── dictionary-mismatch.sh
+│   │   │   │   │   │   ├── dictionary-mismatch.sh.stderr.exact
+│   │   │   │   │   │   ├── golden.sh
+│   │   │   │   │   │   ├── setup
+│   │   │   │   │   │   └── setup_once
+│   │   │   │   │   ├── file-stat
+│   │   │   │   │   │   ├── compress-file-to-dir-without-write-perm.sh
+│   │   │   │   │   │   ├── compress-file-to-dir-without-write-perm.sh.stderr.exact
+│   │   │   │   │   │   ├── compress-file-to-file.sh
+│   │   │   │   │   │   ├── compress-file-to-file.sh.stderr.exact
+│   │   │   │   │   │   ├── compress-file-to-stdout.sh
+│   │   │   │   │   │   ├── compress-file-to-stdout.sh.stderr.exact
+│   │   │   │   │   │   ├── compress-stdin-to-file.sh
+│   │   │   │   │   │   ├── compress-stdin-to-file.sh.stderr.exact
+│   │   │   │   │   │   ├── compress-stdin-to-stdout.sh
+│   │   │   │   │   │   ├── compress-stdin-to-stdout.sh.stderr.exact
+│   │   │   │   │   │   ├── decompress-file-to-file.sh
+│   │   │   │   │   │   ├── decompress-file-to-file.sh.stderr.exact
+│   │   │   │   │   │   ├── decompress-file-to-stdout.sh
+│   │   │   │   │   │   ├── decompress-file-to-stdout.sh.stderr.exact
+│   │   │   │   │   │   ├── decompress-stdin-to-file.sh
+│   │   │   │   │   │   ├── decompress-stdin-to-file.sh.stderr.exact
+│   │   │   │   │   │   ├── decompress-stdin-to-stdout.sh
+│   │   │   │   │   │   └── decompress-stdin-to-stdout.sh.stderr.exact
+│   │   │   │   │   ├── progress
+│   │   │   │   │   │   ├── no-progress.sh
+│   │   │   │   │   │   ├── no-progress.sh.stderr.glob
+│   │   │   │   │   │   ├── progress.sh
+│   │   │   │   │   │   └── progress.sh.stderr.glob
+│   │   │   │   │   ├── README.md
+│   │   │   │   │   ├── run.py
+│   │   │   │   │   └── zstd-symlinks
+│   │   │   │   │       ├── setup
+│   │   │   │   │       ├── zstdcat.sh
+│   │   │   │   │       └── zstdcat.sh.stdout.exact
+│   │   │   │   ├── datagencli.c
+│   │   │   │   ├── decodecorpus.c
+│   │   │   │   ├── DEPRECATED-test-zstd-speed.py
+│   │   │   │   ├── dict-files
+│   │   │   │   │   └── zero-weight-dict
+│   │   │   │   ├── external_matchfinder.c
+│   │   │   │   ├── external_matchfinder.h
+│   │   │   │   ├── fullbench.c
+│   │   │   │   ├── fuzz
+│   │   │   │   │   ├── block_decompress.c
+│   │   │   │   │   ├── block_round_trip.c
+│   │   │   │   │   ├── decompress_dstSize_tooSmall.c
+│   │   │   │   │   ├── dictionary_decompress.c
+│   │   │   │   │   ├── dictionary_loader.c
+│   │   │   │   │   ├── dictionary_round_trip.c
+│   │   │   │   │   ├── dictionary_stream_round_trip.c
+│   │   │   │   │   ├── fse_read_ncount.c
+│   │   │   │   │   ├── fuzz_data_producer.c
+│   │   │   │   │   ├── fuzz_data_producer.h
+│   │   │   │   │   ├── fuzz.h
+│   │   │   │   │   ├── fuzz_helpers.c
+│   │   │   │   │   ├── fuzz_helpers.h
+│   │   │   │   │   ├── fuzz.py
+│   │   │   │   │   ├── fuzz_third_party_seq_prod.h
+│   │   │   │   │   ├── huf_decompress.c
+│   │   │   │   │   ├── huf_round_trip.c
+│   │   │   │   │   ├── Makefile
+│   │   │   │   │   ├── raw_dictionary_round_trip.c
+│   │   │   │   │   ├── README.md
+│   │   │   │   │   ├── regression_driver.c
+│   │   │   │   │   ├── seekable_roundtrip.c
+│   │   │   │   │   ├── seq_prod_fuzz_example
+│   │   │   │   │   │   ├── example_seq_prod.c
+│   │   │   │   │   │   ├── Makefile
+│   │   │   │   │   │   └── README.md
+│   │   │   │   │   ├── sequence_compression_api.c
+│   │   │   │   │   ├── simple_compress.c
+│   │   │   │   │   ├── simple_decompress.c
+│   │   │   │   │   ├── simple_round_trip.c
+│   │   │   │   │   ├── stream_decompress.c
+│   │   │   │   │   ├── stream_round_trip.c
+│   │   │   │   │   ├── zstd_frame_info.c
+│   │   │   │   │   ├── zstd_helpers.c
+│   │   │   │   │   └── zstd_helpers.h
+│   │   │   │   ├── fuzzer.c
+│   │   │   │   ├── golden-compression
+│   │   │   │   │   ├── http
+│   │   │   │   │   ├── huffman-compressed-larger
+│   │   │   │   │   ├── large-literal-and-match-lengths
+│   │   │   │   │   └── PR-3517-block-splitter-corruption-test
+│   │   │   │   ├── golden-decompression
+│   │   │   │   │   ├── empty-block.zst
+│   │   │   │   │   └── rle-first-block.zst
+│   │   │   │   ├── golden-dictionaries
+│   │   │   │   │   └── http-dict-missing-symbols
+│   │   │   │   ├── gzip
+│   │   │   │   │   ├── gzip-env.sh
+│   │   │   │   │   ├── helin-segv.sh
+│   │   │   │   │   ├── help-version.sh
+│   │   │   │   │   ├── hufts-segv.gz
+│   │   │   │   │   ├── hufts.sh
+│   │   │   │   │   ├── init.cfg
+│   │   │   │   │   ├── init.sh
+│   │   │   │   │   ├── keep.sh
+│   │   │   │   │   ├── list.sh
+│   │   │   │   │   ├── Makefile
+│   │   │   │   │   ├── memcpy-abuse.sh
+│   │   │   │   │   ├── mixed.sh
+│   │   │   │   │   ├── null-suffix-clobber.sh
+│   │   │   │   │   ├── stdin.sh
+│   │   │   │   │   ├── test-driver.sh
+│   │   │   │   │   ├── trailing-nul.sh
+│   │   │   │   │   ├── unpack-invalid.sh
+│   │   │   │   │   ├── zdiff.sh
+│   │   │   │   │   ├── zgrep-context.sh
+│   │   │   │   │   ├── zgrep-f.sh
+│   │   │   │   │   ├── zgrep-signal.sh
+│   │   │   │   │   ├── znew-k.sh
+│   │   │   │   │   └── z-suffix.sh
+│   │   │   │   ├── invalidDictionaries.c
+│   │   │   │   ├── legacy.c
+│   │   │   │   ├── libzstd_builds.sh
+│   │   │   │   ├── longmatch.c
+│   │   │   │   ├── Makefile
+│   │   │   │   ├── paramgrill.c
+│   │   │   │   ├── playTests.sh
+│   │   │   │   ├── poolTests.c
+│   │   │   │   ├── rateLimiter.py
+│   │   │   │   ├── README.md
+│   │   │   │   ├── regression
+│   │   │   │   │   ├── config.c
+│   │   │   │   │   ├── config.h
+│   │   │   │   │   ├── data.c
+│   │   │   │   │   ├── data.h
+│   │   │   │   │   ├── levels.h
+│   │   │   │   │   ├── Makefile
+│   │   │   │   │   ├── method.c
+│   │   │   │   │   ├── method.h
+│   │   │   │   │   ├── README.md
+│   │   │   │   │   ├── result.c
+│   │   │   │   │   ├── result.h
+│   │   │   │   │   ├── results.csv
+│   │   │   │   │   └── test.c
+│   │   │   │   ├── roundTripCrash.c
+│   │   │   │   ├── seqgen.c
+│   │   │   │   ├── seqgen.h
+│   │   │   │   ├── test-license.py
+│   │   │   │   ├── test-variants.sh
+│   │   │   │   ├── test-zstd-versions.py
+│   │   │   │   └── zstreamtest.c
+│   │   │   └── zlibWrapper
+│   │   │       ├── BUCK
+│   │   │       ├── examples
+│   │   │       │   ├── example.c
+│   │   │       │   ├── example_original.c
+│   │   │       │   ├── fitblk.c
+│   │   │       │   ├── fitblk_original.c
+│   │   │       │   ├── minigzip.c
+│   │   │       │   └── zwrapbench.c
+│   │   │       ├── gzclose.c
+│   │   │       ├── gzcompatibility.h
+│   │   │       ├── gzguts.h
+│   │   │       ├── gzlib.c
+│   │   │       ├── gzread.c
+│   │   │       ├── gzwrite.c
+│   │   │       ├── Makefile
+│   │   │       ├── README.md
+│   │   │       ├── zstd_zlibwrapper.c
+│   │   │       └── zstd_zlibwrapper.h
+│   │   └── zstd-subbuild
+│   │       ├── CMakeCache.txt
+│   │       ├── CMakeFiles
+│   │       │   ├── 3.31.6
+│   │       │   │   └── CMakeSystem.cmake
+│   │       │   ├── cmake.check_cache
+│   │       │   ├── CMakeConfigureLog.yaml
+│   │       │   ├── CMakeDirectoryInformation.cmake
+│   │       │   ├── CMakeRuleHashes.txt
+│   │       │   ├── Makefile2
+│   │       │   ├── Makefile.cmake
+│   │       │   ├── pkgRedirects
+│   │       │   ├── progress.marks
+│   │       │   ├── TargetDirectories.txt
+│   │       │   ├── zstd-populate-complete
+│   │       │   └── zstd-populate.dir
+│   │       │       ├── build.make
+│   │       │       ├── cmake_clean.cmake
+│   │       │       ├── compiler_depend.make
+│   │       │       ├── compiler_depend.ts
+│   │       │       ├── DependInfo.cmake
+│   │       │       ├── Labels.json
+│   │       │       ├── Labels.txt
+│   │       │       └── progress.make
+│   │       ├── cmake_install.cmake
+│   │       ├── CMakeLists.txt
+│   │       ├── Makefile
+│   │       └── zstd-populate-prefix
+│   │           ├── src
+│   │           │   └── zstd-populate-stamp
+│   │           │       ├── zstd-populate-build
+│   │           │       ├── zstd-populate-configure
+│   │           │       ├── zstd-populate-done
+│   │           │       ├── zstd-populate-download
+│   │           │       ├── zstd-populate-gitclone-lastrun.txt
+│   │           │       ├── zstd-populate-gitinfo.txt
+│   │           │       ├── zstd-populate-install
+│   │           │       ├── zstd-populate-mkdir
+│   │           │       ├── zstd-populate-patch
+│   │           │       ├── zstd-populate-patch-info.txt
+│   │           │       ├── zstd-populate-test
+│   │           │       └── zstd-populate-update-info.txt
+│   │           └── tmp
+│   │               ├── zstd-populate-cfgcmd.txt
+│   │               ├── zstd-populate-gitclone.cmake
+│   │               ├── zstd-populate-gitupdate.cmake
+│   │               └── zstd-populate-mkdirs.cmake
+│   ├── GarageNX
+│   ├── GarageNX.map
+│   ├── GarageNX.nacp
+│   ├── GarageNX.nro
+│   ├── Makefile
+│   ├── ns_probe
+│   ├── ns_probe.map
+│   ├── ns_probe.nacp
+│   ├── ns_probe.nro
+│   └── romfs
+│       ├── bg
+│       │   └── garageNX.png
+│       ├── fonts
+│       │   ├── DejaVuSansMono.ttf
+│       │   ├── Inter-Bold.ttf
+│       │   ├── Inter-Regular.ttf
+│       │   └── README.txt
+│       └── lang
+│           └── en.json
+├── build-tests
+│   ├── CMakeCache.txt
+│   ├── CMakeFiles
+│   │   ├── 4.3.4
+│   │   │   ├── CMakeCXXCompiler.cmake
+│   │   │   ├── CMakeDetermineCompilerABI_CXX.bin
+│   │   │   ├── CMakeSystem.cmake
+│   │   │   └── CompilerIdCXX
+│   │   │       ├── a.out
+│   │   │       ├── CMakeCXXCompilerId.cpp
+│   │   │       └── tmp
+│   │   ├── cmake.check_cache
+│   │   ├── CMakeConfigureLog.yaml
+│   │   ├── CMakeDirectoryInformation.cmake
+│   │   ├── InstallScripts.json
+│   │   ├── Makefile2
+│   │   ├── Makefile.cmake
+│   │   ├── mtp_protocol_test_asan.dir
+│   │   │   ├── build.make
+│   │   │   ├── cmake_clean.cmake
+│   │   │   ├── compiler_depend.internal
+│   │   │   ├── compiler_depend.make
+│   │   │   ├── compiler_depend.ts
+│   │   │   ├── DependInfo.cmake
+│   │   │   ├── depend.make
+│   │   │   ├── flags.make
+│   │   │   ├── link.d
+│   │   │   ├── link.txt
+│   │   │   ├── mnt
+│   │   │   │   └── movies
+│   │   │   │       └── services
+│   │   │   │           └── devkitpro
+│   │   │   │               └── workspace
+│   │   │   │                   └── GarageNX
+│   │   │   │                       └── source
+│   │   │   │                           └── services
+│   │   │   │                               ├── mtp_data.cpp.o
+│   │   │   │                               └── mtp_data.cpp.o.d
+│   │   │   ├── mtp_protocol_test.cpp.o
+│   │   │   ├── mtp_protocol_test.cpp.o.d
+│   │   │   └── progress.make
+│   │   ├── mtp_protocol_test_tsan.dir
+│   │   │   ├── build.make
+│   │   │   ├── cmake_clean.cmake
+│   │   │   ├── compiler_depend.internal
+│   │   │   ├── compiler_depend.make
+│   │   │   ├── compiler_depend.ts
+│   │   │   ├── DependInfo.cmake
+│   │   │   ├── depend.make
+│   │   │   ├── flags.make
+│   │   │   ├── link.d
+│   │   │   ├── link.txt
+│   │   │   ├── mnt
+│   │   │   │   └── movies
+│   │   │   │       └── services
+│   │   │   │           └── devkitpro
+│   │   │   │               └── workspace
+│   │   │   │                   └── GarageNX
+│   │   │   │                       └── source
+│   │   │   │                           └── services
+│   │   │   │                               ├── mtp_data.cpp.o
+│   │   │   │                               └── mtp_data.cpp.o.d
+│   │   │   ├── mtp_protocol_test.cpp.o
+│   │   │   ├── mtp_protocol_test.cpp.o.d
+│   │   │   └── progress.make
+│   │   ├── ncz_window_test_asan.dir
+│   │   │   ├── build.make
+│   │   │   ├── cmake_clean.cmake
+│   │   │   ├── compiler_depend.internal
+│   │   │   ├── compiler_depend.make
+│   │   │   ├── compiler_depend.ts
+│   │   │   ├── DependInfo.cmake
+│   │   │   ├── depend.make
+│   │   │   ├── flags.make
+│   │   │   ├── link.d
+│   │   │   ├── link.txt
+│   │   │   ├── mnt
+│   │   │   │   └── movies
+│   │   │   │       └── services
+│   │   │   │           └── devkitpro
+│   │   │   │               └── workspace
+│   │   │   │                   └── GarageNX
+│   │   │   │                       └── source
+│   │   │   │                           └── install
+│   │   │   │                               ├── ncz_window.cpp.o
+│   │   │   │                               └── ncz_window.cpp.o.d
+│   │   │   ├── ncz_window_test.cpp.o
+│   │   │   ├── ncz_window_test.cpp.o.d
+│   │   │   └── progress.make
+│   │   ├── ncz_window_test_tsan.dir
+│   │   │   ├── build.make
+│   │   │   ├── cmake_clean.cmake
+│   │   │   ├── compiler_depend.internal
+│   │   │   ├── compiler_depend.make
+│   │   │   ├── compiler_depend.ts
+│   │   │   ├── DependInfo.cmake
+│   │   │   ├── depend.make
+│   │   │   ├── flags.make
+│   │   │   ├── link.d
+│   │   │   ├── link.txt
+│   │   │   ├── mnt
+│   │   │   │   └── movies
+│   │   │   │       └── services
+│   │   │   │           └── devkitpro
+│   │   │   │               └── workspace
+│   │   │   │                   └── GarageNX
+│   │   │   │                       └── source
+│   │   │   │                           └── install
+│   │   │   │                               ├── ncz_window.cpp.o
+│   │   │   │                               └── ncz_window.cpp.o.d
+│   │   │   ├── ncz_window_test.cpp.o
+│   │   │   ├── ncz_window_test.cpp.o.d
+│   │   │   └── progress.make
+│   │   ├── pkgRedirects
+│   │   ├── progress.marks
+│   │   ├── stream_container_test_asan.dir
+│   │   │   ├── build.make
+│   │   │   ├── cmake_clean.cmake
+│   │   │   ├── compiler_depend.internal
+│   │   │   ├── compiler_depend.make
+│   │   │   ├── compiler_depend.ts
+│   │   │   ├── DependInfo.cmake
+│   │   │   ├── depend.make
+│   │   │   ├── flags.make
+│   │   │   ├── link.d
+│   │   │   ├── link_stubs.cpp.o
+│   │   │   ├── link_stubs.cpp.o.d
+│   │   │   ├── link.txt
+│   │   │   ├── mnt
+│   │   │   │   └── movies
+│   │   │   │       └── services
+│   │   │   │           └── devkitpro
+│   │   │   │               └── workspace
+│   │   │   │                   └── GarageNX
+│   │   │   │                       └── source
+│   │   │   │                           └── install
+│   │   │   │                               ├── ncz.cpp.o
+│   │   │   │                               ├── ncz.cpp.o.d
+│   │   │   │                               ├── ncz_window.cpp.o
+│   │   │   │                               ├── ncz_window.cpp.o.d
+│   │   │   │                               ├── stream_installer.cpp.o
+│   │   │   │                               └── stream_installer.cpp.o.d
+│   │   │   ├── progress.make
+│   │   │   ├── stream_container_test.cpp.o
+│   │   │   └── stream_container_test.cpp.o.d
+│   │   ├── stream_container_test_tsan.dir
+│   │   │   ├── build.make
+│   │   │   ├── cmake_clean.cmake
+│   │   │   ├── compiler_depend.internal
+│   │   │   ├── compiler_depend.make
+│   │   │   ├── compiler_depend.ts
+│   │   │   ├── DependInfo.cmake
+│   │   │   ├── depend.make
+│   │   │   ├── flags.make
+│   │   │   ├── link.d
+│   │   │   ├── link_stubs.cpp.o
+│   │   │   ├── link_stubs.cpp.o.d
+│   │   │   ├── link.txt
+│   │   │   ├── mnt
+│   │   │   │   └── movies
+│   │   │   │       └── services
+│   │   │   │           └── devkitpro
+│   │   │   │               └── workspace
+│   │   │   │                   └── GarageNX
+│   │   │   │                       └── source
+│   │   │   │                           └── install
+│   │   │   │                               ├── ncz.cpp.o
+│   │   │   │                               ├── ncz.cpp.o.d
+│   │   │   │                               ├── ncz_window.cpp.o
+│   │   │   │                               ├── ncz_window.cpp.o.d
+│   │   │   │                               ├── stream_installer.cpp.o
+│   │   │   │                               └── stream_installer.cpp.o.d
+│   │   │   ├── progress.make
+│   │   │   ├── stream_container_test.cpp.o
+│   │   │   └── stream_container_test.cpp.o.d
+│   │   └── TargetDirectories.txt
+│   ├── cmake_install.cmake
+│   ├── CTestTestfile.cmake
+│   ├── Makefile
+│   ├── mtp_protocol_test_asan
+│   ├── mtp_protocol_test_tsan
+│   ├── ncz_window_test_asan
+│   ├── ncz_window_test_tsan
+│   ├── stream_container_test_asan
+│   ├── stream_container_test_tsan
+│   └── Testing
+│       └── Temporary
+│           ├── CTestCostData.txt
+│           └── LastTest.log
+├── CMakeLists.txt
+├── CONTRIBUTING.md
+├── docs
+│   ├── GarageNX_Architecture.md
+│   └── handoff
+├── export_hex.py
+├── garagenx_hdrs.tgz
+├── garagenx_installer.tgz
+├── LICENSE
+├── README.md
+├── source
+│   ├── config
+│   │   ├── config.cpp
+│   │   ├── config.hpp
+│   │   └── defaults.hpp
+│   ├── core
+│   │   ├── activity.cpp
+│   │   ├── activity.hpp
+│   │   ├── atmosphere.cpp
+│   │   ├── atmosphere.hpp
+│   │   ├── battery.cpp
+│   │   ├── battery.hpp
+│   │   ├── datetime.cpp
+│   │   ├── datetime.hpp
+│   │   ├── dump.cpp
+│   │   ├── dump.hpp
+│   │   ├── es.cpp
+│   │   ├── es.hpp
+│   │   ├── fs.cpp
+│   │   ├── fs.hpp
+│   │   ├── keys.cpp
+│   │   ├── keys.hpp
+│   │   ├── nca.cpp
+│   │   ├── nca.hpp
+│   │   ├── nca_modify.cpp
+│   │   ├── nca_modify.hpp
+│   │   ├── ncm.cpp
+│   │   ├── ncm.hpp
+│   │   ├── net.cpp
+│   │   ├── net.hpp
+│   │   ├── ntp.cpp
+│   │   ├── ntp.hpp
+│   │   ├── qr.cpp
+│   │   ├── qr.hpp
+│   │   ├── record_probe.cpp
+│   │   ├── record_probe.hpp
+│   │   ├── storage.cpp
+│   │   ├── storage.hpp
+│   │   ├── system.cpp
+│   │   ├── system.hpp
+│   │   ├── title_ops.cpp
+│   │   └── title_ops.hpp
+│   ├── install
+│   │   ├── installer.cpp
+│   │   ├── installer.hpp
+│   │   ├── ncz.cpp
+│   │   ├── ncz.hpp
+│   │   ├── ncz_window.cpp
+│   │   ├── ncz_window.hpp
+│   │   ├── nsp_reader.cpp
+│   │   ├── nsp_reader.hpp
+│   │   ├── stream_installer.cpp
+│   │   ├── stream_installer.hpp
+│   │   ├── xci_reader.cpp
+│   │   └── xci_reader.hpp
+│   ├── lang
+│   │   ├── localization.cpp
+│   │   └── localization.hpp
+│   ├── main.cpp
+│   ├── ncz_window_test.cpp
+│   ├── nlohmann
+│   │   └── json.hpp
+│   ├── screens
+│   │   ├── file_browser.cpp
+│   │   ├── file_browser.hpp
+│   │   ├── file_viewer.cpp
+│   │   ├── file_viewer.hpp
+│   │   ├── ftp_screen.cpp
+│   │   ├── ftp_screen.hpp
+│   │   ├── ftp_server.cpp
+│   │   ├── http_screen.cpp
+│   │   ├── http_screen.hpp
+│   │   ├── main_menu.cpp
+│   │   ├── main_menu.hpp
+│   │   ├── mtp_screen.cpp
+│   │   ├── mtp_screen.hpp
+│   │   ├── screen.hpp
+│   │   ├── system_info.cpp
+│   │   ├── system_info.hpp
+│   │   ├── title_detail.cpp
+│   │   ├── title_detail.hpp
+│   │   ├── title_list.cpp
+│   │   ├── title_list.hpp
+│   │   ├── title_test.cpp
+│   │   └── title_test.hpp
+│   ├── services
+│   │   ├── ftp_server.cpp
+│   │   ├── ftp_server.hpp
+│   │   ├── http_server.cpp
+│   │   ├── http_server.hpp
+│   │   ├── mtp_data.cpp
+│   │   ├── mtp_data.hpp
+│   │   ├── mtp_server.cpp
+│   │   ├── mtp_server.hpp
+│   │   ├── overlap_buffer.cpp
+│   │   ├── overlap_buffer.hpp
+│   │   ├── rate_meter.cpp
+│   │   ├── rate_meter.hpp
+│   │   ├── service_manager.cpp
+│   │   └── service_manager.hpp
+│   └── ui
+│       ├── font.cpp
+│       ├── font.hpp
+│       ├── input.cpp
+│       ├── input.hpp
+│       ├── keyboard.cpp
+│       ├── keyboard.hpp
+│       ├── layout.cpp
+│       ├── layout.hpp
+│       ├── modal.cpp
+│       ├── modal.hpp
+│       ├── renderer.cpp
+│       ├── renderer.hpp
+│       ├── splash.cpp
+│       ├── splash.hpp
+│       ├── status_bar.cpp
+│       ├── status_bar.hpp
+│       ├── theme.cpp
+│       ├── theme.hpp
+│       ├── title_bar.cpp
+│       ├── title_bar.hpp
+│       ├── widgets.cpp
+│       └── widgets.hpp
+├── stubs
+├── tests
+│   ├── CMakeLists.txt
+│   ├── link_stubs.cpp
+│   ├── mtp_protocol_test.cpp
+│   ├── ncz_window_test.cpp
+│   └── stream_container_test.cpp
+├── toolchain-switch.cmake
+├── tools
+│   ├── ns_probe
+│   │   └── ns_probe.cpp
+│   └── review-bundle.sh
+└── tree.txt
+
+240 directories, 1155 files

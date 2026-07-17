@@ -398,7 +398,10 @@ bool StreamInstaller::finish() {
     if (m_have_cs) { ncmContentStorageClose(&m_cs); m_have_cs = false; }
 #endif
 
-    return install(std::move(contents), m_storage, m_keys, m_progress);
+    // contents_preregistered: every large NCA is already in NCM — this call has
+    // only metadata and tickets left. It also stops install() from resetting
+    // m_progress and erasing the log of the transfer we just completed.
+    return install(std::move(contents), m_storage, m_keys, m_progress, true);
 }
 
 void StreamInstaller::abort() {
