@@ -29,7 +29,11 @@
     "exit_to_home": "Exit to Home Menu",
     "exit_to_hbmenu": "Exit to HBMenu",
     "restart_to_bootloader": "Restart to Bootloader",
-    "shutdown": "Shutdown"
+    "shutdown": "Shutdown",
+    "browse": "Browse...",
+    "connectivity": "Connectivity...",
+    "system": "System...",
+    "exit": "Exit..."
   },
   "file_browser": {
     "title_sd": "SD Card",
@@ -502,6 +506,23 @@
     "bytes_sent": "Sent",
     "bytes_recv": "Recv",
     "stopped_hint": "Server stopped. Press X to start.",
+    "hint_running": "B  Back        X  Stop server",
+    "hint_stopped": "B  Back        X  Start server"
+  },
+  "mtp": {
+    "title": "USB-MTP Connection",
+    "status": "Status:",
+    "host": "Host:",
+    "host_connected": "Connected",
+    "host_waiting": "Waiting for host…",
+    "session": "Session:",
+    "session_open": "Open",
+    "session_none": "None",
+    "speed_now": "Now",
+    "speed_avg": "Avg",
+    "eta": "ETA",
+    "hint_connect": "Connect the console to your PC with a USB cable.",
+    "stopped_hint": "MTP stopped. Press X to start.",
     "hint_running": "B  Back        X  Stop server",
     "hint_stopped": "B  Back        X  Start server"
   }

@@ -6,6 +6,7 @@
 #include <memory>
 #include <vector>
 #include <string>
+#include <cstdlib>   // exit()
 #include <sys/stat.h>
 #include <ctime>
 
@@ -21,6 +22,8 @@
 #include "ui/modal.hpp"
 #include "config/config.hpp"
 #include "lang/localization.hpp"
+#include "core/album_mount.hpp"
+#include "screens/menu_dispatch.hpp"
 #include "core/system.hpp"
 #include "core/storage.hpp"   // also declares Core::Thermal
 #include "core/datetime.hpp"
@@ -125,13 +128,20 @@ static bool startup() {
     psmInitialize();
     setsysInitialize();
     setInitialize();
+    Core::mount_album();   // expose album:/ for the file-manager transports
     setcalInitialize();       // calibration data (MACs, battery lot, etc.)
     pdmqryInitialize();
     spsmInitialize();
     timeInitialize();         // system clock (for NTP + status bar time)
     tsInitialize();           // temperature sensor (SoC temp)
     accountInitialize(AccountServiceType_Application);
-    hidInitialize();
+    // NOTE: no manual hidInitialize() — SDL2 initializes and OWNS the hid service
+    // on Switch, and GarageNX reads input exclusively through SDL (SDL_Joystick /
+    // SDL keyboard events; no libnx hid* APIs are used). A manual hidInitialize()
+    // here double-owned the service and was never matched by hidExit(), leaving a
+    // dangling hid session at process exit — which prevented libnx's clean applet
+    // teardown (contributing to exiting to hbmenu instead of HOME, and to unclean
+    // shutdown). Letting SDL manage hid's full lifecycle fixes the leak.
 #endif
 
     // ── Config ────────────────────────────────────────────────────────────────
@@ -218,6 +228,7 @@ static void shutdown_services() {
     ncmExit();
     nssuExit();
     nsExit();
+    Core::unmount_album();
     romfsExit();
 #endif
 }
@@ -268,6 +279,11 @@ int main(int argc, char* argv[]) {
             } else if (do_pop) {
                 pop(stack);
             }
+
+            // An exit/power menu item requests a full app quit (from any submenu
+            // depth). Honour it here so we end the loop regardless of stack depth,
+            // rather than only popping the screen the item lived on.
+            if (menu_quit_requested()) running = false;
         }
 
         // ── Draw ──────────────────────────────────────────────────────────────
@@ -307,5 +323,15 @@ int main(int argc, char* argv[]) {
     Renderer::shutdown();
     shutdown_services();
 
-    return 0;
+    // exit(0), NOT return 0. SDL2 hijacks main() on Switch (SDL.h does
+    // `#define main SDL_main` and provides its own real main that wraps ours), so
+    // a `return` here goes back into SDL's wrapper rather than libnx's crt0 — and
+    // that wrapper path lands on hbmenu instead of HOME. exit(0) runs the C
+    // runtime's normal exit (atexit/__libnx_exit) and terminates the process the
+    // way a real title does, which returns to the HOME menu and lets qlaunch
+    // re-scan installed titles. This is the same exit(0) that plain-libnx
+    // installers (e.g. Plutonium-based) use. Cleanup above has already run.
+    // Unlike the earlier raw svcExitProcess() attempt, exit(0) is the SANCTIONED
+    // exit path — it does the managed libnx teardown, so it does not crash.
+    exit(0);
 }

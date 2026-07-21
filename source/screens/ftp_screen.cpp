@@ -13,6 +13,22 @@
 #include "ui/input.hpp"
 
 #include <cstdio>
+#include <string>
+
+namespace {
+// Format a duration in seconds as "12s", "3m 05s", "1h 02m". Mirrors the MTP
+// screen's formatter. Caps so a near-zero rate doesn't print an absurd number.
+std::string format_eta(double seconds) {
+    if (seconds < 0 || seconds > 359999) return "—";
+    const int total = (int)(seconds + 0.5);
+    const int h = total / 3600, m = (total % 3600) / 60, s = total % 60;
+    char buf[32];
+    if (h > 0)      std::snprintf(buf, sizeof(buf), "%dh %02dm", h, m);
+    else if (m > 0) std::snprintf(buf, sizeof(buf), "%dm %02ds", m, s);
+    else            std::snprintf(buf, sizeof(buf), "%ds", s);
+    return buf;
+}
+} // namespace
 
 void FTPScreen::start_server() {
     const auto& ftp = Config::get().ftp;
@@ -43,17 +59,47 @@ std::unique_ptr<Screen> FTPScreen::update(bool& pop) {
 
     if (Input::pressed(Input::Button::B)) { pop = true; return nullptr; }
 
-    // Feed the rate meter from the server's cumulative counters. The service
-    // thread publishes bytes only; turning that into a speed is the UI's job.
-    if (m_server && m_server->is_running())
-        m_rate.sample(m_server->bytes_sent() + m_server->bytes_recv());
+    if (m_server && m_server->is_running()) {
+        // Feed the meter the WIRE bytes of the active install (not
+        // bytes_sent+bytes_recv, which include FTP control/listing traffic), so
+        // the average/ETA describe the install, not the whole session. When no
+        // install is running current_wire_recv() is 0 and the meter reads idle.
+        m_rate.sample(m_server->current_wire_recv());
+        const uint32_t now = SDL_GetTicks();
+        if (now - m_last_latch_ms >= 1000) {
+            m_last_latch_ms = now;
+            refresh_latched_stats();
+        }
+    }
 
     // X toggles the server.
     if (Input::pressed(Input::Button::X)) {
         if (m_server && m_server->is_running()) { m_server->stop(); m_rate.reset(); }
         else { m_rate.reset(); start_server(); }
+        m_disp_sent = m_disp_recv = "0 B";
+        m_disp_cur = m_disp_avg = m_disp_eta = "—";
+        m_last_latch_ms = 0;
     }
     return nullptr;
+}
+
+void FTPScreen::refresh_latched_stats() {
+    if (!m_server) return;
+    m_disp_sent = Fs::format_size(m_server->bytes_sent());
+    m_disp_recv = Fs::format_size(m_server->bytes_recv());
+
+    const double cur = m_rate.bytes_per_sec();
+    const double avg = m_rate.average_bytes_per_sec();
+    m_disp_cur = cur > 0 ? (Fs::format_size((uint64_t)cur) + "/s") : "—";
+    m_disp_avg = (m_rate.data_phase_started() && avg > 0)
+                     ? (Fs::format_size((uint64_t)avg) + "/s") : "—";
+
+    const uint64_t wire_size = m_server->current_wire_size();
+    const uint64_t wire_recv = m_server->current_wire_recv();
+    if (wire_size > 0 && wire_recv <= wire_size && cur > 1.0)
+        m_disp_eta = format_eta((double)(wire_size - wire_recv) / cur);
+    else
+        m_disp_eta = "—";
 }
 
 void FTPScreen::draw() {
@@ -97,13 +143,9 @@ void FTPScreen::draw() {
                            Font::Size::Body, Font::Weight::Regular, Theme::Token::FgPrimary);
         y += 34;
 
-        // Live counters + current transfer speed.
-        //
-        // Each field is drawn at its own fixed column rather than as one
-        // concatenated string: the values change width constantly (1.2 MB ->
-        // 12.5 MB, 0 B/s -> 4.5 MB/s), and a single string would let every
-        // growth shove the fields to its right around. Fixed columns keep them
-        // still.
+        // Latched columns (rebuilt at 1Hz): clients, ↑sent, ↓recv, Now, Avg, ETA.
+        // Same stat set as the MTP screen (plus clients, which FTP has); latched
+        // so the text is legible and the text cache isn't churned every frame.
         {
             const int kColW = 180;
             char f[64];
@@ -113,19 +155,27 @@ void FTPScreen::draw() {
             Widgets::draw_text(cx + 0 * kColW, y, f,
                                Font::Size::Body, Font::Weight::Regular, Theme::Token::FgSecondary);
 
-            std::snprintf(f, sizeof(f), "\u2191 %s",
-                          Fs::format_size(m_server->bytes_sent()).c_str());
+            std::snprintf(f, sizeof(f), "\u2191 %s", m_disp_sent.c_str());
             Widgets::draw_text(cx + 1 * kColW, y, f,
                                Font::Size::Body, Font::Weight::Regular, Theme::Token::FgSecondary);
 
-            std::snprintf(f, sizeof(f), "\u2193 %s",
-                          Fs::format_size(m_server->bytes_recv()).c_str());
+            std::snprintf(f, sizeof(f), "\u2193 %s", m_disp_recv.c_str());
             Widgets::draw_text(cx + 2 * kColW, y, f,
                                Font::Size::Body, Font::Weight::Regular, Theme::Token::FgSecondary);
 
-            std::snprintf(f, sizeof(f), "%s/s",
-                          Fs::format_size((uint64_t)m_rate.bytes_per_sec()).c_str());
+            std::snprintf(f, sizeof(f), "%s: %s",
+                          Lang::t("mtp.speed_now").c_str(), m_disp_cur.c_str());
             Widgets::draw_text(cx + 3 * kColW, y, f,
+                               Font::Size::Body, Font::Weight::Regular, Theme::Token::FgSecondary);
+
+            std::snprintf(f, sizeof(f), "%s: %s",
+                          Lang::t("mtp.speed_avg").c_str(), m_disp_avg.c_str());
+            Widgets::draw_text(cx + 4 * kColW, y, f,
+                               Font::Size::Body, Font::Weight::Regular, Theme::Token::FgSecondary);
+
+            std::snprintf(f, sizeof(f), "%s: %s",
+                          Lang::t("mtp.eta").c_str(), m_disp_eta.c_str());
+            Widgets::draw_text(cx + 5 * kColW, y, f,
                                Font::Size::Body, Font::Weight::Regular, Theme::Token::FgSecondary);
         }
         y += 44;

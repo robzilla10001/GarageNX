@@ -333,6 +333,57 @@ static void test_hostile_string_table_cannot_exhaust_memory() {
     std::printf("  ok: hostile string tables refused; realistic ones untouched\n");
 }
 
+// The MTP cancel crash (2168-0002) was a DOUBLE abort(): every cancel site does
+// `m_install->abort(); m_install.reset();`, and ~StreamInstaller() calls abort()
+// too, so it ran twice — the second pass re-entered ncm against an already-freed
+// placeholder and faulted.
+//
+// HONEST SCOPE: this test cannot prove the fix. The dangerous part — a second
+// ncmContentStorageDeletePlaceHolder/Close — is #ifdef PLATFORM_SWITCH, and on
+// the host abort()'s only action (ncz_join) is already self-guarded by
+// m_ncz_running, so a double abort() was harmless here even BEFORE the guard.
+// Removing the guard does NOT fail this test. What this DOES do is exercise the
+// call path (begin → feed → abort×3 → destruct) under ASan/TSan so the guard
+// logic itself is not obviously broken, and document the invariant for the next
+// reader. The actual proof is the hardware abort_trace.log showing a single
+// abort#N sequence where there were previously two. Do not mistake this green
+// for verification of the crash fix.
+static void test_abort_is_idempotent_host_smoke() {
+    const std::vector<FakeEntry> es = {
+        {"0123456789abcdef0123456789abcdef.cnmt.nca", 0,    0x40},
+        {"fedcba9876543210fedcba9876543210.nca",      0x40, 0x80},
+    };
+    uint64_t ds = 0;
+    const std::vector<uint8_t> v = build_pfs0(es, &ds);
+
+    // Mid-transfer: parsed, entries known, an entry notionally open.
+    {
+        Rig r;
+        r.inst.begin("cancelme.nsp", v.size());
+        r.inst.feed(v.data(), ds + 0x20);   // into the data phase, not to the end
+        r.inst.abort();                       // explicit cancel
+        r.inst.abort();                       // a second call must be a safe no-op
+        r.inst.abort();                       // and a third
+        CHECK(true, "repeated abort() did not fault");
+        // Destructor runs here (it calls abort() again) — must also be a no-op.
+    }
+
+    // Abort before any data, then destruct.
+    {
+        Rig r;
+        r.inst.begin("early.nsp", v.size());
+        r.inst.abort();
+        // ~StreamInstaller() calls abort() a second time at scope exit.
+    }
+
+    // Never-begun installer: destructor still calls abort() exactly once.
+    {
+        Rig r;
+        r.inst.abort();
+    }
+    std::printf("  ok: abort() call path is safe under sanitizers (host smoke, not crash proof)\n");
+}
+
 int main() {
     std::printf("StreamInstaller container harness (PFS0 characterization)\n");
     test_chunk_size_invariance();
@@ -342,6 +393,7 @@ int main() {
     test_malformed_containers_are_rejected();
     test_ncz_without_keys_is_refused_at_the_table();
     test_hostile_string_table_cannot_exhaust_memory();
+    test_abort_is_idempotent_host_smoke();
     std::printf("ALL PASS (%d checks)\n", g_checks);
     return 0;
 }

@@ -54,21 +54,29 @@ OverlapBuffer::OverlapBuffer(size_t buf_size, Sink sink)
     m_valid = true;
 }
 
-OverlapBuffer::~OverlapBuffer() {
-    if (m_thread_started) {
-        {
-            std::lock_guard<std::mutex> lk(m_m);
-            m_stop = true;
-        }
-        m_cv_work.notify_all();
-#ifdef PLATFORM_SWITCH
-        threadWaitForExit(&m_thread);
-        threadClose(&m_thread);
-#else
-        if (m_thread.joinable()) m_thread.join();
-#endif
-        m_thread_started = false;
+void OverlapBuffer::quiesce() {
+    if (!m_thread_started) return;
+    {
+        std::lock_guard<std::mutex> lk(m_m);
+        m_stop = true;
     }
+    m_cv_work.notify_all();
+#ifdef PLATFORM_SWITCH
+    // Blocks until worker_loop() returns. If the worker is mid-sink (the slow
+    // half, run outside the lock) this waits for that sink call to finish — which
+    // is the whole point: after this returns, the sink provably will not run
+    // again, so state the sink closes over can be torn down safely.
+    threadWaitForExit(&m_thread);
+    threadClose(&m_thread);
+#else
+    if (m_thread.joinable()) m_thread.join();
+#endif
+    m_thread_started = false;
+    m_valid = false;   // no more work may be submitted
+}
+
+OverlapBuffer::~OverlapBuffer() {
+    quiesce();
     for (int i = 0; i < 2; i++) { std::free(m_buf[i]); m_buf[i] = nullptr; }
 }
 

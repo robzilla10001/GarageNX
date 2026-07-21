@@ -54,6 +54,13 @@ bool poll();
 /// True on the frame the button was first pressed.
 bool pressed(Button b);
 
+/// How many distinct presses of this button arrived this frame. Usually 0 or 1,
+/// but fast tapping can land two or more button-down events inside a single
+/// (possibly stalled) frame — pressed() collapses those to one, which drops
+/// inputs during rapid navigation. Navigation code should consume this count so
+/// N quick taps produce N steps. Counts only discrete down-events, never repeat.
+int press_count(Button b);
+
 /// True on the frame the button was released.
 bool released(Button b);
 

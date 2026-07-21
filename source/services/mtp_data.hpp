@@ -33,6 +33,7 @@ constexpr uint16_t GetNumObjects      = 0x1006;
 constexpr uint16_t GetObjectHandles   = 0x1007;
 constexpr uint16_t GetObjectInfo      = 0x1008;
 constexpr uint16_t GetObject          = 0x1009;
+constexpr uint16_t GetPartialObject   = 0x101B;   // read a byte range (offset,count)
 constexpr uint16_t DeleteObject       = 0x100B;
 constexpr uint16_t SendObjectInfo     = 0x100C;
 constexpr uint16_t SendObject         = 0x100D;

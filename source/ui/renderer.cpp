@@ -3,6 +3,10 @@
 #include "ui/renderer.hpp"
 #include "ui/theme.hpp"
 #include "ui/font.hpp"
+#include "ui/text_cache.hpp"
+
+#include <unordered_map>
+#include <cstdint>
 
 #ifdef PLATFORM_SWITCH
 #include <switch.h>
@@ -75,6 +79,8 @@ bool init(const std::string& asset_root) {
 void shutdown() {
     Font::shutdown();
 
+    // Textures belong to s_renderer — free them before it is destroyed.
+    text_cache_clear();
     if (s_renderer) { SDL_DestroyRenderer(s_renderer); s_renderer = nullptr; }
     if (s_window)   { SDL_DestroyWindow(s_window);     s_window   = nullptr; }
 
@@ -94,6 +100,9 @@ void begin_frame() {
 
     Theme::apply(s_renderer, Theme::Token::BgBase);
     SDL_RenderClear(s_renderer);
+
+    // Age out unused cached text once per frame.
+    text_cache_advance_frame();
 }
 
 void end_frame() {
@@ -144,6 +153,104 @@ void blit_right(SDL_Surface* surface, int x, int y, int w, int h) {
     int dx = x + w - surface->w;
     int dy = y + (h - surface->h) / 2;
     blit(surface, dx, dy);
+}
+
+// ─── Cached text ──────────────────────────────────────────────────────────────
+
+namespace {
+struct CachedTex {
+    SDL_Texture* tex = nullptr;
+    int          w = 0, h = 0;
+    uint64_t     last_used = 0;
+};
+std::unordered_map<TextKey, CachedTex, TextKeyHash> s_text_cache;
+EvictionPolicy s_evict;
+uint64_t       s_frame = 0;
+
+// Look up or build the texture for these params. Returns nullptr on failure
+// (e.g. empty string or a font/render error) — callers must tolerate that.
+CachedTex* get_or_build(const std::string& text, int size, int weight,
+                        int family, SDL_Color color) {
+    if (text.empty()) return nullptr;
+
+    TextKey key{text, size, weight, family,
+                pack_color(color.r, color.g, color.b, color.a)};
+
+    auto it = s_text_cache.find(key);
+    if (it != s_text_cache.end()) {
+        it->second.last_used = s_frame;
+        return &it->second;
+    }
+
+    // Miss: rasterise once, upload once, keep the texture.
+    SDL_Surface* surf = Font::render(text, (Font::Size)size, (Font::Weight)weight,
+                                     color, (Font::Family)family);
+    if (!surf) return nullptr;
+    SDL_Texture* tex = SDL_CreateTextureFromSurface(s_renderer, surf);
+    const int w = surf->w, h = surf->h;
+    SDL_FreeSurface(surf);
+    if (!tex) return nullptr;
+
+    CachedTex& slot = s_text_cache[key];
+    slot.tex = tex; slot.w = w; slot.h = h; slot.last_used = s_frame;
+    return &slot;
+}
+} // namespace
+
+void draw_text(const std::string& text, int size, int weight, int family,
+               SDL_Color color, int x, int y, int* out_w, int* out_h, int clip_w) {
+    CachedTex* c = get_or_build(text, size, weight, family, color);
+    if (!c) { if (out_w) *out_w = 0; if (out_h) *out_h = 0; return; }
+    // clip_w > 0 truncates the drawn width (left-aligned) without a separate
+    // texture — the cached full-width texture is sampled with a source rect.
+    const int draw_w = (clip_w > 0 && clip_w < c->w) ? clip_w : c->w;
+    SDL_Rect src{0, 0, draw_w, c->h};
+    SDL_Rect dst{x, y, draw_w, c->h};
+    SDL_RenderCopy(s_renderer, c->tex, &src, &dst);
+    if (out_w) *out_w = draw_w;
+    if (out_h) *out_h = c->h;
+}
+
+void measure_text(const std::string& text, int size, int weight, int family,
+                  SDL_Color color, int* out_w, int* out_h) {
+    CachedTex* c = get_or_build(text, size, weight, family, color);
+    if (out_w) *out_w = c ? c->w : 0;
+    if (out_h) *out_h = c ? c->h : 0;
+}
+
+void text_cache_advance_frame() {
+    ++s_frame;
+
+    // Age out entries untouched for a while, so scrolling away from a screen
+    // frees its text rather than pinning it forever.
+    for (auto it = s_text_cache.begin(); it != s_text_cache.end(); ) {
+        if (s_evict.is_stale(it->second.last_used, s_frame)) {
+            SDL_DestroyTexture(it->second.tex);
+            it = s_text_cache.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // Hard cap: if still over capacity after aging, drop the oldest entries.
+    if (s_evict.over_capacity(s_text_cache.size())) {
+        // Collect by last_used and evict the coldest down to the cap. This runs
+        // rarely (only when >max_entries distinct strings are live at once).
+        while (s_text_cache.size() > s_evict.max_entries) {
+            auto oldest = s_text_cache.begin();
+            for (auto it = s_text_cache.begin(); it != s_text_cache.end(); ++it)
+                if (it->second.last_used < oldest->second.last_used) oldest = it;
+            SDL_DestroyTexture(oldest->second.tex);
+            s_text_cache.erase(oldest);
+        }
+    }
+}
+
+size_t text_cache_size() { return s_text_cache.size(); }
+
+void text_cache_clear() {
+    for (auto& [k, c] : s_text_cache) SDL_DestroyTexture(c.tex);
+    s_text_cache.clear();
 }
 
 } // namespace Renderer

@@ -984,21 +984,146 @@ what determines whether something is testable.
   - **Keys missing.** Both the `SendObjectInfo` and `parse_table()` refusals are untested on device.
 
   **Prior verification status was syntax only.** Both the Switch and PC paths compile clean under `-Wall -Wextra` (the Switch path against a transcribed libnx surface, in scratch — not committed). That catches typos and arity errors, nothing more; the check validates against a hand-written stand-in, so it is weaker than a real build. The stronger guarantee is that every libnx call mirrors an existing hardware-validated call site in the same file, and the thread creation copies `OverlapBuffer`'s exact shape (`0x2C`, `-2`; stack raised `0x8000` → `0x10000` for zstd's frame). **The join ordering and every `ncm` interaction are unproven until they run on hardware.**
-- **Slice 4c:** XCI/XCZ stream install. **Collector generalised (rev 3); XCI front-end not yet written.**
+- **Slice 4c:** XCI/XCZ stream install. **DONE — HARDWARE VALIDATED ✓ (rev 4).**
 
-  `Phase{Header,Table,Data}` could not express XCI: it hard-codes "one contiguous table at offset 0". XCI needs four collections at scattered offsets — magic at `0x100`, the root HFS0 wherever `0x130` points, then the `secure` HFS0 potentially gigabytes downstream past the update partition. `Phase` is now `{Collect,Data,Done,Failed}` plus a `Step`, over one general rule: **collect N bytes at absolute offset X, then run step S**, discarding everything in between. `want()` refuses a backwards `off` outright — a stream cannot rewind, and asking is a caller bug, not a runtime condition.
+  **Read this first: the rev 3 entry for this slice was false.** It recorded the
+  collector refactor as landed. It was not in the tree, not in any commit, not in
+  a stash, not on a branch. `86cfa99` — the tip — contained slice 4b, Option C
+  and the keys precondition, and a `Phase{Header,Table,Data,Done,Failed}` that
+  had never heard of a `Step`. The refactor was almost certainly done in a
+  session sandbox that then evaporated; the *document* came back because it was
+  copied out and committed, and the code did not. So the doc described a
+  collector that did not exist, and anyone resuming cold — which is this
+  document's entire purpose — would have built the XCI front-end on top of it.
+
+  It cost a re-cut. The lesson is cheap by comparison and is now policy: **an
+  entry here claims only what has been read back out of the tree.** "The tests
+  pass" is not evidence a refactor landed — `stream_container_test`'s 65 checks
+  are green *in both worlds*, by design, because a characterization test pins
+  observable behaviour and that refactor was defined as changing none. Only
+  reading `Phase` distinguishes them. See the verification ledger below, which
+  exists so this cannot happen again quietly.
+
+  **The collector.** `Phase{Header,Table,Data}` could not express XCI: it
+  hard-codes "one contiguous table at offset 0". `Phase` is now
+  `{Collect,Data,Done,Failed}` plus a `Step`, over one general rule: **collect N
+  bytes at absolute offset X, then run step S**, discarding everything in
+  between. `want()` refuses a backwards `off` outright — a stream cannot rewind,
+  and asking is a caller bug, not a runtime condition.
 
   Two things surfaced that review would not have:
-  - `parse_table()` **re-read `count` and `sts` from `m_hdr`**. The old collector kept header and table buffers alive at once; one general blob cannot. They are now stashed into `m_ent_count`/`m_str_size` at header-parse time.
-  - The tail of `parse_table()` — sort into stream order, NSZ key precondition, `container_size()`, NCA count, enter `Phase::Data` — is **format-independent**. Extracted as `finalize_entries()`. Below it, nothing knows whether the bytes came from a PFS0 or an XCI's secure partition.
+  - `parse_table()` **re-read `count` and `sts` from `m_hdr`** (at lines 99–100;
+    rev 3 said 117–118). The old collector kept header and table buffers alive at
+    once; one general blob cannot. Now stashed into `m_ent_count`/`m_str_size` at
+    header-parse time. Note what this bug would have done: not an error, but a
+    plausible-looking parse of counts read out of entry bytes.
+  - The tail of `parse_table()` — sort into stream order, key precondition,
+    `container_size()`, NCA count, enter `Phase::Data` — is
+    **format-independent**. Extracted as `finalize_entries()`. Below it, nothing
+    knows whether the bytes came from a PFS0 or an XCI's secure partition. That
+    is what made 4c a front-end rather than a rewrite.
 
-  Behaviour is unchanged: `stream_container_test`'s 65 checks pass untouched, which is the entire reason that suite was written before this refactor rather than after.
+  **It is five steps, not four.** Rev 3 said four. An HFS0's table length is only
+  knowable once its header has been read, so each of the two partitions costs two
+  collections: `XciHead` (0x38 at 0x100) → `XciRootHeader` → `XciRootTable`
+  (locates `secure`) → `XciSecureHeader` → `XciSecureTable` → `finalize_entries`.
+  The RSA signature, the gamecard header and the update/normal partitions
+  discard themselves in `Phase::Collect` for free, as predicted.
 
-  **Still to do:** the four XCI steps; `feed_data()`'s existing gap-skip then discards the XCI header, root HFS0 and update/normal partitions for free, since entries carry absolute offsets. Then open the `SendObjectInfo`/`SendObjectPropList` gate to `.xci`/`.xcz`, and delete `xci_reader.hpp`'s dead `XciHeader` struct, which documents `root_hfs0_offset` at **`0x120`** — the gamecard IV. The `.cpp` reads `0x130` and is correct.
+  **The root HFS0 offset is at `0x130`.** `0x120` is the gamecard IV. The dead
+  `XciHeader` struct that documented `0x120` lived in `xci_reader.**cpp**:16`,
+  not the `.hpp` as rev 3 said; it was unreferenced and is now deleted, replaced
+  by a note saying why there is no struct. `XciReader::parse()` reads `0x130` and
+  always did — check any reference against `parse()`, not against a field list.
 
-  **`container_size()` must return 0 for XCI.** For PFS0 it is exact (the last entry ends at the file's end); for XCI the file continues past `secure` — an untrimmed image is padded to the gamecard capacity — so entries cannot yield it. With Option C the host declares the true size and `container_size()` is only a cross-check, so 0 is safe. But an XCI arriving **without** an exact declaration must be **refused**, not have a length inferred from `secure`: coming up short leaves unread bytes in the endpoint and desyncs the session.
+  **XCZ needed no XCI-side code.** Classification is by name and the key
+  precondition is shared, so it fell out of the front-end for free.
 
-- **Slice 4c (original note):** XCI/XCZ stream install. `StreamInstaller` parses PFS0 (NSP); an XCI is an HFS0 gamecard image and needs its own front-end. Currently rejected at `SendObjectInfo` with a clear message rather than mid-transfer.
+  **`container_size()` returns 0 for XCI, deliberately.** For PFS0 it is exact
+  (the last entry ends at the file's end); an XCI continues past `secure` into
+  gamecard padding that belongs to the transfer but to no entry. The host's
+  declared size is the only authority. An XCI arriving **without** an exact
+  declaration is **refused** at `SendObjectInfo` — coming up short does not fail
+  an install, it leaves unread bytes in the endpoint and desyncs the session.
+
+  The refusal predicate turned out cleaner than rev 3 assumed: `size_exact` is
+  already `comp_size != 0xFFFFFFFF`, so `is_xci && !size_exact` refuses
+  *precisely* the ≥ 4 GiB images from hosts that never sent
+  `SendObjectPropList`. A 3 GB XCI over plain `SendObjectInfo` carries an exact
+  size and is unaffected. This is what Option C bought.
+
+  **Two defects fixed in passing (rev 4):**
+  - **String-table size was unbounded on the PFS0 path.** `count` was bounded
+    from the start; `m_str_size` never was. Both are host-supplied u32s feeding
+    straight into a `reserve()`, so a 4-byte edit to an NSP header asks for a
+    4 GiB allocation and takes the process out via `bad_alloc` — a crash, on a
+    console, from a bad file. Confirmed real: removing the guard makes ASan
+    report `out of memory`. Now bounded on both PFS0 and HFS0 by
+    `count * kMaxNameBytes` — **derived**, not picked: a string table holds
+    `count` NUL-terminated names and nothing else, so a three-file container gets
+    a three-file bound.
+  - **The keyless refusal said "NSZ" to XCZ users.** Both formats reach it by the
+    same route. It now names the container actually sent. This string is the
+    entire explanation a user gets; a wrong noun reads as a bug in us. The two
+    suites pin each other — the PFS0 suite asserts `NSZ`, the XCI suite asserts
+    `XCZ` and the *absence* of `NSZ`.
+
+  ### Verification ledger
+
+  Every line below is either something a console did, or something only a host
+  test asserts, or something nothing has touched. Nothing is recorded here on the
+  strength of anyone's recollection.
+
+  **A console did this (rev 4).** Both suites 5×, then a real device:
+  - NSP install — the regression check. The refactor and the new bound both sit
+    on the path that already installed titles. It still does.
+  - XCI — identified and installed.
+  - NSZ > 4 GB — identified and installed.
+  - XCZ > 4 GB — identified and installed.
+
+  The XCI install also verifies the size authority end to end, indirectly but
+  meaningfully: `container_size()` returns 0, so `payload` came entirely from the
+  host's 64-bit declaration. Had that path been wrong the session would have
+  desynced rather than merely mis-reported a number.
+
+  **Only a host test asserts this — synthetic images, never a console:**
+  - Every malformed-image refusal: bad `HEAD`, bad root HFS0, bad secure HFS0,
+    no `secure` partition.
+  - Wild root offsets: past-the-end, and backwards (the `want()` rewind guard,
+    which nothing else exercises).
+  - Hostile counts and string-table sizes, on both PFS0 and HFS0.
+  - `container_size() == 0` at every point in a transfer.
+  - Note the asymmetry: `stream_container_test` is a **characterization** suite —
+    it pins behaviour that pre-existed it. `xci_container_test` is **not**. There
+    was no prior behaviour to pin, so every assertion in it is a claim about what
+    the code should do, written by whoever wrote the code. It is worth less than
+    the PFS0 suite and should be read that way. It was mutation-tested (7 seeded
+    defects, all caught) which is the best available substitute, not a
+    replacement.
+
+  **Not proven here — with each one's disposition (rev 4):**
+  - **UI cancel.** Now has hardware data, and it is not clean: see the dedicated
+    MTP-cancel item in §16. Two of four container types still crash (2168-0002).
+    This is the live blocker, tracked there, not here.
+  - **The XCZ-vs-NSZ noun.** PARKED. The rev 4 hardware pass had keys, so the
+    keyless refusal never fired; the fix is asserted by tests only. Decision:
+    not worth manufacturing a keyless fixture to prove — it will surface in
+    normal use if wrong, and the two suites pin the noun against each other.
+  - **The ≥ 4 GiB XCI exact-size refusal.** CLOSED as a non-issue. It needs an
+    MTP-1.0-only host to fire, and MTP 1.1 has been ubiquitous for ~15 years. The
+    refusal code stays (correct, costs nothing) but is not something to chase a
+    repro for. Defensive, not expected to fire.
+  - **`.cnmt.ncz`.** PARKED. The dual path only runs if the packer compressed the
+    meta NCA, which most `nsz` builds do not (it is tiny). Decision: leave until
+    it appears in a real file — the code has the branch, nothing has exercised
+    it, and manufacturing one is not worth the cycle now. Reopen if a production
+    file trips it.
+
+  **Known cosmetic defect:** the container log line reads
+  `Container: XCI/XCZ (gamecard image)` for both. Technically correct, useless
+  for telling them apart, and the same class of defect as the NSZ/XCZ noun fixed
+  above. `m_format` is already available at the call site.
+
 
 **Exit criteria:** FTP, HTTP, and MTP transfer modes functional; the network screens (FTP/HTTP) show a scannable address. MTP has no address to scan; access-point mode is shelved.
 
@@ -1060,8 +1185,449 @@ what determines whether something is testable.
 - [ ] **M6 sockets** — `socketInitialize()` must be added to startup (before any service) and `socketExit()` to shutdown; `nifm` is already initialized. FTP/HTTP are clean-room BSD-socket implementations (the PC stub target was removed in rev 3; validation is on hardware).
 - [ ] **Date/time selectors** — `behavior.date_format` / `behavior.time_24h` exist and drive the clock + log names now; the settings-screen UI to pick them lands in M8 (currently `config.json`-editable).
 - [ ] GitHub browser — pagination handled via GitHub REST API (`Link` header); authenticated (token present) uses 5,000 req/hr, unauthenticated uses 60 req/hr with graceful rate-limit messaging in UI
+- [x] **MTP cancel crash — FIXED (rev 4), hardware-confirmed.** C++ destruction-
+      order use-after-free: MtpServer had no destructor, so members (m_install)
+      were destroyed before the base ~NetworkService joined the worker thread —
+      the worker used m_install after free. The crash report's real exception was
+      Data Abort @ 0x0 (null deref); the 2168-0002 that misled six rounds was a
+      stale result register. FIX: ~MtpServer() { stop(); } joins the worker before
+      members die. HARDWARE: 10 cancels of the same NSZ at 100 MB–2.5 GB, every one
+      a clean drop to GarageNX's own menu, zero crashes; the abort trace shows all
+      21 abort sequences reaching a clean exit. A full NSZ install also completed
+      (Installation complete, ticket rc=0x0) in the same session. Proven on host
+      too: teardown_order_test races under TSan on the no-dtor variant, clean on
+      the fixed. Diagnostic instrumentation has been removed; the real fixes
+      (~MtpServer dtor, atomic abort guard, ncz_join-before-guard ordering,
+      OverlapBuffer quiesce) remain.
+      ABI-break theory ruled out (libnx 4.12.0 / AMS 1.11.2, both current). Two
+      real cancel bugs fixed en route (OverlapBuffer teardown race; double-abort).
+      Remaining fatal (2168-0002) fires at Close, which returns void — so the
+      Result comes from the preceding DeletePlaceHolder (now traced) or a bad
+      session handle. One NSZ cancel + the `after DeletePlaceHolder rc=` line
+      picks the fix. See the Milestone-6 cancel note for the three hypotheses.** Pressing B during a streaming install
+      crashed to HOME; space was reclaimed on relaunch. The crash code decodes to libnx module 347 / desc 18
+      — a newlib `BadReent`, i.e. a threading fault, not install-logic
+      corruption (consistent with the clean reclaim: `abort()` ran and deleted the
+      placeholder; the fault came *after*, in thread teardown).
+
+      Root cause: a teardown-ordering race between two worker threads.
+      `recv_install` overlaps USB reads with placeholder writes via
+      `OverlapBuffer`, whose worker runs the sink `m_install->feed()` — which on
+      the NSZ path pushes into the decompress window. On cancel, the transfer loop
+      exits on `should_stop()` and calls `m_install->abort()`, which joins the
+      decompression worker and **frees the window** (`m_ncz_win.reset()`). But the
+      OverlapBuffer worker was never stopped first — it was only joined by `ov`'s
+      destructor at function-scope exit, *after* `abort()`. So the overlap worker
+      could be inside `feed()`/`push()` on a window `abort()` was destroying:
+      cross-thread use-after-free, surfacing in newlib as `BadReent`.
+
+      Fix: `OverlapBuffer::quiesce()` — stop the worker and join it, blocking
+      until any in-flight sink call returns; idempotent; the destructor now calls
+      it. `recv_install` calls `quiesce()` **before** `abort()` on every teardown
+      path, so the sink is provably not running when the window is freed. The
+      upload path (`recv_object` → SD `fwrite`) was hardened the same way — it was
+      safe only by the incidental ordering of `flush()` then `fclose()`, and now
+      says so explicitly.
+
+      **What is proven, and where:** `OverlapBuffer` had *no test at all*; it now
+      has one (`overlap_buffer_test`, host, TSan+ASan). Trial 3 reproduces the
+      race shape — a sink touching heap state a concurrent teardown frees — and
+      was validated by mutation: reverting to the old order (free state, then
+      quiesce) makes **TSan report a data race, including one in `operator
+      delete`**, which is the freed window. Correct order is clean. So the fix is
+      proven against the *class* of bug on the host.
+
+      **HARDWARE RESULT (rev 4): first crash fixed, second crash exposed.** The
+      `BadReent` (2347-0018) is gone. Cancelling now behaves as:
+
+      | Cancel | Result | ncz window | placeholder owner |
+      |---|---|---|---|
+      | NSP | clean drop to HOME | none | this thread |
+      | XCZ | clean drop to HOME | yes | worker |
+      | NSZ | **crash 2168-0002** | yes | worker |
+      | XCI | **crash 2168-0002** | none | this thread |
+
+      `quiesce()` was correct and necessary — NSP and XCZ (including the exact
+      NSZ-window path it targeted) now cancel cleanly. But NSZ and XCI still
+      crash, with a **different** code: 2168-0002 = **ncm module 168, desc 2**
+      (`ResultPlaceHolderAlreadyExists` territory), an ncm-internal fatal, not a
+      memory fault — exactly the "no guarantee this was the only cause" caveat
+      above, now realised. Space is still reclaimed on all four.
+
+      This is a distinct, non-threading bug the first one was masking. No single
+      code-reading explanation covers both crashing cases: NSZ (worker-created
+      placeholder) and XCI (this-thread placeholder) share neither the window nor
+      the placeholder owner, and cancel-percentage does not split the four. Every
+      `ncm` result in `stream_installer.cpp` is checked with `R_FAILED` — nothing
+      in the tree does `R_ABORT_UNLESS`/`fatalThrow` — so the fatal is raised
+      *inside* ncm when we call it with a handle/id in a state it treats as a
+      programming error. Which call, on which entry, is not determinable by
+      reading, and cannot be reproduced off-device.
+
+      **ABI-break theory (rev 4): RULED OUT.** Checked and clean — toolchain
+      libnx 4.12.0 (≥ 4.10.0), console AMS 1.11.2 / FW 21.0.1. Past the TLS-ABI
+      fix on both sides, no stale-libnx corruption. The crash is a real code bug,
+      not an environment mismatch. Recorded here because the migrating crash code
+      (below) made memory corruption look plausible; the version check is the
+      cheap disproof, and it disproved it.
+
+      **NARROWED (rev 4): the fatal is at ncmContentStorageClose, and Close
+      returns `void`.** The trace's last line before death was `before Close`,
+      with `after DeletePlaceHolder` already printed (delete completed, ph_open→0).
+      Per libnx ncm.h line 55, `void ncmContentStorageClose(NcmContentStorage*)`
+      — it does a local svcCloseHandle, no Result-returning IPC. So the
+      2168-0002 (ncm desc 2) Result cannot originate in Close itself; it is either
+      set by the preceding DeletePlaceHolder (whose Result the code discarded, now
+      captured) or the svcCloseHandle faults on a session left in a bad state. ncm
+      init/exit is single-lifecycle (main.cpp 122/218), so the session is not
+      double-exited; m_cs open/close is balanced. Three live hypotheses, which the
+      rev-4 trace now separates:
+        1. DeletePlaceHolder returns 2168-0002 (ignored) → Close faults downstream
+           → trace shows `after DeletePlaceHolder rc=0x4A8`.
+        2. Delete succeeds (rc=0x0), Close svcCloseHandle faults on a valid-looking
+           handle → storage state issue not visible in source.
+        3. Session already broken before abort() entered.
+      HARDWARE (rev 4), and the decode that reframes everything:
+      **2168-0002 = 0x4A8 = ncm PlaceHolderAlreadyExists.** Not a Close bug, not a
+      generic handle fault — a specific ncm error meaning a CreatePlaceHolder ran
+      for a placeholder that already exists. And `after DeletePlaceHolder rc=0x0`
+      confirms abort()'s OWN delete succeeds, so the offending create is elsewhere:
+      the ncz WORKER (stream_installer.cpp ~865), which creates the placeholder on
+      the NSZ/XCI path. NSP has no worker — which is exactly why NSP originally
+      cancelled clean and NSZ/XCI did not.
+
+      Because a RETURNED R_FAILED from CreatePlaceHolder is handled (it calls
+      fail(), no crash), the fatal must be ncm raising the error where we do not
+      check it — most likely LATCHED on the session by a failed async placeholder
+      op and surfaced when Close tears the session down. Working hypothesis: a
+      stale placeholder (from a prior cancelled attempt of the same NCA — note the
+      test method cancels the SAME file repeatedly) collides with the worker's
+      create; nothing in the codebase cleans stale placeholders at startup.
+
+      **MISSTEP THIS ROUND, recorded so it is not repeated:** a candidate called
+      ncmContentStorageCleanupAllPlaceHolder before Close. That is WRONG — per
+      switchbrew it "closes/flushes all resources for the storage and causes all
+      future IPC to the session to return 0xC805", i.e. it POISONS the session. It
+      appeared to fix NSZ/XCZ (the crash merely moved to where the SD trace lost
+      its tail) and it REGRESSED the previously-clean NSP cancel. Reverted. If
+      Cleanup is ever used it belongs at install START on a fresh storage handle,
+      never at teardown.
+
+      HARDWARE (rev 4, cont.): `worker: CreatePlaceHolder rc=0x0` — the worker's
+      create is CLEAN. Stale-placeholder-collision theory is dead too. Confirmed
+      facts now: PlaceHolderAlreadyExists is latched from neither the worker create
+      (0x0) nor abort's delete (0x0); the crash is at `before Close` with NO
+      `after ncz_join` line; and ncz_running=1 when abort enters (worker alive).
+
+      The missing `after ncz_join` is the load-bearing clue. Either the SD trace
+      loses that line as the fatal races the flush, OR threadWaitForExit never
+      returns because the worker is parked in a BLOCKING ncmContentStorageWritePlaceHolder
+      that m_ncz_win->abort() cannot unblock — leaving a worker still holding m_cs
+      when Close runs. The rev-4 build brackets the join with "join: waiting" /
+      "join: worker exited" to decide which.
+
+      METHODOLOGY NOTE: four hypotheses have now been wrong (double-abort-only;
+      libnx ABI break; CleanupAllPlaceHolder; stale-placeholder collision). Each
+      died to a hardware trace or a doc lookup, not to more reasoning. The pattern
+      is clear — this crash is only yielding to instrumentation, so the discipline
+      is: trace, read one fact, change one thing. No bundled speculative fixes.
+
+      **ROOT CAUSE, CONFIRMED (rev 4) — a C++ destruction-order use-after-free.**
+      The crash report is the key: Exception Type is **Data Abort, Fault Address
+      0x0** — a NULL deref. The 2168-0002 in the report header is a STALE result
+      register, not the cause; chasing it as an ncm error (six rounds) was chasing
+      a ghost. The real fault: MtpServer : NetworkService has NO ~MtpServer, so C++
+      destroys it as (1) empty derived dtor, (2) MEMBERS incl. m_install, (3) base
+      ~NetworkService which calls stop() to join the worker. Members die in step 2,
+      the worker is joined in step 3 — so m_install is destroyed while the MTP
+      worker thread is still inside recv_install using it. Two threads run abort()
+      on one half-destroyed installer (the abort#1-stuck-in-ncz_join /
+      abort#2-does-teardown inversion in the trace is exactly this), and one
+      dereferences what the other freed. Every abort()-level fix this session (the
+      double-abort guard, the ncz_join reorder, the atomics, the handle-leak
+      theory) was treating symptoms of THIS.
+
+      **FIX: `~MtpServer() override { stop(); }`** — join the worker BEFORE any
+      member is destroyed. One line. Proven on the host: tests/teardown_order_test
+      models the base/member/thread skeleton; under TSan the no-derived-dtor
+      variant reports a data race in operator delete (the crash), the derived-dtor
+      variant is clean across 200 trials. This is the first fix this session with
+      a host repro of the actual mechanism, not just a plausible story.
+
+      VERIFY on hardware: the very cancel that always crashed should now exit clean,
+      first try — no accumulation needed, because the bug was never accumulative
+      (that reading was wrong; see below, kept for the record). The trace should
+      show abort running to completion once, no concurrent abort#1/abort#2.
+
+      ── SUPERSEDED analysis, kept for the record (all treated symptoms of the
+         destruction-order bug above; each was disproven by the next hardware trace,
+         which is the process working even when slow): ──
+
+      BREAKTHROUGH (rev 4): the crash is ACCUMULATIVE. Hardware report — an NSZ
+      cancelled 4× in one session dumped to HOME cleanly 3×, then crashed on the
+      4th (same file, same position). A pure ordering bug fires every time; "clean
+      N times then fatal" is a RESOURCE LEAK hitting a limit. This is the fact the
+      four dead theories all failed to predict, and it points straight at a
+      concrete defect:
+
+      threadClose(&m_ncz_thread) exists in exactly ONE place — inside ncz_join().
+      The rev-4 abort() idempotency guard (added to fix the double-abort) sat
+      BEFORE ncz_join and returned early on the second call — so any path that
+      reached abort() with the guard already set SKIPPED ncz_join entirely,
+      leaking the worker's Thread handle. Horizon's per-process handle table is
+      finite; a few leaked handles later, the next handle-creating syscall faults.
+      That is precisely "clean 3×, crash on the 4th", and it is NSZ/XCI-only
+      because only those paths spawn the worker. It also explains why the crash
+      code MIGRATED when the guard was added two rounds ago: the guard introduced
+      the leak.
+
+      FIX (rev 4): abort() reordered so ncz_join() ALWAYS runs (it is idempotent —
+      early-returns when no worker), and only the ncm teardown (Delete/Close) is
+      guarded exactly-once, via an atomic exchange, AFTER the join. Thread cleanup
+      can no longer be skipped. m_aborted is now std::atomic.
+
+      CONFIDENCE: this is the fifth hypothesis; four were wrong. But it is the only
+      one consistent with the accumulation evidence, and the leak is structurally
+      confirmed (single threadClose site, provably skippable by the old guard).
+      Trace files are now PER-RUN: each app launch resolves the first free
+      sdmc:/switch/GarageNX/logs/abort_trace_N.log (numbered, not timestamped —
+      no RTC syscall during teardown), so 6-8 cancels produce abort_trace_0.log
+      .. abort_trace_7.log with no reconnect-and-delete between runs. The join-trace ("join: waiting"/"join: worker exited") is retained to confirm
+      the worker is now joined on every cancel. VERIFY on hardware: cancel the same
+      NSZ 6–8 times in one session — the old bug crashed by the 4th; the fix should
+      survive all of them. Only then is this FIXED, not FIXED-PENDING.
+
+      ── Prior analysis, still on record (the double-abort was real and is fixed,
+         but was NOT the whole crash — see above): ──
+
+      **ROOT CAUSE FOUND (rev 4), via the trace.** The hardware abort_trace.log
+      from an NSZ cancel showed **two `enter` lines for one cancel** — abort() ran
+      twice. Cause: every cancel site in `recv_install` does `m_install->abort();
+      m_install.reset();`, and `~StreamInstaller()` *also* calls `abort()`
+      (`stream_installer.cpp:88`). So abort ran explicitly, then again from the
+      destructor. The second pass re-entered ncm — `DeletePlaceHolder`/`Close` on
+      a placeholder/handle the first pass had already freed — which ncm treats as
+      a programming error and turns fatal (2168-0002). NSP and XCZ escaped only by
+      timing: whether the second pass landed inside ncm's sensitive window was a
+      race, so they crashed on some runs, not the ones tested.
+
+      This vindicates the decision not to guess a fix from code-reading: the two
+      crashing cases (NSZ worker-created placeholder, XCI this-thread placeholder)
+      shared no structural feature, and no static reading separated them from the
+      clean cases — because the discriminator was runtime timing, which only the
+      trace could show.
+
+      **FIX: abort() is now idempotent** — a `m_aborted` guard makes every call
+      after the first a no-op (no second ncz_join, DeletePlaceHolder, or Close).
+      The guard is the real fix and stays; the trace and its per-call counter stay
+      *only until a clean hardware run confirms it*, then both come out (the guard
+      remains).
+
+      **What is proven, and what is not.** Host tests cannot prove this: the
+      dangerous second pass is `#ifdef PLATFORM_SWITCH` (ncm), and off-device
+      abort()'s only action (`ncz_join`) is already self-guarded, so a double
+      abort was harmless on the host even before the fix — `stream_container_test`
+      has a call-path smoke test that says so in its own comment. **The proof is
+      the next hardware run:** cancel an NSZ (and an XCI) and confirm
+      abort_trace.log now shows a single `abort#1 enter` with an `abort#2 re-entry
+      (no-op)`, and no crash. Until that trace is in hand this is FIXED-PENDING,
+      not FIXED.
+
+- [x] **Input dropped presses during fast navigation — FIXED (rev 4).** Observed
+      as ~7 D-pad taps advancing ~5 lines, worse in the file browser than the main
+      menu. My first analysis (a poll/event coalescing guess) named the wrong
+      mechanism; a frame-by-frame trace found the real one: poll() OR-combined
+      button-down events into a bitmask (`event_pressed |= mask`), so two taps of
+      one button inside a single frame collapsed to ONE press. It bit hardest in
+      the file browser because drawing two full panes lengthens frames, widening
+      the window for multiple taps to land together. FIX: poll() now COUNTS
+      down-events per button (s_press_count[]) instead of OR-ing; Input::press_count()
+      exposes it; List::handle_input() steps once per counted tap (max'd with
+      repeat() so a held press does not double-step). Proven on host:
+      input_press_count_test mirrors the counting core and asserts 7 taps -> 7
+      presses, single tap -> 1, sustained hold -> 0, analog edge -> 1. The SDL glue
+      (event drain) is hardware-verified separately. NOTE: this corrects a wrong
+      earlier entry — the "~28%" and the poll-coalescing mechanism were both
+      mis-stated; the real cause was the event-queue OR.
+- [x] **File-browser navigation stutter — FIXED (rev 4): per-frame text
+      rasterisation.** After the input press-count fix, navigation STILL stuttered
+      (~1 in 4 taps dropped, holds not smooth). The tell was that the main menu —
+      same List widget, same handle_input — felt fine while the file browser did
+      not. The difference is render load, not input: List::draw() called
+      Font::render() (a full glyph rasterisation) for every visible row every
+      frame, and Renderer::blit()/Widgets::draw_text() did
+      SDL_CreateTextureFromSurface + SDL_DestroyTexture per call — so the two
+      costliest steps (rasterise + GPU upload) ran and were thrown away every
+      frame. The browser draws two panes of rows plus a details column, nav column
+      and hints: 40+ rasterise+upload+destroy cycles per frame, dropping below
+      60fps. Long frames cause BOTH symptoms — multiple taps land per frame
+      (drops) and repeat() fires at most once per long frame (choppy holds).
+      FIX: a rendered-text cache. New source/ui/text_cache.hpp holds the pure key
+      (text+size+weight+family+colour) and eviction policy (hard cap + frame-age
+      LRU); Renderer::draw_text()/measure_text() rasterise+upload once and reuse
+      the SDL_Texture across frames, keyed by content. List::draw() and
+      Widgets::draw_text() (the file browser's title/path/details/hints helper)
+      now route through it, so steady-state cost is one RenderCopy per row.
+      text_cache_advance_frame() (in begin_frame) ages out unused entries;
+      text_cache_clear() (in shutdown, before SDL_DestroyRenderer) frees textures.
+      Proven on host: text_cache_test (19 checks). SDL texture glue needs hardware
+      (no SDL on host); lifetime/ordering invariants hand-audited. The input
+      press-count fix (prior item) is still correct and retained, but this render
+      fix is the primary cause of the stutter. HARDWARE-CONFIRMED: all menus are
+      responsive; caching in the two lowest-level text helpers (List::draw and
+      Widgets::draw_text) lifted every screen, not just the browser.
+- [ ] **Repeat delay one frame late** — `Input::repeat()` does
+      `s_repeat_map[bit]`, and `std::map::operator[]` inserts on read. `poll()`
+      iterates the map, so a button acquires repeat state only *after* `repeat()`
+      has asked about it once, making `first_press` one frame late and the
+      effective delay `s_repeat_delay_ms + 1 frame`. Small, but it biases any
+      future tuning of that constant. Fix alongside the coalescing item above;
+      they are the same code.
+- [~] **MTP screen: stats rework — DONE (host-tested where possible, hardware-
+      pending).** Stats changed from `requests | ↑ sent | ↓ recv | rate` to
+      `↑ sent | ↓ recv | Now | Avg | ETA`; `request_count()` dropped. All the
+      design constraints below were honoured:
+      - 1 Hz is a DISPLAY LATCH, not a frame-rate change: update() samples the
+        RateMeter every frame (accuracy) and rebuilds the on-screen strings only
+        once per second via SDL_GetTicks (legibility + avoids churning the text
+        cache). The render loop is untouched, so input is not starved.
+      - ETA denominator is WIRE bytes: MtpServer::current_wire_size()/
+        current_wire_recv() publish the transfer's wire (compressed) size and the
+        file payload received. ETA = (wire_size − wire_recv) / current rate; "—"
+        until a size is known and a rate exists.
+      - HARDWARE FIX (rev 4, post-first-test): the wire counters were first added
+        only to recv_file_data() — the plain file-COPY path. But an install goes
+        through recv_install(), which was NOT instrumented, so during an actual
+        install current_wire_size() stayed 0 and the ETA was permanently "—".
+        Fixed by adding the wire accounting to recv_install() (size resolved from
+        the host's 64-bit declaration or the container table; payload counted as
+        it is fed). Second bug from the same misread: the screen sampled the
+        RateMeter on bytes_sent()+bytes_recv(), which counts ALL MTP protocol
+        traffic — so the data-phase average anchored the instant the host
+        connected, not when a transfer began ("average starts when the screen is
+        drawn"). Fixed by sampling current_wire_recv() (file payload only), which
+        also re-anchors per object. Both traced to putting the accounting in the
+        copy path instead of the install path; RateMeter logic was correct and
+        unchanged.
+      - Average is over the DATA PHASE only: RateMeter now has
+        average_bytes_per_sec() + data_phase_started(), anchored at the first byte
+        moved (not at reset), so pre-transfer idle and post-transfer meta
+        registration don't drag it down. Re-anchors on a counter reset (server
+        restart). Proven on host: rate_meter_test (11 checks) — idle exclusion,
+        first-byte anchoring, re-anchor after reset, reset clears all state.
+        Writing the test caught two real bugs first: the average inherited the
+        windowed m_last_t (idle leaked in), and reset detection used the coarse
+        250 ms m_last_bytes; fixed by giving the average its own every-sample
+        tracker decoupled from the rate window.
+      - Layout: 5 columns × kColW=180 from cx=60 → rightmost ~900 px of 1280, fits.
+      - **Per-direction rate: deliberately NOT split.** The spec floated separate
+        ↑/↓ speeds. Kept the combined RateMeter (samples sent+recv) for Now/Avg:
+        the ↑sent/↓recv columns already show cumulative per-direction totals, and
+        the live speed is dominated by whichever direction is active (recv during
+        an install, send during a pull). Two meters for a split rate is marginal
+        value; revisit only if a real need appears.
+      - **Language-file gap found & fixed (was NOT just "adding fields"):** the MTP
+        screen referenced mtp.* keys (title/status/host/session/hint_*), but
+        en.json had NO top-level `mtp` block at all — only an unrelated
+        `mtp_screen` subtree (storage labels). The working FTP/HTTP screens use a
+        flat top-level block (http.*, ftp.*); MTP's was simply missing, so those
+        lines had been rendering raw keys on hardware. Added the full 15-key `mtp`
+        block modelled on `http`, including the new speed_now/speed_avg/eta.
+      HARDWARE-PENDING: verify the five columns render, ETA counts down against
+      wire bytes and shows "—" before size is known, and the labels resolve
+      (no raw "mtp.status" text). The SDL/libnx glue (screen draw, server wire
+      counters) can't compile on the host; API contracts hand-audited.
 - [ ] Full `en.json` — to be completed key-by-key as each screen is implemented; must be 100% complete before v1.0.0
 
 ---
 
 *This document is the living reference for GarageNX development. All design decisions made prior to this document are captured above. Subsequent decisions should be appended to the relevant section with a date note.*
+
+## Transport-agnostic install driver (StreamDriver) — the parity keystone
+
+Extracted the install *driver loop* from `MtpServer::recv_install` into
+`Install::drive()` (`source/install/stream_driver.{hpp,cpp}`) so MTP, and soon FTP
+and HTTP, share ONE install path instead of three copies. The install *engine*
+(`StreamInstaller`) was already transport-agnostic; what was welded to MTP was the
+loop around it — size correction from the PFS0/HFS0 table, the OverlapBuffer, the
+feed sequencing, and the load-bearing teardown order (quiesce the overlap worker
+BEFORE abort(), the 4c UAF). All of that now lives in the driver, parameterised by
+three injected callbacks: a byte source (`read`), a cancel predicate (`stop`), and a
+transport unwedge (`drain`). The transport keeps only its own framing (MTP's 12-byte
+data-container header) and its drain.
+
+`MtpServer::recv_install` is now a thin adapter (~65 lines, was ~160), HARDWARE-CONFIRMED
+transparent (all four formats install + cancel identically post-refactor): read the first
+transfer, strip the header, hand off to `drive()` with `ep_read` as the source,
+`should_stop` as cancel, `drain_data` as drain, and the wire atomics wired to the
+`WireSink`.
+
+TESTABILITY WIN — and a real bug it caught. Because the byte source is injected, the
+whole driver runs on the host against a synthetic in-memory PFS0
+(`tests/stream_driver_test.cpp`, 17 checks: size recovery from the table, exact-size
+declaration, chunk-size invariance 1..8192, mid-stream cancel → Cancelled + drain,
+early-EOF → ShortRead). Running it under TSan surfaced a data race that had been in
+the SHIPPING MTP install path since 4c: `StreamInstaller::complete()`/`ok()` read
+`m_phase` on the main thread while the overlap worker writes it in `feed()`. No host
+test had driven the overlap worker through completion before, so TSan never saw it.
+Fixed by making `m_phase` a `std::atomic<Phase>` (relaxed; it is a status flag, not a
+lock). TSan now clean. The extraction improved coverage of code already on hardware.
+
+NOTE (host-invisible guard): `stream_driver.hpp` explicitly includes `<sys/types.h>`
+for `ssize_t` rather than relying on transitive visibility — the exact class of
+devkitPro-only break (cf. the `fileno`/`Result` issues) that the host build cannot
+catch.
+
+
+## Install over FTP (Slice A) — first consumer of the keystone
+
+FTP now mirrors MTP's STORAGE-CHOOSER model. The FTP root "/" is a chooser holding
+only storage folders — no real files — exactly like picking a drive in an MTP client:
+
+    /              → chooser: "SD Card", "SD Install", ["NAND Install"]
+    /SD Card/...   → the real SD filesystem (files live HERE, one level down)
+    /SD Install/x  → drop x to install it to the SD card
+    /NAND Install/x→ drop x to install it to NAND
+
+This corrects a first-cut bug where the install folders were OVERLAID on top of the
+SD-card contents at the root (files and install folders hybridised into one listing).
+Now the root is a clean menu and the filesystem lives inside "SD Card", matching how
+MTP presents separate storages.
+
+Gating is shared with MTP via Config::get().mtp: "SD Card" and "SD Install" show by
+default; "NAND Install" is opt-in (nand_install defaults false). A STOR into a
+disabled or non-storage location is rejected. So FTP and MTP always show identical
+storages because they read one config.
+
+Pieces:
+- `source/services/ftp_paths.hpp` — pure path model: Root / Filesystem (under SD
+  Card, with the relative remainder) / SdInstall / NandInstall / Invalid (a bare
+  path under no storage root). Host-tested (tests/ftp_paths_test.cpp, 28 checks,
+  incl. bare-path-is-Invalid and name-collision safety).
+- `FtpServer::to_vfs` is the choke point: only "/SD Card/..." maps to "sdmc:/...";
+  every other root returns "" so all filesystem commands (RETR/SIZE/DELE/MKD/RMD/…)
+  reject it uniformly. That single mapping is what keeps SD contents out of the root.
+- `FtpServer::ftp_install()` — the StreamDriver adapter (socket recv = byte source,
+  should_stop = cancel, no framing, size recovered from the container table). Same
+  hardware-validated install path as MTP.
+
+HARDWARE-CONFIRMED: install (into SD Install), clean cancel/exit teardown, and
+MTP-matching stats all verified on device. Slice A complete.
+
+## Exit to HOME (Bugs E + D) — DONE, hardware-confirmed
+
+The app exited to hbmenu instead of HOME, and installed titles didn't appear on HOME
+until close. Root cause was three interacting bugs, none of them the actual exit call:
+(1) a manual hidInitialize() leaked the hid service (SDL already owns it) — caused an
+unclean teardown/crash; (2) running_under_hbloader() tested envHasNextLoad(), which is
+true even for a forwarder launch, so B always took the "arm next-load = hbmenu.nro"
+branch; (3) the home branch called appletRequestExitToSelf(), which libnx gates to
+AppletType_LibraryApplet, so it silently no-op'd in Application mode. Fixes: drop the
+manual hidInitialize; detect context via appletGetAppletType(); for a real Application
+exit-to-HOME is a clean process termination (pop the loop, teardown, exit(0)) WITHOUT
+arming next-load; keep exit(0) (not return 0) because SDL wraps main via SDL_main.
+Fixing the clean HOME exit also made qlaunch re-scan records, closing Bug D for free.
+HARDWARE-CONFIRMED on both forwarder and applet launches.
+
+
+*Rev 4 (cycle-accurate to hardware test): Slice 4c XCI/XCZ stream install is COMPLETE and hardware-validated — NSP/NSZ/XCI/XCZ install and cancel cleanly. Work this cycle: collector refactor re-cut (the rev-3 entry claiming it was done proved false); XCI/XCZ HFS0 front-end added; PFS0/HFS0 string-table bound; NSZ/XCZ refusal noun; WrapNav wrap-delay 450→300. The MTP cancel crash took the most effort and six wrong theories before the crash report's exception type (Data Abort @ 0x0, not the ncm result 2168-0002) revealed the true cause: a C++ destruction-order use-after-free fixed by giving MtpServer a destructor that joins the worker before members are destroyed. Three real bugs were fixed en route (OverlapBuffer teardown race, double-abort, and the destruction order). Lesson recorded: when a fault has a crash dump, read the exception type, not the result register. Full detail in §16 Open Items.*

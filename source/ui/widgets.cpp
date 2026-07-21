@@ -54,9 +54,23 @@ void List::update_items(std::vector<ListItem> items) {
 bool List::handle_input() {
     if (m_items.empty()) return false;
 
-    const bool nav_down = Input::repeat(Input::Button::DDown);
-    const bool nav_up   = Input::repeat(Input::Button::DUp);
-    m_cursor = m_wrap.step(m_cursor, static_cast<int>(m_items.size()), nav_down, nav_up);
+    // Discrete taps: one step per counted press, so fast tapping during a stalled
+    // frame is not collapsed to a single move (the file-browser drop). Held
+    // navigation still comes through repeat(). We take the max of "taps this
+    // frame" and "repeat fired" rather than summing, so a held press that also
+    // shows one poll-edge press does not double-step.
+    const int  down_taps = Input::press_count(Input::Button::DDown);
+    const int  up_taps   = Input::press_count(Input::Button::DUp);
+    const bool down_rep  = Input::repeat(Input::Button::DDown);
+    const bool up_rep    = Input::repeat(Input::Button::DUp);
+
+    const int down_steps = std::max(down_taps, down_rep ? 1 : 0);
+    const int up_steps   = std::max(up_taps,   up_rep   ? 1 : 0);
+
+    for (int i = 0; i < down_steps; ++i)
+        m_cursor = m_wrap.step(m_cursor, static_cast<int>(m_items.size()), true, false);
+    for (int i = 0; i < up_steps; ++i)
+        m_cursor = m_wrap.step(m_cursor, static_cast<int>(m_items.size()), false, true);
 
     if (Input::pressed(Input::Button::A)) {
         return true;
@@ -138,30 +152,31 @@ void List::draw(int x, int y, int w, int h, const ListStyle& style) {
         SDL_Color lc = Theme::get(label_color);
         int label_max_w = w - (text_x - x) - (item.meta.empty() ? style.indent_x : 120);
 
-        SDL_Surface* label_surf = Font::render(
-            item.label, Font::Size::Body,
-            focused ? Font::Weight::Bold : Font::Weight::Regular, lc);
-        if (label_surf) {
-            int draw_w = std::min(label_surf->w, label_max_w);
-            SDL_Rect src{0, 0, draw_w, label_surf->h};
-            SDL_Rect dst{text_x, row_y + (style.row_height - label_surf->h) / 2, draw_w, label_surf->h};
-            SDL_Texture* tex = SDL_CreateTextureFromSurface(r, label_surf);
-            if (tex) {
-                SDL_RenderCopy(r, tex, &src, &dst);
-                SDL_DestroyTexture(tex);
-            }
-            SDL_FreeSurface(label_surf);
+        // Label — cached: rasterised + uploaded once, reused every frame.
+        int lh = 0, lw = 0;
+        Renderer::measure_text(item.label, (int)Font::Size::Body,
+                               (int)(focused ? Font::Weight::Bold : Font::Weight::Regular),
+                               (int)Font::Family::Sans, lc, &lw, &lh);
+        if (lh > 0) {
+            Renderer::draw_text(item.label, (int)Font::Size::Body,
+                                (int)(focused ? Font::Weight::Bold : Font::Weight::Regular),
+                                (int)Font::Family::Sans, lc,
+                                text_x, row_y + (style.row_height - lh) / 2,
+                                nullptr, nullptr, label_max_w);
         }
 
-        // Meta (right-aligned)
+        // Meta (right-aligned) — cached.
         if (!item.meta.empty()) {
             SDL_Color mc = Theme::get(Theme::Token::FgSecondary);
-            SDL_Surface* meta_surf = Font::render(item.meta, Font::Size::Small,
-                                                   Font::Weight::Regular, mc);
-            if (meta_surf) {
-                Renderer::blit_right(meta_surf, x, row_y, w - style.indent_x,
-                                     style.row_height);
-                SDL_FreeSurface(meta_surf);
+            int mw = 0, mh = 0;
+            Renderer::measure_text(item.meta, (int)Font::Size::Small,
+                                   (int)Font::Weight::Regular, (int)Font::Family::Sans,
+                                   mc, &mw, &mh);
+            if (mh > 0) {
+                const int mx = x + w - style.indent_x - mw;
+                Renderer::draw_text(item.meta, (int)Font::Size::Small,
+                                    (int)Font::Weight::Regular, (int)Font::Family::Sans,
+                                    mc, mx, row_y + (style.row_height - mh) / 2);
             }
         }
     }
@@ -353,27 +368,16 @@ int draw_text(int x, int y,
               Theme::Token color,
               int max_width)
 {
+    // Routed through the renderer's text-texture cache: rasterise + upload once,
+    // reuse across frames. This helper is called many times per frame by the
+    // file browser (title, path, hints, per-pane detail lines); the old body
+    // rasterised and destroyed a texture on every call, which is what made that
+    // screen stutter and drop inputs.
     SDL_Color c = Theme::get(color);
-    SDL_Surface* surf = Font::render(text, size, weight, c);
-    if (!surf) return 0;
-
-    int rendered_w = surf->w;
-
-    if (max_width > 0 && surf->w > max_width) {
-        SDL_Rect src{0, 0, max_width, surf->h};
-        SDL_Rect dst{x, y, max_width, surf->h};
-        SDL_Texture* tex = SDL_CreateTextureFromSurface(Renderer::get(), surf);
-        if (tex) {
-            SDL_RenderCopy(Renderer::get(), tex, &src, &dst);
-            SDL_DestroyTexture(tex);
-        }
-        rendered_w = max_width;
-    } else {
-        Renderer::blit(surf, x, y);
-    }
-
-    SDL_FreeSurface(surf);
-    return rendered_w;
+    int w = 0, h = 0;
+    Renderer::draw_text(text, (int)size, (int)weight, (int)Font::Family::Sans,
+                        c, x, y, &w, &h, max_width);
+    return w;
 }
 
 

@@ -61,6 +61,14 @@ public:
     /// Wait for all published work to drain. False if the sink ever failed.
     bool flush();
 
+    /// Stop the worker and join it, so no further sink call can begin. Blocks
+    /// until any in-flight sink call has returned. Idempotent, and safe on an
+    /// invalid buffer. The destructor calls this; callers tearing down early —
+    /// e.g. before destroying state the sink closes over — call it explicitly so
+    /// the worker is provably gone first. After quiesce() the buffer accepts no
+    /// more work; acquire()/submit()/flush() must not be called.
+    void quiesce();
+
     bool failed() const { return m_failed.load(); }
 
     size_t buffer_size() const { return m_size; }

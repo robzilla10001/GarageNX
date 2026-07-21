@@ -48,4 +48,5 @@ tags
 setup_github_remote.sh
 export_hex.py
 *.tgz
+*.tar.gz
 *.patch

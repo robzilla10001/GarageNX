@@ -21,12 +21,24 @@ namespace Widgets {
 // the opposite end — but only after `delay_ms` of sustained boundary contact, so
 // a long hold or an accidental extra press that reaches the edge doesn't wrap
 // unintentionally. `step()` returns the new cursor index (0 .. count-1).
+//
+// delay_ms was 450 and is 300 as of rev 4 — a third off, on the judgement that
+// the original was slower than it needed to be. All three call sites take the
+// default; there is deliberately no per-site override, so this constant is the
+// whole knob.
+//
+// Note the timer is wall-clock from first edge contact, and so is independent of
+// the input layer's repeat state machine. But the wrap only fires on a call
+// where `down`/`up` is true, so it does still need a press to LAND after the
+// delay has elapsed. While the input layer coalesces sub-frame taps (see §16
+// Open Items), wrapping will feel unreliable at the edge no matter what this
+// value is — that is a separate defect and lowering this will not mask it.
 struct WrapNav {
     int      edge_dir   = 0;   // +1 = armed at bottom, -1 = armed at top, 0 = none
     uint32_t edge_since = 0;   // SDL_GetTicks() when the edge was first reached
 
     void reset() { edge_dir = 0; }
-    int  step(int cursor, int count, bool down, bool up, uint32_t delay_ms = 450);
+    int  step(int cursor, int count, bool down, bool up, uint32_t delay_ms = 300);
 };
 
 // ─── List widget ──────────────────────────────────────────────────────────────

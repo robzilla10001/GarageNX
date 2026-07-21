@@ -1,6 +1,8 @@
 // source/services/mtp_server.cpp
 
 #include "services/mtp_server.hpp"
+#include "services/storage_catalog.hpp"
+#include "install/stream_driver.hpp"
 #include "services/mtp_data.hpp"
 #include "services/overlap_buffer.hpp"
 #include "core/storage.hpp"
@@ -33,9 +35,51 @@ namespace {
 constexpr uint32_t kStorageSd          = 0x00010001;
 constexpr uint32_t kStorageSdInstall   = 0x00020001;
 constexpr uint32_t kStorageNandInstall = 0x00030001;
+constexpr uint32_t kStorageAlbum       = 0x00040001;
 
 bool is_install_storage(uint32_t id) {
     return id == kStorageSdInstall || id == kStorageNandInstall;
+}
+
+// Map an MTP wire storage id (stable, cached by PC clients — must NOT change) to
+// the shared StorageCatalog surface it represents.
+bool mtp_id_to_surface(uint32_t wire_id, StorageSurface::Id& out) {
+    switch (wire_id) {
+        case kStorageSd:          out = StorageSurface::Id::SdCard;      return true;
+        case kStorageSdInstall:   out = StorageSurface::Id::SdInstall;   return true;
+        case kStorageNandInstall: out = StorageSurface::Id::NandInstall; return true;
+        case kStorageAlbum:       out = StorageSurface::Id::Album;       return true;
+        default: return false;
+    }
+}
+
+// Reverse: a catalog surface id -> its MTP wire id (0 if the surface has no MTP
+// storage id, e.g. NAND browse which MTP doesn't expose yet).
+uint32_t surface_to_mtp_id(StorageSurface::Id sid) {
+    switch (sid) {
+        case StorageSurface::Id::SdCard:      return kStorageSd;
+        case StorageSurface::Id::SdInstall:   return kStorageSdInstall;
+        case StorageSurface::Id::NandInstall: return kStorageNandInstall;
+        case StorageSurface::Id::Album:       return kStorageAlbum;
+        default: return 0;
+    }
+}
+
+// Derive the MTP wire storage id that owns a concrete VFS path, by matching the
+// path's mount prefix ("sdmc:/...", "album:/...") against the catalog's Filesystem
+// surfaces. This is what makes browse storage-aware without a parallel handle->
+// storage table: an object's storage is a function of its path. Falls back to the
+// SD storage id if no prefix matches (shouldn't happen for interned paths).
+uint32_t mtp_storage_for_path(const std::string& vfs_path) {
+    for (const auto& s : Services::StorageCatalog::all()) {
+        if (s.kind != Services::StorageKind::Filesystem) continue;
+        const std::string root = s.vfs_root;             // e.g. "sdmc:", "album:"
+        if (vfs_path.compare(0, root.size(), root) == 0) {
+            uint32_t id = surface_to_mtp_id(s.id);
+            if (id) return id;
+        }
+    }
+    return kStorageSd;
 }
 
 // usb:ds transfers must come from page-aligned memory. 1 MiB keeps future file
@@ -45,11 +89,11 @@ constexpr size_t kBufSize = 1024 * 1024;
 } // namespace
 
 bool MtpServer::storage_enabled(uint32_t id) const {
-    const auto& m = Config::get().mtp;
-    if (id == kStorageSd)          return m.sd_card;
-    if (id == kStorageSdInstall)   return m.sd_install;
-    if (id == kStorageNandInstall) return m.nand_install;
-    return false;
+    // Defer to the shared catalog so MTP, FTP, and HTTP agree on what's enabled.
+    // The wire id -> surface mapping preserves MTP's stable storage ids.
+    StorageSurface::Id sid;
+    if (!mtp_id_to_surface(id, sid)) return false;
+    return StorageCatalog::enabled(sid, Config::get().mtp);
 }
 
 // ─── Datasets ────────────────────────────────────────────────────────────────
@@ -68,6 +112,7 @@ std::vector<uint8_t> MtpServer::build_device_info() const {
         Op::GetDeviceInfo, Op::OpenSession, Op::CloseSession,
         Op::GetStorageIDs, Op::GetStorageInfo,
         Op::GetNumObjects, Op::GetObjectHandles, Op::GetObjectInfo, Op::GetObject,
+        Op::GetPartialObject,
         Op::SendObjectInfo, Op::SendObject, Op::DeleteObject,
         Op::GetDevicePropDesc, Op::GetDevicePropValue,
         // MTP 1.1. A host uses SendObjectPropList only if we claim it here, and
@@ -110,8 +155,23 @@ std::vector<uint8_t> MtpServer::build_storage_info(uint32_t storage_id) const {
         return w.data();
     }
 
-    const Core::Storage::SpaceInfo sd = Core::Storage::sd_card();
+    if (storage_id == kStorageAlbum) {
+        // Album lives on the SD card, so its space figures are the SD card's.
+        // Name comes from the catalog so it matches every other transport.
+        const Core::Storage::SpaceInfo sp = Core::Storage::sd_card();
+        const StorageSurface* s = StorageCatalog::find(StorageSurface::Id::Album);
+        w.u16(0x0004);                    // StorageType: RemovableRAM (on SD)
+        w.u16(0x0002);                    // FilesystemType: GenericHierarchical
+        w.u16(0x0000);                    // AccessCapability: read-write
+        w.u64(sp.total_bytes);
+        w.u64(sp.free_bytes);
+        w.u32(0xFFFFFFFF);
+        w.str(s ? s->display : "Album");  // StorageDescription
+        w.str("ALBUM");                   // VolumeIdentifier
+        return w.data();
+    }
 
+    const Core::Storage::SpaceInfo sd = Core::Storage::sd_card();
     w.u16(0x0004);                    // StorageType: RemovableRAM
     w.u16(0x0002);                    // FilesystemType: GenericHierarchical
     w.u16(0x0000);                    // AccessCapability: read-write
@@ -156,15 +216,26 @@ std::vector<uint8_t> MtpServer::build_object_info(uint32_t handle) const {
     const uint64_t size = is_dir ? 0 : Fs::file_size(*p);
 
     // Parent: the interned handle of the containing directory, or the root
-    // sentinel when this object sits directly in the storage root.
+    // sentinel when this object sits directly in a storage root. A storage root is
+    // any surface mount prefix ("sdmc:/", "album:/", ...), matched via the catalog
+    // so browse works across all Filesystem surfaces, not just SD.
     const std::string parent_path = Fs::parent(*p);
     uint32_t parent_handle = Mtp::kRootParent;
-    if (!parent_path.empty() && parent_path != "sdmc:" && parent_path != "sdmc:/") {
+    bool parent_is_storage_root = parent_path.empty();
+    for (const auto& s : Services::StorageCatalog::all()) {
+        if (s.kind != Services::StorageKind::Filesystem) continue;
+        const std::string root = s.vfs_root;                  // "sdmc:"
+        if (parent_path == root || parent_path == root + "/") {
+            parent_is_storage_root = true;
+            break;
+        }
+    }
+    if (!parent_is_storage_root) {
         auto it = m_by_path.find(parent_path);
         if (it != m_by_path.end()) parent_handle = it->second;
     }
 
-    w.u32(kStorageSd);
+    w.u32(mtp_storage_for_path(*p));
     w.u16(is_dir ? Mtp::Fmt::Association : Mtp::Fmt::Undefined);
     w.u16(0);                                  // ProtectionStatus: none
     // ObjectCompressedSize is 32-bit in PTP. FAT32 caps files at 4 GiB so this
@@ -195,10 +266,19 @@ std::vector<uint8_t> MtpServer::build_object_info(uint32_t handle) const {
 // bulk transfers as it takes — so reading a 4 GiB file never needs a 4 GiB
 // buffer.
 bool MtpServer::send_file_data(uint16_t code, uint32_t tid,
-                               const std::string& vfs_path, uint64_t size) {
+                               const std::string& vfs_path, uint64_t size,
+                               uint64_t offset) {
 #ifdef PLATFORM_SWITCH
     FILE* f = std::fopen(vfs_path.c_str(), "rb");
     if (!f) return false;
+
+    // For a partial read (GetPartialObject), seek to the requested offset first;
+    // `size` is then the number of bytes to send from there. offset==0 is a normal
+    // full read.
+    if (offset != 0 && std::fseek(f, (long)offset, SEEK_SET) != 0) {
+        std::fclose(f);
+        return false;
+    }
 
     const uint64_t total = Mtp::kHeaderSize + size;
     Writer hdr;
@@ -227,7 +307,7 @@ bool MtpServer::send_file_data(uint16_t code, uint32_t tid,
     std::fclose(f);
     return remaining == 0;
 #else
-    (void)code; (void)tid; (void)vfs_path; (void)size;
+    (void)code; (void)tid; (void)vfs_path; (void)size; (void)offset;
     return false;
 #endif
 }
@@ -257,6 +337,11 @@ bool MtpServer::read_data_container(std::vector<uint8_t>& out) {
 // "undefined length" sentinel instead of a real total.
 bool MtpServer::recv_file_data(const std::string& vfs_path, uint64_t expected) {
 #ifdef PLATFORM_SWITCH
+    // Publish the ETA denominator: `expected` is the wire (compressed) size the
+    // host declared in SendObjectInfo. Reset the per-object received counter.
+    m_wire_size.store(expected);
+    m_wire_recv.store(0);
+
     size_t got = 0;
     if (!ep_read(m_buf, m_buf_size, &got, 10000000000ULL)) return false;
     if (got < Mtp::kHeaderSize) return false;
@@ -281,6 +366,7 @@ bool MtpServer::recv_file_data(const std::string& vfs_path, uint64_t expected) {
         written += first;
     }
     m_bytes_recv.fetch_add(got);
+    m_wire_recv.fetch_add(first);   // wire payload only, for the ETA
 
     // Overlap the remaining USB reads with the SD writes; strictly alternating
     // leaves each idle while the other works.
@@ -301,9 +387,18 @@ bool MtpServer::recv_file_data(const std::string& vfs_path, uint64_t expected) {
             break;
         }
         m_bytes_recv.fetch_add(got);
+        m_wire_recv.fetch_add(take);   // wire payload only, for the ETA
         written += take;
     }
     const bool sink_ok = ov.valid() ? ov.flush() : true;   // drain before closing
+    // Join the worker BEFORE fclose(). The sink closes over `f`; flush() waits
+    // for in-flight work but does not stop the worker, so without this the
+    // worker's thread object and fclose() are only ordered by the destructor,
+    // which runs at scope exit — after fclose(). quiesce() makes the ordering
+    // explicit rather than incidental. Same lesson as recv_install's cancel
+    // path (2347-0018), lower stakes here because this path has no early cancel
+    // branch, but the same class of bug if one is ever added.
+    ov.quiesce();
     std::fclose(f);
     if (!sink_ok) { std::remove(vfs_path.c_str()); return false; }
 
@@ -454,7 +549,7 @@ void MtpServer::arm_incoming_object(uint32_t storage, uint32_t parent, uint16_t 
         if (!Fs::make_directory(dest)) { send_response(Rc::GeneralError, tid); return; }
         m_pending_valid = false;
         const uint32_t h = intern(dest);
-        const uint32_t rp[3] = {kStorageSd, parent, h};
+        const uint32_t rp[3] = {storage, parent, h};
         send_response(Rc::Ok, tid, rp, 3);
         return;
     }
@@ -465,7 +560,7 @@ void MtpServer::arm_incoming_object(uint32_t storage, uint32_t parent, uint16_t 
     m_pending_valid      = true;
 
     const uint32_t h = intern(dest);
-    const uint32_t rp[3] = {kStorageSd, parent, h};
+    const uint32_t rp[3] = {storage, parent, h};
     send_response(Rc::Ok, tid, rp, 3);
     return;
 }
@@ -512,129 +607,79 @@ bool MtpServer::recv_install(uint32_t storage_id, const std::string& filename,
         m_install.reset(); m_installing.store(false); return false;
     }
 
-    // First transfer carries the data-container header plus the first payload.
+    // Wire accounting for the screen's average/ETA. This is the install path —
+    // the case that actually wants an ETA. (recv_file_data(), the plain file-copy
+    // path, has its own copy of this; an install never goes through it.) Reset
+    // the per-object received counter; the size is published below once payload
+    // has been resolved to the best-known value.
+    m_wire_size.store(0);
+    m_wire_recv.store(0);
+
+    // ── Drive the install via the transport-agnostic StreamDriver ────────────
+    // MTP-specific work stays here: read the first transfer and strip the 12-byte
+    // data-container header. Everything after — size correction, overlap buffer,
+    // feed loop, and the load-bearing teardown order — lives in Install::drive(),
+    // shared with the (upcoming) FTP and HTTP install paths.
     size_t got = 0;
-    if (!ep_read(m_buf, m_buf_size, &got, 10000000000ULL)) { m_install->abort(); m_install.reset(); return false; }
-    if (got < Mtp::kHeaderSize) { m_install->abort(); m_install.reset(); return false; }
+    if (!ep_read(m_buf, m_buf_size, &got, 10000000000ULL)) { m_install->abort(); m_install.reset(); m_installing.store(false); return false; }
+    if (got < Mtp::kHeaderSize) { m_install->abort(); m_install.reset(); m_installing.store(false); return false; }
 
     Mtp::Header h;
     if (!parse_header(m_buf, got, h) || h.type != Mtp::Type::Data) {
-        m_install->abort(); m_install.reset(); return false;
+        m_install->abort(); m_install.reset(); m_installing.store(false); return false;
     }
-    // MTP cannot express a size over 4 GiB: both ObjectCompressedSize and the
-    // data-container length are 32-bit, and a host sends 0xFFFFFFFF for anything
-    // larger. Rather than implementing MTP object properties to recover a 64-bit
-    // size, take it from the container itself — the PFS0 entry table is 64-bit
-    // and exact. `payload` starts as whatever MTP claimed and is corrected to the
-    // real value as soon as the PFS0 header has been parsed.
+
+    // MTP's data-container length is 32-bit (0xFFFFFFFF above 4 GiB). It seeds the
+    // driver's size guess; the driver refines it from the PFS0/HFS0 table, and a
+    // host-declared exact 64-bit size (size_exact) still wins.
     const bool undefined_len = (h.length == 0xFFFFFFFFu);
-    uint64_t payload = undefined_len ? UINT64_MAX : (h.length - Mtp::kHeaderSize);
-    if (!undefined_len && payload != size && size != 0xFFFFFFFFu)
-        m_install_progress.push_log("Note: container length and declared size disagree");
+    const uint64_t declared = size_exact ? size
+                             : (undefined_len ? 0 : (h.length - Mtp::kHeaderSize));
 
-    // A size the host declared in 64 bits (SendObjectPropList) outranks
-    // everything else, because it is the only value that describes the TRANSFER
-    // rather than the container's contents. The two coincide for PFS0 — an
-    // NSP's last entry ends at the file's end — which is why reading the length
-    // out of the entry table has worked so far. They will NOT coincide for an
-    // XCI, whose trailing padding belongs to the transfer but to no entry.
-    // Coming up short there does not fail an install; it leaves unread bytes in
-    // the endpoint and the next command parses file data as a header.
-    if (size_exact && size > 0) {
-        payload = size;
-        m_install_progress.push_log("Host declared an exact 64-bit size");
-    }
+    Install::StreamSource src;
+    src.buffer      = m_buf;
+    src.buffer_size = m_buf_size;
+    src.read = [this](uint8_t* buf, size_t n) -> ssize_t {
+        size_t rd = 0;
+        if (!ep_read(buf, n, &rd, 10000000000ULL)) return -1;
+        m_bytes_recv.fetch_add(rd);   // raw bytes over the wire (matches ↓recv total)
+        return (ssize_t)rd;   // 0 = ZLP/end
+    };
+    src.stop  = [this] { return should_stop(); };
+    src.drain = [this](uint64_t remaining) { drain_data(remaining); };
 
-    uint64_t fed = 0;
-    size_t first = got - Mtp::kHeaderSize;
-    if (first > payload) first = (size_t)payload;
-    if (first > 0 && !m_install->feed(m_buf + Mtp::kHeaderSize, first)) {
-        m_install->abort();
-        save_install_log(filename, false);
-        m_install.reset(); m_installing.store(false);
-        drain_data(payload - first);   // let the host finish; do not wedge it
-        return false;
-    }
-    fed += first;
-    m_bytes_recv.fetch_add(got);
+    Install::WireSink wire;
+    wire.set_size = [this](uint64_t sz) { m_wire_size.store(sz); };
+    wire.add_recv = [this](uint64_t n)  { m_wire_recv.fetch_add(n); };
 
-    // Fallback only. Without a 64-bit declaration, the container's own table is
-    // the best available answer: the PFS0 header lands in the first few bytes,
-    // so the true length is known long before a transfer runs past 4 GiB. When
-    // the host DID declare a size, this becomes a cross-check instead — a
-    // disagreement is worth recording, but the host still wins.
-    if (!size_exact && m_install->container_size() > 0) {
-        payload = m_install->container_size();
-    } else if (size_exact && m_install->container_size() > 0 &&
-               m_install->container_size() != payload) {
-        char nb[128];
-        std::snprintf(nb, sizeof(nb),
-                      "Note: declared %llu bytes, container table says %llu",
-                      (unsigned long long)payload,
-                      (unsigned long long)m_install->container_size());
-        m_install_progress.push_log(nb);
-    }
+    Install::FirstChunk first{ m_buf + Mtp::kHeaderSize, got - Mtp::kHeaderSize };
 
-    // Overlap the USB reads with the placeholder writes. StreamInstaller::feed is
-    // only ever touched by the worker thread here, and flush() fences it before
-    // finish() runs on this thread, so no extra locking is needed.
-    OverlapBuffer ov(m_buf_size, [&](const uint8_t* p, size_t n) {
-        return m_install->feed(p, n);
-    });
+    const Install::DriveResult dr =
+        Install::drive(*m_install, src, first, declared, size_exact, wire);
 
-    while (fed < payload && !should_stop()) {
-        uint8_t* dst = ov.valid() ? ov.acquire() : m_buf;
-        if (!dst) break;                           // installer failed
-        if (!ep_read(dst, m_buf_size, &got, 10000000000ULL)) break;
-        if (got == 0) break;                       // ZLP terminates the data phase
-        if (payload == UINT64_MAX && m_install->container_size() > 0)
-            payload = m_install->container_size();   // still no declaration; use the table
-        size_t take = got;
-        if (fed + take > payload) take = (size_t)(payload - fed);   // ignore ZLP/padding
-        if (ov.valid() && !ov.submit(take)) {
-            m_install->abort();
+    switch (dr) {
+        case Install::DriveResult::Ok:
+            save_install_log(filename, true);
+            m_install.reset(); m_installing.store(false);
+            return true;
+        case Install::DriveResult::Cancelled:
+            m_install_progress.push_log("Install cancelled by user");
             save_install_log(filename, false);
             m_install.reset(); m_installing.store(false);
-            drain_data(payload > fed ? payload - fed : 0);
             return false;
-        }
-        if (!ov.valid() && !m_install->feed(dst, take)) {
-            m_install->abort();
+        case Install::DriveResult::ShortRead:
+            m_install_progress.push_log("ERROR: transfer ended early");
             save_install_log(filename, false);
             m_install.reset(); m_installing.store(false);
-            drain_data(payload - fed - take);
             return false;
-        }
-        m_bytes_recv.fetch_add(got);
-        fed += take;
-        if (m_install->complete()) { payload = fed; break; }   // every entry consumed
+        case Install::DriveResult::FeedError:
+        case Install::DriveResult::FinishError:
+        default:
+            save_install_log(filename, false);
+            m_install.reset(); m_installing.store(false);
+            return false;
     }
 
-    if (ov.valid() && !ov.flush()) {   // fence: worker must be done before finish()
-        m_install->abort();
-        save_install_log(filename, false);
-        m_install.reset(); m_installing.store(false);
-        drain_data(payload > fed ? payload - fed : 0);
-        return false;
-    }
-
-    if (fed != payload) {
-        // Truncated transfer: drop the open placeholder rather than registering
-        // a half-written NCA.
-        m_install_progress.push_log("ERROR: transfer ended early (" +
-            std::to_string(fed) + " of " + std::to_string(payload) + " bytes)");
-        m_install->abort();
-        save_install_log(filename, false);
-        m_install.reset();
-        m_installing.store(false);
-        return false;
-    }
-
-    const bool ok = m_install->finish();
-    save_install_log(filename, ok);
-    m_install.reset();
-    m_installing.store(false);
-    return ok;
 #else
     (void)storage_id; (void)filename; (void)size;
     return false;
@@ -719,6 +764,7 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             if (storage_enabled(kStorageSd))          ids.push_back(kStorageSd);
             if (storage_enabled(kStorageSdInstall))   ids.push_back(kStorageSdInstall);
             if (storage_enabled(kStorageNandInstall)) ids.push_back(kStorageNandInstall);
+            if (storage_enabled(kStorageAlbum))       ids.push_back(kStorageAlbum);
             Writer w;
             w.au32(ids);
             if (send_data(Op::GetStorageIDs, tid, w.data()))
@@ -752,14 +798,27 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
                 }
                 break;
             }
-            if (c.param[0] != kStorageSd && c.param[0] != 0xFFFFFFFF) {
-                send_response(Rc::InvalidStorageId, tid); break;
+            // Accept any enabled Filesystem storage (SD, Album, ...) or the
+            // "all storages" sentinel. The storage's vfs_root is its browse root.
+            std::string storage_root;
+            if (c.param[0] == 0xFFFFFFFF) {
+                storage_root = "sdmc:/";   // "any" defaults to SD's tree
+            } else {
+                StorageSurface::Id sid;
+                const StorageSurface* surf = nullptr;
+                if (mtp_id_to_surface(c.param[0], sid))
+                    surf = StorageCatalog::find(sid);
+                if (!surf || surf->kind != StorageKind::Filesystem ||
+                    !StorageCatalog::enabled(sid, Config::get().mtp)) {
+                    send_response(Rc::InvalidStorageId, tid); break;
+                }
+                storage_root = std::string(surf->vfs_root) + "/";
             }
             const uint32_t parent = (c.nparams >= 3) ? c.param[2] : Mtp::kRootParent;
 
             std::string dir;
             if (parent == Mtp::kRootParent || parent == 0) {
-                dir = "sdmc:/";
+                dir = storage_root;
             } else {
                 const std::string* p = path_for(parent);
                 if (!p) { send_response(Rc::InvalidObjectHandle, tid); break; }
@@ -790,6 +849,14 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
         case Op::GetObjectInfo: {
             if (c.nparams < 1) { send_response(Rc::InvalidParameter, tid); break; }
             auto info = build_object_info(c.param[0]);
+            {
+                const std::string* p = path_for(c.param[0]);
+                uint64_t sz = (p && !Fs::is_directory(*p)) ? Fs::file_size(*p) : 0;
+                FILE* wl = ::fopen("sdmc:/switch/GarageNX/logs/mtp_read.log", "a");
+                if (wl) { ::fprintf(wl, "GetObjectInfo h=0x%08X path='%s' size=%llu infolen=%zu\n",
+                                    c.param[0], p?p->c_str():"(null)",
+                                    (unsigned long long)sz, info.size()); ::fclose(wl); }
+            }
             if (info.empty()) { send_response(Rc::InvalidObjectHandle, tid); break; }
             if (send_data(Op::GetObjectInfo, tid, info))
                 send_response(Rc::Ok, tid);
@@ -802,10 +869,50 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             if (!p) { send_response(Rc::InvalidObjectHandle, tid); break; }
             if (Fs::is_directory(*p)) { send_response(Rc::InvalidObjectHandle, tid); break; }
             const std::string path = *p;   // path_for points into m_paths; copy before streaming
-            if (send_file_data(Op::GetObject, tid, path, Fs::file_size(path)))
+            const uint64_t fsz = Fs::file_size(path);
+            {
+                FILE* wl = ::fopen("sdmc:/switch/GarageNX/logs/mtp_read.log", "a");
+                if (wl) { ::fprintf(wl, "GetObject h=0x%08X path='%s' size=%llu\n",
+                                    c.param[0], path.c_str(), (unsigned long long)fsz); ::fclose(wl); }
+            }
+            if (send_file_data(Op::GetObject, tid, path, fsz))
                 send_response(Rc::Ok, tid);
             else
                 send_response(Rc::IncompleteTransfer, tid);
+            break;
+        }
+
+        case Op::GetPartialObject: {
+            // params: handle, offset, maxbytes. Reads a byte range — this is what
+            // hosts (e.g. Linux gvfs/MTP) use to OPEN a file in place rather than
+            // downloading the whole thing, so without it "open" fails and the user
+            // must copy the file out first. The response's final parameter is the
+            // actual number of bytes sent.
+            if (c.nparams < 3) { send_response(Rc::InvalidParameter, tid); break; }
+            const std::string* p = path_for(c.param[0]);
+            if (!p) { send_response(Rc::InvalidObjectHandle, tid); break; }
+            if (Fs::is_directory(*p)) { send_response(Rc::InvalidObjectHandle, tid); break; }
+            const std::string path = *p;
+            const uint64_t fsize  = Fs::file_size(path);
+            const uint64_t offset = c.param[1];
+            uint64_t count        = c.param[2];
+            if (offset >= fsize) count = 0;                       // nothing past EOF
+            else if (offset + count > fsize) count = fsize - offset;  // clamp to EOF
+            {
+                FILE* wl = ::fopen("sdmc:/switch/GarageNX/logs/mtp_partial.log", "a");
+                if (wl) {
+                    ::fprintf(wl, "GetPartialObject h=0x%08X off=%llu req_count=%u fsize=%llu -> send=%llu nparams=%d\n",
+                              c.param[0], (unsigned long long)offset, c.param[2],
+                              (unsigned long long)fsize, (unsigned long long)count, c.nparams);
+                    ::fclose(wl);
+                }
+            }
+            if (send_file_data(Op::GetPartialObject, tid, path, count, offset)) {
+                const uint32_t sent = (uint32_t)count;
+                send_response(Rc::Ok, tid, &sent, 1);
+            } else {
+                send_response(Rc::IncompleteTransfer, tid);
+            }
             break;
         }
 

@@ -114,7 +114,7 @@ private:
 
     // Streams a data container whose payload is a file, so a multi-GB read
     // never needs a multi-GB buffer.
-    bool send_file_data(uint16_t code, uint32_t tid, const std::string& vfs_path, uint64_t size, uint64_t offset = 0);
+    bool send_file_data(uint16_t code, uint32_t tid, const std::string& vfs_path, uint64_t size);
 
     // Host -> device data phase. read_data_container is for small datasets that
     // fit one transfer (ObjectInfo); recv_file_data streams a file to disk.

@@ -1,5 +1,4 @@
 #pragma once
-#include <atomic>
 // source/install/stream_installer.hpp
 //
 // Push-based NSP installer for transports that deliver bytes sequentially and
@@ -78,7 +77,7 @@ public:
     void abort();
 
     /// True once every entry has been consumed.
-    bool complete() const { return m_phase.load(std::memory_order_relaxed) == Phase::Done; }
+    bool complete() const { return m_phase == Phase::Done; }
 
     /// The container's size as derived from its own entry table — 0 until the
     /// table has arrived, and 0 for formats that cannot express it.
@@ -97,7 +96,7 @@ public:
     /// unread bytes in the endpoint and desyncs the session.
     uint64_t container_size() const { return m_container_size; }
 
-    bool ok() const { return m_phase.load(std::memory_order_relaxed) != Phase::Failed; }
+    bool ok() const { return m_phase != Phase::Failed; }
     const std::string& error() const { return m_error; }
 
 private:
@@ -207,11 +206,7 @@ private:
     const Core::Keys::Keyset& m_keys;
     Progress&                 m_progress;
 
-    // Written by the feed path (which runs on the OverlapBuffer worker thread
-    // during an overlapped install) and read on the main thread via complete()/
-    // ok(). Atomic so those cross-thread accesses are race-free; relaxed ordering
-    // is sufficient — it is a status flag, not a lock guarding other data.
-    std::atomic<Phase> m_phase{Phase::Collect};
+    Phase       m_phase = Phase::Collect;
     std::string m_error;
     std::string m_filename;
     uint64_t    m_total = 0;
@@ -241,10 +236,6 @@ private:
     std::vector<StreamEntry> m_entries;
     size_t                   m_cur = 0;
     bool                     m_entry_open = false;
-    // Set the first time abort() runs; makes every later abort() a no-op. The
-    // cancel sites call abort() then reset(), and ~StreamInstaller() calls it
-    // again — a double abort re-entered ncm and caused the 2168-0002 fatal.
-    std::atomic<bool>        m_aborted{false};
     bool                     m_entry_skip = false;   // NCA already registered
 
     std::vector<uint8_t> m_tee;       // RAM copy of the current small entry

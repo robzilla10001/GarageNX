@@ -1,6 +1,12 @@
 // source/services/ftp_server.cpp
 
 #include "services/ftp_server.hpp"
+#include "services/ftp_paths.hpp"
+#include "services/storage_paths.hpp"
+#include "services/storage_catalog.hpp"
+#include "install/stream_driver.hpp"
+#include "core/keys.hpp"
+#include "config/config.hpp"
 
 #include <arpa/inet.h>
 #include <dirent.h>
@@ -46,7 +52,17 @@ static std::string resolve_posix(const std::string& cwd, const std::string& arg)
 
 std::string FtpServer::to_vfs(const std::string& cwd, const std::string& arg) const {
     const std::string posix = resolve_posix(cwd, arg);
-    return m_prefix + posix;   // m_prefix="sdmc:" + "/foo" -> "sdmc:/foo"; "/" -> "sdmc:/"
+    // Resolve against the shared catalog: any ENABLED Filesystem surface (SD Card,
+    // Album, and later NAND/gamecard) maps to its concrete VFS path. Root, the
+    // install folders, title-query surfaces, and bare/disabled paths return "" so
+    // filesystem commands reject them — this is what keeps non-SD storages from
+    // leaking into the root listing and keeps disabled storages unreachable.
+    const auto r = Services::sp_resolve(posix, Config::get().mtp);
+    if (r.kind == Services::PathKind::Filesystem ||
+        r.kind == Services::PathKind::StorageRoot) {
+        return r.vfs;   // already "<root>/rest" or "<root>/"
+    }
+    return "";
 }
 
 // ─── Small socket helpers ─────────────────────────────────────────────────────
@@ -131,6 +147,13 @@ static int accept_data(Client& c) {
 
 // ─── Directory listing (ls -l style) ──────────────────────────────────────────
 
+// Emit one synthetic directory entry (the virtual install folders at the root).
+static void list_virtual_dir(int data_fd, const char* name, bool names_only) {
+    if (names_only) { replyf(data_fd, "%s\r\n", name); return; }
+    replyf(data_fd, "drwxr-xr-x 1 switch switch %10llu %s %s\r\n",
+           0ull, "Jan 01  2000", name);
+}
+
 static void list_dir(int data_fd, const std::string& vfs_dir, bool names_only) {
     DIR* d = ::opendir(vfs_dir.c_str());
     if (!d) return;
@@ -167,7 +190,8 @@ bool FtpServer_handle(FtpServer& srv, Client& c, const std::string& line,
                       bool anon, const std::string& user, const std::string& pass,
                       std::atomic<uint64_t>& bytes_sent, std::atomic<uint64_t>& bytes_recv,
                       const std::function<std::string(const std::string&, const std::string&)>& to_vfs,
-                      const std::function<bool()>& should_stop);
+                      const std::function<bool()>& should_stop,
+                      const std::function<bool(int, FtpTarget, const std::string&)>& do_install);
 
 // ─── Server loop ──────────────────────────────────────────────────────────────
 
@@ -194,6 +218,12 @@ void FtpServer::run() {
         return to_vfs(cwd, arg);
     };
     auto stop_fn = [this]() { return should_stop(); };
+    // ftp_install is a private member; the free-function handler reaches it through
+    // this bound callback, matching how to_vfs/should_stop are passed in.
+    std::function<bool(int, FtpTarget, const std::string&)> install_fn =
+        [this](int dfd, FtpTarget tgt, const std::string& leaf) {
+            return ftp_install(dfd, tgt, leaf);
+        };
 
     while (!should_stop()) {
         fd_set rfds; FD_ZERO(&rfds);
@@ -240,7 +270,8 @@ void FtpServer::run() {
                         c.inbuf.erase(0, pos + 1);
                         while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
                         keep = FtpServer_handle(*this, c, line, m_anon, m_user, m_pass,
-                                                m_bytes_sent, m_bytes_recv, to_vfs_fn, stop_fn);
+                                                m_bytes_sent, m_bytes_recv, to_vfs_fn, stop_fn,
+                                                install_fn);
                         if (!keep) break;
                     }
                 }
@@ -267,7 +298,8 @@ bool FtpServer_handle(FtpServer& srv, Client& c, const std::string& line,
                       bool anon, const std::string& user, const std::string& pass,
                       std::atomic<uint64_t>& bytes_sent, std::atomic<uint64_t>& bytes_recv,
                       const std::function<std::string(const std::string&, const std::string&)>& to_vfs,
-                      const std::function<bool()>& should_stop) {
+                      const std::function<bool()>& should_stop,
+                      const std::function<bool(int, FtpTarget, const std::string&)>& do_install) {
     // Split "CMD arg".
     std::string cmd, arg;
     {
@@ -314,10 +346,28 @@ bool FtpServer_handle(FtpServer& srv, Client& c, const std::string& line,
         return true;
     }
     if (cmd == "CWD" || cmd == "XCWD") {
+        const std::string posix = resolve_posix(c.cwd, arg);
+        // Root, and any storage folder that is virtual (the install folders, whose
+        // roots don't stat) are accepted directly. A Filesystem storage folder
+        // (SD Card, Album, ...) falls through to the stat check below via to_vfs.
+        const auto rp = Services::sp_resolve(posix, Config::get().mtp);
+        // Accept CWD into the root chooser, or into an install folder ONLY at its
+        // root (rel empty). We must NOT accept a path UNDER an install folder:
+        // clients (e.g. Nemo) probe whether an upload target already exists by
+        // trying to CWD into "/SD Install/<file>". Answering 250 for that made the
+        // client believe the file exists and prompt to overwrite. An install
+        // folder has no real subdirectories, so only its root is a valid CWD.
+        if (rp.kind == Services::PathKind::Root ||
+            (rp.kind == Services::PathKind::Install && rp.rel.empty())) {
+            c.cwd = posix;
+            replyf(fd, "250 CWD to %s\r\n", c.cwd.c_str());
+            return true;
+        }
+        // A Filesystem storage root or a deeper path must exist on disk.
         std::string vfs = to_vfs(c.cwd, arg);
         struct stat st{};
-        if (::stat(vfs.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
-            c.cwd = resolve_posix(c.cwd, arg);
+        if (!vfs.empty() && ::stat(vfs.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+            c.cwd = posix;
             replyf(fd, "250 CWD to %s\r\n", c.cwd.c_str());
         } else reply(fd, "550 No such directory\r\n");
         return true;
@@ -353,17 +403,47 @@ bool FtpServer_handle(FtpServer& srv, Client& c, const std::string& line,
         // Ignore any "-l" style flags in arg; list the CWD (or arg dir).
         std::string target = arg;
         if (!target.empty() && target[0] == '-') target.clear();
+        const std::string posix = resolve_posix(c.cwd, target);
         std::string vfs = to_vfs(c.cwd, target);
         reply(fd, "150 Opening data connection\r\n");
         int dfd = accept_data(c);
         if (dfd < 0) { reply(fd, "425 Cannot open data connection\r\n"); return true; }
-        list_dir(dfd, vfs, cmd == "NLST");
+        const bool names_only = (cmd == "NLST");
+        if (ftp_is_root(posix)) {
+            // The root is a pure chooser: the enabled storage folders from the
+            // shared catalog. Filesystem surfaces are listed ONLY if their mount is
+            // actually available — a surface can be enabled in config but not yet
+            // mounted (NAND is Wave 2, Saves is Wave 3), and listing an unmounted
+            // one produces a folder that errors on entry ("not a directory"). We
+            // probe the mount root; as each wave adds its mount, the surface
+            // auto-appears here with no listing change. Install surfaces have no
+            // mount and always list; the TitleQuery surface is skipped until Wave 3.
+            for (const auto& s : Services::StorageCatalog::enabled_surfaces(Config::get().mtp)) {
+                if (s.kind == Services::StorageKind::TitleQuery) continue;
+                if (s.kind == Services::StorageKind::Filesystem) {
+                    struct stat mst{};
+                    const std::string root = std::string(s.vfs_root) + "/";
+                    if (::stat(root.c_str(), &mst) != 0 || !S_ISDIR(mst.st_mode))
+                        continue;   // mount not available yet — don't list it
+                }
+                list_virtual_dir(dfd, s.display, names_only);
+            }
+        } else if (ftp_is_install_dir(posix)) {
+            // Install folders are write-only drop targets; they list as empty.
+        } else if (!vfs.empty()) {
+            // A path under a Filesystem surface (SD Card, Album, ...) — list it.
+            list_dir(dfd, vfs, names_only);
+        }
+        // else: an invalid path (bare/disabled, not under a storage root) — nothing.
         ::close(dfd);
         reply(fd, "226 Directory send OK\r\n");
         return true;
     }
     if (cmd == "SIZE") {
         std::string vfs = to_vfs(c.cwd, arg);
+        // Empty vfs = not a browseable filesystem location (an install folder, the
+        // root chooser, or a disabled/invalid path). Clean 550, never stat("").
+        if (vfs.empty()) { reply(fd, "550 Not a regular file\r\n"); return true; }
         struct stat st{};
         if (::stat(vfs.c_str(), &st) == 0 && S_ISREG(st.st_mode))
             replyf(fd, "213 %llu\r\n", (unsigned long long)st.st_size);
@@ -372,6 +452,7 @@ bool FtpServer_handle(FtpServer& srv, Client& c, const std::string& line,
     }
     if (cmd == "RETR") {
         std::string vfs = to_vfs(c.cwd, arg);
+        if (vfs.empty()) { reply(fd, "550 Cannot open file\r\n"); return true; }
         FILE* f = ::fopen(vfs.c_str(), "rb");
         if (!f) { reply(fd, "550 Cannot open file\r\n"); return true; }
         reply(fd, "150 Opening data connection\r\n");
@@ -390,7 +471,36 @@ bool FtpServer_handle(FtpServer& srv, Client& c, const std::string& line,
         return true;
     }
     if (cmd == "STOR") {
+        // Classify the target: a STOR into a virtual install folder drives an
+        // install; anywhere else writes a plain file (the original behaviour).
+        // resolve_posix gives the path before the "sdmc:" prefix, which is what
+        // the classifier expects.
+        std::string leaf;
+        const std::string posix = resolve_posix(c.cwd, arg);
+        const FtpTarget tgt = ftp_classify(posix, leaf);
+
+        if (tgt == FtpTarget::SdInstall || tgt == FtpTarget::NandInstall) {
+            // Honour the same config gating as the listing: a disabled target is
+            // not installable even if a client guesses the path.
+            const auto& m = Config::get().mtp;
+            const bool enabled = (tgt == FtpTarget::SdInstall) ? m.sd_install
+                                                               : m.nand_install;
+            if (!enabled) { reply(fd, "550 Install target not enabled\r\n"); return true; }
+            if (leaf.empty()) { reply(fd, "550 Specify a filename to install\r\n"); return true; }
+            reply(fd, "150 Opening data connection\r\n");
+            int dfd = accept_data(c);
+            if (dfd < 0) { reply(fd, "425 Cannot open data connection\r\n"); return true; }
+            const bool ok = do_install(dfd, tgt, leaf);
+            ::close(dfd);
+            reply(fd, ok ? "226 Install complete\r\n"
+                         : "550 Install failed (see GarageNX log)\r\n");
+            return true;
+        }
+
+        // Only paths under "SD Card" can receive a plain file. Root, the install
+        // folders themselves, and bare paths have no filesystem location.
         std::string vfs = to_vfs(c.cwd, arg);
+        if (vfs.empty()) { reply(fd, "550 Cannot write here — choose a storage folder\r\n"); return true; }
         FILE* f = ::fopen(vfs.c_str(), "wb");
         if (!f) { reply(fd, "550 Cannot create file\r\n"); return true; }
         reply(fd, "150 Opening data connection\r\n");
@@ -411,16 +521,19 @@ bool FtpServer_handle(FtpServer& srv, Client& c, const std::string& line,
     }
     if (cmd == "DELE") {
         std::string vfs = to_vfs(c.cwd, arg);
+        if (vfs.empty()) { reply(fd, "550 Not a writable location\r\n"); return true; }
         reply(fd, (::remove(vfs.c_str()) == 0) ? "250 File deleted\r\n" : "550 Delete failed\r\n");
         return true;
     }
     if (cmd == "MKD" || cmd == "XMKD") {
         std::string vfs = to_vfs(c.cwd, arg);
+        if (vfs.empty()) { reply(fd, "550 Not a writable location\r\n"); return true; }
         reply(fd, (::mkdir(vfs.c_str(), 0777) == 0) ? "257 Directory created\r\n" : "550 MKD failed\r\n");
         return true;
     }
     if (cmd == "RMD" || cmd == "XRMD") {
         std::string vfs = to_vfs(c.cwd, arg);
+        if (vfs.empty()) { reply(fd, "550 Not a writable location\r\n"); return true; }
         reply(fd, (::rmdir(vfs.c_str()) == 0) ? "250 Directory removed\r\n" : "550 RMD failed\r\n");
         return true;
     }
@@ -441,6 +554,92 @@ bool FtpServer_handle(FtpServer& srv, Client& c, const std::string& line,
 
     reply(fd, "502 Command not implemented\r\n");
     return true;
+}
+
+// ─── Install over FTP (STOR into a virtual install folder) ────────────────────
+
+bool FtpServer::ftp_install(int data_fd, FtpTarget target, const std::string& leaf) {
+#ifdef PLATFORM_SWITCH
+    const auto dest = (target == FtpTarget::NandInstall)
+                          ? Core::Ncm::Storage::BuiltIn
+                          : Core::Ncm::Storage::SdCard;
+
+    if (!Core::Keys::available()) Core::Keys::load();
+    if (!Core::Keys::available()) {
+        m_install_progress.reset();
+        m_install_progress.message = Core::Keys::requirement_message();
+        m_install_progress.push_log("ERROR: " + Core::Keys::requirement_message());
+        save_install_log(leaf, false);
+        return false;
+    }
+
+    m_install = std::make_unique<Install::StreamInstaller>(
+        dest, Core::Keys::get(), m_install_progress);
+    m_installing.store(true);
+
+    if (!m_install->begin(leaf, 0)) {          // FTP declares no size; recover from table
+        save_install_log(leaf, false);
+        m_install.reset(); m_installing.store(false);
+        return false;
+    }
+
+    // FTP delivers raw file bytes with no framing and no size declaration, so the
+    // FirstChunk is empty and the driver recovers the size from the container's
+    // own PFS0/HFS0 table. The socket recv IS the byte source; a socket close (0)
+    // ends the stream. This is the same StreamDriver the MTP path uses — same
+    // install semantics, same teardown safety.
+    std::vector<uint8_t> scratch(256 * 1024);
+
+    Install::StreamSource src;
+    src.buffer      = scratch.data();
+    src.buffer_size = scratch.size();
+    src.read = [this, data_fd](uint8_t* buf, size_t n) -> ssize_t {
+        ssize_t r = ::recv(data_fd, buf, n, 0);
+        if (r > 0) m_bytes_recv.fetch_add((uint64_t)r);
+        return r;   // 0 = peer closed = end of file; <0 = error
+    };
+    src.stop  = [this] { return should_stop(); };
+    // A socket transport needs no drain: closing the data connection discards any
+    // unread bytes. (MTP must drain its shared USB pipe; FTP does not.)
+    src.drain = [](uint64_t) {};
+
+    m_wire_size.store(0);
+    m_wire_recv.store(0);
+    Install::WireSink wire;
+    wire.set_size = [this](uint64_t sz) { m_wire_size.store(sz); };
+    wire.add_recv = [this](uint64_t n)  { m_wire_recv.fetch_add(n); };
+
+    Install::FirstChunk first{ nullptr, 0 };
+    const Install::DriveResult dr =
+        Install::drive(*m_install, src, first, /*declared*/0, /*exact*/false, wire);
+
+    const bool ok = (dr == Install::DriveResult::Ok);
+    if (!ok && dr == Install::DriveResult::Cancelled)
+        m_install_progress.push_log("Install cancelled");
+    save_install_log(leaf, ok);
+    m_install.reset();
+    m_installing.store(false);
+    return ok;
+#else
+    (void)data_fd; (void)target; (void)leaf;
+    return false;
+#endif
+}
+
+void FtpServer::save_install_log(const std::string& filename, bool ok) {
+#ifdef PLATFORM_SWITCH
+    const std::string dir = "sdmc:/switch/GarageNX/logs";
+    ::mkdir("sdmc:/switch", 0777);
+    ::mkdir("sdmc:/switch/GarageNX", 0777);
+    ::mkdir(dir.c_str(), 0777);
+    FILE* f = ::fopen((dir + "/ftp_install.log").c_str(), "a");
+    if (!f) return;
+    std::fprintf(f, "GarageNX FTP install — %s : %s\n",
+                 filename.c_str(), ok ? "OK" : "FAILED");
+    ::fclose(f);
+#else
+    (void)filename; (void)ok;
+#endif
 }
 
 // ─── Construction ─────────────────────────────────────────────────────────────

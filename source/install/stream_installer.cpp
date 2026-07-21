@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstring>
 #include <memory>
+#include <atomic>       // abort() idempotency guard
 
 #ifdef PLATFORM_SWITCH
 #include <SDL2/SDL.h>
@@ -591,14 +592,14 @@ bool StreamInstaller::feed(const uint8_t* data, size_t len) {
                 return false;
         }
     }
-    return m_phase != Phase::Failed;
+    return m_phase.load() != Phase::Failed;
 }
 
 // ─── Finish: hand off to the validated installer ─────────────────────────────
 
 bool StreamInstaller::finish() {
-    if (m_phase == Phase::Failed) return false;
-    if (m_phase != Phase::Done && m_phase != Phase::Data)
+    if (m_phase.load() == Phase::Failed) return false;
+    if (m_phase.load() != Phase::Done && m_phase.load() != Phase::Data)
         return fail("Transfer ended before the container was complete");
 
     m_progress.push_log("Transfer complete; registering title...");
@@ -651,24 +652,36 @@ bool StreamInstaller::finish() {
 }
 
 void StreamInstaller::abort() {
-    // THE ORDER HERE IS LOAD-BEARING. A decompression worker may be inside
-    // ncmContentStorageWritePlaceHolder at this instant. Deleting the
-    // placeholder first would race the delete against a live write, on a handle
-    // the worker still holds. So: abort the window (any blocked read()/push()
-    // returns immediately), let the worker unwind and exit, JOIN it, and only
-    // then touch the placeholder. ncz_join() is a no-op when nothing is running,
-    // so the plain-NCA path pays nothing for this.
+    // Teardown runs on two threads: the MTP worker (recv_install's explicit
+    // m_install->abort()) and, ultimately, whichever thread destroys the
+    // installer (~StreamInstaller calls abort()). The real cross-thread safety
+    // comes from ~MtpServer joining the worker before members are destroyed
+    // (see mtp_server.hpp) — that is what stops the two aborts overlapping. The
+    // guard and ordering below make abort() correct and idempotent regardless.
+    //
+    // Thread teardown always runs and is NOT guarded: ncz_join() must close the
+    // worker's Thread handle on every call or a cancelled NSZ leaks a kernel
+    // handle. ncz_join() is idempotent (early-returns when nothing is running),
+    // so a second call — e.g. from the destructor after an explicit abort — is a
+    // safe no-op.
     ncz_join(false);
 
+    // The ncm teardown must run exactly once: a second DeletePlaceHolder/Close on
+    // already-freed ncm state faults. exchange() is a single atomic check-and-set
+    // — if it returns true, another call already claimed the teardown.
+    if (m_aborted.exchange(true)) { m_entry_open = false; return; }
+
 #ifdef PLATFORM_SWITCH
-    // m_ph_open is the authority now. It cannot be inferred from m_entry_open as
-    // it once was, because on the NSZ path the worker — not this thread —
+    // m_ph_open is the authority: on the NSZ path the worker — not this thread —
     // creates the placeholder, and it may or may not have got that far.
     if (m_ph_open) {
         ncmContentStorageDeletePlaceHolder(&m_cs, &m_ph);
         m_ph_open = false;
     }
-    if (m_have_cs) { ncmContentStorageClose(&m_cs); m_have_cs = false; }
+    if (m_have_cs) {
+        ncmContentStorageClose(&m_cs);
+        m_have_cs = false;
+    }
 #endif
     m_entry_open = false;
 }

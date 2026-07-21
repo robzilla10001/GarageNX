@@ -16,6 +16,19 @@ static uint32_t s_held_curr  = 0;
 static uint32_t s_pressed    = 0;
 static uint32_t s_released   = 0;
 
+// Distinct button-down events per button this frame. pressed()/s_pressed is a
+// bitmask and therefore collapses multiple sub-frame taps of one button into a
+// single bit; this array preserves the count so rapid navigation does not drop
+// steps. Indexed by button bit position (0..31). Reset each poll().
+static uint8_t s_press_count[32] = {0};
+
+static inline int button_bit_index(uint32_t mask) {
+    // Exactly one bit is set in a Button value; return its index (0..31).
+    int i = 0;
+    while (i < 32 && !((mask >> i) & 1u)) ++i;
+    return i;
+}
+
 // Button repeat tracking
 static bool s_repeat_enabled   = true;
 static int  s_repeat_delay_ms  = 400;
@@ -158,15 +171,26 @@ bool poll() {
     uint32_t event_pressed  = 0;
     uint32_t event_released = 0;
 
+    // Reset per-frame press counts before draining the queue.
+    std::memset(s_press_count, 0, sizeof(s_press_count));
+
     while (SDL_PollEvent(&event)) {
         switch (event.type) {
             case SDL_QUIT:
                 keep_running = false;
                 break;
 #ifdef PLATFORM_SWITCH
-            case SDL_JOYBUTTONDOWN:
-                event_pressed  |= joy_button_to_mask(event.jbutton.button);
+            case SDL_JOYBUTTONDOWN: {
+                const uint32_t m = joy_button_to_mask(event.jbutton.button);
+                event_pressed |= m;
+                // Count each down separately — this is the whole point: two taps
+                // in one (stalled) frame are two presses, not one. Cap at 255.
+                if (m) {
+                    const int idx = button_bit_index(m);
+                    if (s_press_count[idx] < 255) s_press_count[idx]++;
+                }
                 break;
+            }
             case SDL_JOYBUTTONUP:
                 event_released |= joy_button_to_mask(event.jbutton.button);
                 break;
@@ -239,6 +263,18 @@ bool poll() {
     s_pressed  = (s_held_curr & ~s_held_prev) | event_pressed;
     s_released = (s_held_prev & ~s_held_curr) | event_released;
 
+    // A poll-derived edge (button newly held this frame, or an analog-stick
+    // direction — the stick emits no button events) must count as at least one
+    // press even when the event queue saw nothing. Only bump when the event
+    // queue didn't already count this button, so a normal single tap that both
+    // the queue and the poll observe stays a count of 1, not 2.
+    const uint32_t poll_edge = s_held_curr & ~s_held_prev;
+    for (int i = 0; i < 32; ++i) {
+        if ((poll_edge >> i) & 1u) {
+            if (s_press_count[i] == 0) s_press_count[i] = 1;
+        }
+    }
+
     // Update repeat state
     uint32_t now = SDL_GetTicks();
     for (auto& [bit, rs] : s_repeat_map) {
@@ -260,6 +296,10 @@ bool poll() {
 // ─── State queries ────────────────────────────────────────────────────────────
 
 bool pressed(Button b)  { return (s_pressed  & static_cast<uint32_t>(b)) != 0; }
+
+int press_count(Button b) {
+    return (int)s_press_count[button_bit_index(static_cast<uint32_t>(b))];
+}
 bool released(Button b) { return (s_released & static_cast<uint32_t>(b)) != 0; }
 bool held(Button b)     { return (s_held_curr & static_cast<uint32_t>(b)) != 0; }
 
