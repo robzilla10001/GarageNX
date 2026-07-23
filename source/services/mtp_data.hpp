@@ -34,6 +34,9 @@ constexpr uint16_t GetObjectHandles   = 0x1007;
 constexpr uint16_t GetObjectInfo      = 0x1008;
 constexpr uint16_t GetObject          = 0x1009;
 constexpr uint16_t GetPartialObject   = 0x101B;   // read a byte range (offset,count)
+// Android MTP i/o extension. gvfs/libmtp use this (not the standard 0x101B) to
+// read files for in-place open. Params: handle, offset_lo, offset_hi, count.
+constexpr uint16_t GetPartialObject64 = 0x95C1;
 constexpr uint16_t DeleteObject       = 0x100B;
 constexpr uint16_t SendObjectInfo     = 0x100C;
 constexpr uint16_t SendObject         = 0x100D;
@@ -48,6 +51,7 @@ constexpr uint16_t GetDevicePropValue = 0x1015;
 constexpr uint16_t GetObjectPropsSupported = 0x9801;
 constexpr uint16_t GetObjectPropDesc       = 0x9802;
 constexpr uint16_t GetObjectPropValue      = 0x9803;
+constexpr uint16_t SetObjectPropValue      = 0x9804;   // rename = set ObjectFileName
 constexpr uint16_t SendObjectPropList      = 0x9808;
 }
 

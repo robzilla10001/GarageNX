@@ -2,6 +2,7 @@
 
 #include "services/mtp_server.hpp"
 #include "services/storage_catalog.hpp"
+#include "services/write_guard.hpp"
 #include "install/stream_driver.hpp"
 #include "services/mtp_data.hpp"
 #include "services/overlap_buffer.hpp"
@@ -36,6 +37,8 @@ constexpr uint32_t kStorageSd          = 0x00010001;
 constexpr uint32_t kStorageSdInstall   = 0x00020001;
 constexpr uint32_t kStorageNandInstall = 0x00030001;
 constexpr uint32_t kStorageAlbum       = 0x00040001;
+constexpr uint32_t kStorageNandUser    = 0x00050001;
+constexpr uint32_t kStorageNandSystem  = 0x00060001;
 
 bool is_install_storage(uint32_t id) {
     return id == kStorageSdInstall || id == kStorageNandInstall;
@@ -49,18 +52,22 @@ bool mtp_id_to_surface(uint32_t wire_id, StorageSurface::Id& out) {
         case kStorageSdInstall:   out = StorageSurface::Id::SdInstall;   return true;
         case kStorageNandInstall: out = StorageSurface::Id::NandInstall; return true;
         case kStorageAlbum:       out = StorageSurface::Id::Album;       return true;
+        case kStorageNandUser:    out = StorageSurface::Id::NandUser;    return true;
+        case kStorageNandSystem:  out = StorageSurface::Id::NandSystem;  return true;
         default: return false;
     }
 }
 
 // Reverse: a catalog surface id -> its MTP wire id (0 if the surface has no MTP
-// storage id, e.g. NAND browse which MTP doesn't expose yet).
+// storage id).
 uint32_t surface_to_mtp_id(StorageSurface::Id sid) {
     switch (sid) {
         case StorageSurface::Id::SdCard:      return kStorageSd;
         case StorageSurface::Id::SdInstall:   return kStorageSdInstall;
         case StorageSurface::Id::NandInstall: return kStorageNandInstall;
         case StorageSurface::Id::Album:       return kStorageAlbum;
+        case StorageSurface::Id::NandUser:    return kStorageNandUser;
+        case StorageSurface::Id::NandSystem:  return kStorageNandSystem;
         default: return 0;
     }
 }
@@ -103,7 +110,12 @@ std::vector<uint8_t> MtpServer::build_device_info() const {
     w.u16(100);                       // Standard version 1.00
     w.u32(6);                         // VendorExtensionID: MTP
     w.u16(100);                       // VendorExtensionVersion
-    w.str("microsoft.com: 1.0;");     // VendorExtensionDesc — hosts key off this
+    // VendorExtensionDesc — hosts key off this. Advertising "android.com" tells
+    // gvfs/libmtp we support the Android MTP i/o extensions (partial reads), which
+    // is what makes it OPEN files in place instead of refusing and forcing a copy.
+    // Without this string, gvfs marks the mount copy-only and never even issues a
+    // read (confirmed by wire log: GetObjectInfo for every file, zero GetObject).
+    w.str("microsoft.com: 1.0; android.com: 1.0;");
     w.u16(0);                         // FunctionalMode: standard
 
     // Advertise only what we actually answer. Claiming an operation we then
@@ -112,7 +124,7 @@ std::vector<uint8_t> MtpServer::build_device_info() const {
         Op::GetDeviceInfo, Op::OpenSession, Op::CloseSession,
         Op::GetStorageIDs, Op::GetStorageInfo,
         Op::GetNumObjects, Op::GetObjectHandles, Op::GetObjectInfo, Op::GetObject,
-        Op::GetPartialObject,
+        Op::GetPartialObject, Op::GetPartialObject64,
         Op::SendObjectInfo, Op::SendObject, Op::DeleteObject,
         Op::GetDevicePropDesc, Op::GetDevicePropValue,
         // MTP 1.1. A host uses SendObjectPropList only if we claim it here, and
@@ -122,7 +134,9 @@ std::vector<uint8_t> MtpServer::build_device_info() const {
         // one. Both routes converge on arm_incoming_object().
         // GetObjectPropDesc is not optional alongside these two: a host asks
         // for a description of every property GetObjectPropsSupported names.
-        Op::GetObjectPropsSupported, Op::GetObjectPropDesc, Op::SendObjectPropList,
+        Op::GetObjectPropsSupported, Op::GetObjectPropDesc, Op::GetObjectPropValue,
+        Op::SetObjectPropValue,
+        Op::SendObjectPropList,
     });
     w.au16({});                       // EventsSupported — none yet
     w.au16({Mtp::Prop::DeviceFriendlyName});   // DevicePropertiesSupported
@@ -168,6 +182,25 @@ std::vector<uint8_t> MtpServer::build_storage_info(uint32_t storage_id) const {
         w.u32(0xFFFFFFFF);
         w.str(s ? s->display : "Album");  // StorageDescription
         w.str("ALBUM");                   // VolumeIdentifier
+        return w.data();
+    }
+
+    if (storage_id == kStorageNandUser || storage_id == kStorageNandSystem) {
+        const bool is_user = (storage_id == kStorageNandUser);
+        const StorageSurface::Id sid = is_user ? StorageSurface::Id::NandUser
+                                               : StorageSurface::Id::NandSystem;
+        const StorageSurface* s = StorageCatalog::find(sid);
+        // User capacity is queryable; System we report as unknown capacity.
+        const Core::Storage::SpaceInfo sp = is_user ? Core::Storage::nand_user()
+                                                    : Core::Storage::SpaceInfo{};
+        w.u16(0x0003);                    // StorageType: FixedRAM (internal NAND)
+        w.u16(0x0002);                    // FilesystemType: GenericHierarchical
+        w.u16(0x0001);                    // AccessCapability: READ-ONLY (policy)
+        w.u64(sp.total_bytes);
+        w.u64(sp.free_bytes);
+        w.u32(0xFFFFFFFF);
+        w.str(s ? s->display : (is_user ? "NAND (User)" : "NAND (System)"));
+        w.str(is_user ? "NANDUSER" : "NANDSYS");
         return w.data();
     }
 
@@ -535,13 +568,32 @@ void MtpServer::arm_incoming_object(uint32_t storage, uint32_t parent, uint16_t 
 
     std::string dir;
     if (parent == Mtp::kRootParent || parent == 0) {
+        // Root of the TARGET storage — not always the SD card. Hardcoding "sdmc:/"
+        // meant a write aimed at another storage's root silently landed on SD.
         dir = "sdmc:/";
+        StorageSurface::Id sid;
+        if (mtp_id_to_surface(storage, sid)) {
+            if (const StorageSurface* surf = StorageCatalog::find(sid))
+                if (surf->kind == StorageKind::Filesystem)
+                    dir = std::string(surf->vfs_root) + "/";
+        }
     } else {
         const std::string* pp = path_for(parent);
         if (!pp) { send_response(Rc::InvalidParentObject, tid); return; }
         dir = *pp;
     }
     const std::string dest = Fs::join(dir, filename);
+
+    // Write guard: protected storages (NAND) need on-device confirmation, and this
+    // runs on the MTP worker thread so blocking here is correct. One check covers
+    // both the folder branch below and the file transfer it arms. (The install
+    // storages returned earlier and are not affected.)
+    if (Services::guard_write("USB-MTP", "write", dest, Config::get().mtp)
+            != Services::WriteDecision::Allow) {
+        send_response(Rc::AccessDenied, tid);
+        return;
+    }
+
     m_pending_storage = storage;
 
     if (fmt == Mtp::Fmt::Association) {
@@ -765,6 +817,8 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             if (storage_enabled(kStorageSdInstall))   ids.push_back(kStorageSdInstall);
             if (storage_enabled(kStorageNandInstall)) ids.push_back(kStorageNandInstall);
             if (storage_enabled(kStorageAlbum))       ids.push_back(kStorageAlbum);
+            if (storage_enabled(kStorageNandUser))    ids.push_back(kStorageNandUser);
+            if (storage_enabled(kStorageNandSystem))  ids.push_back(kStorageNandSystem);
             Writer w;
             w.au32(ids);
             if (send_data(Op::GetStorageIDs, tid, w.data()))
@@ -849,14 +903,6 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
         case Op::GetObjectInfo: {
             if (c.nparams < 1) { send_response(Rc::InvalidParameter, tid); break; }
             auto info = build_object_info(c.param[0]);
-            {
-                const std::string* p = path_for(c.param[0]);
-                uint64_t sz = (p && !Fs::is_directory(*p)) ? Fs::file_size(*p) : 0;
-                FILE* wl = ::fopen("sdmc:/switch/GarageNX/logs/mtp_read.log", "a");
-                if (wl) { ::fprintf(wl, "GetObjectInfo h=0x%08X path='%s' size=%llu infolen=%zu\n",
-                                    c.param[0], p?p->c_str():"(null)",
-                                    (unsigned long long)sz, info.size()); ::fclose(wl); }
-            }
             if (info.empty()) { send_response(Rc::InvalidObjectHandle, tid); break; }
             if (send_data(Op::GetObjectInfo, tid, info))
                 send_response(Rc::Ok, tid);
@@ -869,13 +915,7 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             if (!p) { send_response(Rc::InvalidObjectHandle, tid); break; }
             if (Fs::is_directory(*p)) { send_response(Rc::InvalidObjectHandle, tid); break; }
             const std::string path = *p;   // path_for points into m_paths; copy before streaming
-            const uint64_t fsz = Fs::file_size(path);
-            {
-                FILE* wl = ::fopen("sdmc:/switch/GarageNX/logs/mtp_read.log", "a");
-                if (wl) { ::fprintf(wl, "GetObject h=0x%08X path='%s' size=%llu\n",
-                                    c.param[0], path.c_str(), (unsigned long long)fsz); ::fclose(wl); }
-            }
-            if (send_file_data(Op::GetObject, tid, path, fsz))
+            if (send_file_data(Op::GetObject, tid, path, Fs::file_size(path)))
                 send_response(Rc::Ok, tid);
             else
                 send_response(Rc::IncompleteTransfer, tid);
@@ -898,16 +938,31 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             uint64_t count        = c.param[2];
             if (offset >= fsize) count = 0;                       // nothing past EOF
             else if (offset + count > fsize) count = fsize - offset;  // clamp to EOF
-            {
-                FILE* wl = ::fopen("sdmc:/switch/GarageNX/logs/mtp_partial.log", "a");
-                if (wl) {
-                    ::fprintf(wl, "GetPartialObject h=0x%08X off=%llu req_count=%u fsize=%llu -> send=%llu nparams=%d\n",
-                              c.param[0], (unsigned long long)offset, c.param[2],
-                              (unsigned long long)fsize, (unsigned long long)count, c.nparams);
-                    ::fclose(wl);
-                }
-            }
             if (send_file_data(Op::GetPartialObject, tid, path, count, offset)) {
+                const uint32_t sent = (uint32_t)count;
+                send_response(Rc::Ok, tid, &sent, 1);
+            } else {
+                send_response(Rc::IncompleteTransfer, tid);
+            }
+            break;
+        }
+
+        case Op::GetPartialObject64: {
+            // Android i/o extension. This is what gvfs/libmtp actually use to open
+            // a file in place. Params: handle, offset_lo, offset_hi, count. The
+            // 64-bit offset is split across two u32 params. Response's final
+            // parameter is the number of bytes sent.
+            if (c.nparams < 4) { send_response(Rc::InvalidParameter, tid); break; }
+            const std::string* p = path_for(c.param[0]);
+            if (!p) { send_response(Rc::InvalidObjectHandle, tid); break; }
+            if (Fs::is_directory(*p)) { send_response(Rc::InvalidObjectHandle, tid); break; }
+            const std::string path = *p;
+            const uint64_t fsize  = Fs::file_size(path);
+            const uint64_t offset = (uint64_t)c.param[1] | ((uint64_t)c.param[2] << 32);
+            uint64_t count        = c.param[3];
+            if (offset >= fsize) count = 0;
+            else if (offset + count > fsize) count = fsize - offset;
+            if (send_file_data(Op::GetPartialObject64, tid, path, count, offset)) {
                 const uint32_t sent = (uint32_t)count;
                 send_response(Rc::Ok, tid, &sent, 1);
             } else {
@@ -1007,6 +1062,124 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             break;
         }
 
+        case Op::GetObjectPropValue: {
+            // Params: object handle, property code. Return that ONE property's
+            // value in its declared datatype. This is what gvfs/libmtp call for
+            // every object to learn its size and name — 261 times in the wire log.
+            // Without it we returned OperationNotSupported for each, so the host
+            // never learned file sizes and rendered every file BLANK, never even
+            // issuing a read. The datatypes MUST match build_object_prop_desc()
+            // exactly or the host desyncs.
+            if (c.nparams < 2) { send_response(Rc::InvalidParameter, tid); break; }
+            const std::string* pv = path_for(c.param[0]);
+            if (!pv) { send_response(Rc::InvalidObjectHandle, tid); break; }
+
+            const bool pv_is_dir = Fs::is_directory(*pv);
+            const uint16_t pv_prop = (uint16_t)c.param[1];
+            Writer pw;
+            bool pv_ok = true;
+
+            if (pv_prop == Mtp::ObjProp::StorageId) {
+                pw.u32(mtp_storage_for_path(*pv));
+            } else if (pv_prop == Mtp::ObjProp::ObjectFormat) {
+                pw.u16(pv_is_dir ? Mtp::Fmt::Association : Mtp::Fmt::Undefined);
+            } else if (pv_prop == Mtp::ObjProp::ProtectionStatus) {
+                pw.u16(0);
+            } else if (pv_prop == Mtp::ObjProp::ObjectSize) {
+                pw.u64(pv_is_dir ? 0 : Fs::file_size(*pv));   // the crucial one
+            } else if (pv_prop == Mtp::ObjProp::ObjectFileName) {
+                pw.str(Fs::basename(*pv));
+            } else if (pv_prop == Mtp::ObjProp::ParentObject) {
+                const std::string parent_path = Fs::parent(*pv);
+                uint32_t parent_handle = Mtp::kRootParent;
+                bool is_root = parent_path.empty();
+                for (const auto& s : Services::StorageCatalog::all()) {
+                    if (s.kind != Services::StorageKind::Filesystem) continue;
+                    const std::string root = s.vfs_root;
+                    if (parent_path == root || parent_path == root + "/") { is_root = true; break; }
+                }
+                if (!is_root) {
+                    auto it = m_by_path.find(parent_path);
+                    if (it != m_by_path.end()) parent_handle = it->second;
+                }
+                pw.u32(parent_handle);
+            } else {
+                pv_ok = false;
+            }
+
+            if (!pv_ok) {
+                send_response(Rc::ObjectPropNotSupported, tid);
+            } else if (send_data(Op::GetObjectPropValue, tid, pw.data())) {
+                send_response(Rc::Ok, tid);
+            }
+            break;
+        }
+
+        case Op::SetObjectPropValue: {
+            // Params: object handle, property code; the new value arrives in a data
+            // phase. This is how hosts RENAME over MTP (libmtp sets ObjectFileName)
+            // — without it clients report "no known way of setting metadata" and
+            // rename fails even though the descriptor advertises the property as
+            // settable.
+            if (c.nparams < 2) { send_response(Rc::InvalidParameter, tid); break; }
+            const uint32_t sp_handle = c.param[0];
+            const uint16_t sp_prop   = (uint16_t)c.param[1];
+
+            const std::string* sp_cur = path_for(sp_handle);
+            if (!sp_cur) { send_response(Rc::InvalidObjectHandle, tid); break; }
+            const std::string sp_old = *sp_cur;   // copy before any map mutation
+
+            std::vector<uint8_t> sp_data;
+            if (!read_data_container(sp_data)) {
+                send_response(Rc::IncompleteTransfer, tid); break;
+            }
+
+            if (sp_prop == Mtp::ObjProp::ObjectFileName) {
+                Reader sr(sp_data.data(), sp_data.size());
+                std::string sp_name;
+                if (!sr.str(sp_name) || sp_name.empty()) {
+                    send_response(Rc::InvalidParameter, tid); break;
+                }
+                // Reject path separators: a rename may only change the leaf name,
+                // never relocate an object into another directory or storage.
+                if (sp_name.find('/') != std::string::npos ||
+                    sp_name.find('\\') != std::string::npos) {
+                    send_response(Rc::InvalidParameter, tid); break;
+                }
+                const std::string sp_new = Fs::join(Fs::parent(sp_old), sp_name);
+
+                // Rename mutates BOTH names, so it goes through the move guard:
+                // renaming inside NAND (or out of it) needs on-device confirmation.
+                if (Services::guard_move("USB-MTP", "rename", sp_old, sp_new,
+                                         Config::get().mtp)
+                        != Services::WriteDecision::Allow) {
+                    send_response(Rc::AccessDenied, tid); break;
+                }
+                if (!Fs::rename(sp_old, sp_new)) {
+                    send_response(Rc::GeneralError, tid); break;
+                }
+                // Keep the handle valid and pointing at the new path, so the host
+                // can keep using it without a full re-enumeration.
+                if (sp_handle >= 1 && sp_handle <= m_paths.size()) {
+                    m_by_path.erase(sp_old);
+                    m_paths[sp_handle - 1] = sp_new;
+                    m_by_path[sp_new] = sp_handle;
+                }
+                send_response(Rc::Ok, tid);
+                break;
+            }
+
+            if (sp_prop == Mtp::ObjProp::ProtectionStatus) {
+                // We don't track per-object protection; accept and ignore rather
+                // than failing a client's housekeeping mid-rename.
+                send_response(Rc::Ok, tid);
+                break;
+            }
+
+            send_response(Rc::ObjectPropNotSupported, tid);
+            break;
+        }
+
         case Op::GetObjectPropsSupported: {
             if (c.nparams < 1) { send_response(Rc::InvalidParameter, tid); break; }
             // Not decoration: libmtp calls this BEFORE SendObjectPropList and
@@ -1053,6 +1226,11 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             const std::string* p = path_for(c.param[0]);
             if (!p) { send_response(Rc::InvalidObjectHandle, tid); break; }
             const std::string path = *p;   // copy: path_for points into m_paths
+            if (Services::guard_write("USB-MTP", "delete", path, Config::get().mtp)
+                    != Services::WriteDecision::Allow) {
+                send_response(Rc::AccessDenied, tid);
+                break;
+            }
             const bool ok = Fs::is_directory(path) ? Fs::remove_directory_recursive(path)
                                                    : Fs::remove_file(path);
             send_response(ok ? Rc::Ok : Rc::AccessDenied, tid);

@@ -23,6 +23,14 @@
 #include "config/config.hpp"
 #include "lang/localization.hpp"
 #include "core/album_mount.hpp"
+#include "core/nand_mount.hpp"
+#include "core/keys.hpp"
+#include "services/title_surface.hpp"
+#include "core/sleep_inhibit.hpp"
+#include "services/confirmation_broker.hpp"
+#include <thread>
+#include <condition_variable>
+#include <mutex>
 #include "screens/menu_dispatch.hpp"
 #include "core/system.hpp"
 #include "core/storage.hpp"   // also declares Core::Thermal
@@ -129,6 +137,14 @@ static bool startup() {
     setsysInitialize();
     setInitialize();
     Core::mount_album();   // expose album:/ for the file-manager transports
+    Core::mount_nand();    // expose bis_user:/bis_system: (config-gated, read-only)
+
+    // Load the keyset once, here, on the main thread before any server can start.
+    // Title display names come from encrypted Control NCAs, so a transport listing
+    // "Installed Titles" needs keys — and if each transport lazily loaded them from
+    // its own worker thread it would race the UI reading the same global keyset.
+    // Failure is fine and non-fatal: titles then fall back to id-based names.
+    Core::Keys::load();
     setcalInitialize();       // calibration data (MACs, battery lot, etc.)
     pdmqryInitialize();
     spsmInitialize();
@@ -228,6 +244,7 @@ static void shutdown_services() {
     ncmExit();
     nssuExit();
     nsExit();
+    Core::unmount_nand();
     Core::unmount_album();
     romfsExit();
 #endif
@@ -251,6 +268,11 @@ int main(int argc, char* argv[]) {
     push(stack, std::make_unique<MainMenuScreen>());
 
     bool running = true;
+    // Tracks a modal that is currently answering a ConfirmationBroker request, so
+    // its result resolves the broker (not a screen). Reset when that modal closes.
+    uint64_t g_pending_confirm_id  = 0;
+    bool     g_confirm_modal_active = false;
+
     uint32_t last_status_refresh = 0;
 
     while (running && !stack.empty()) {
@@ -269,6 +291,14 @@ int main(int argc, char* argv[]) {
             last_status_refresh = now;
         }
 
+        // Keep the console awake while a Connectivity screen is open (refreshes
+        // the idle timer so it neither dims nor sleeps mid-transfer).
+        Core::SleepInhibit::tick();
+
+        // Resolve one installed-title display name per frame, on this thread.
+        // Transports read the results; they never decrypt anything themselves.
+        Services::installed_titles_tick();
+
         // ── Update ────────────────────────────────────────────────────────────
         if (!stack.empty() && !Modal::is_active()) {
             bool do_pop = false;
@@ -286,6 +316,34 @@ int main(int argc, char* argv[]) {
             if (menu_quit_requested()) running = false;
         }
 
+        // ── On-device confirmation bridge (NAND safety) ────────────────────────
+
+
+        // If a transport worker is blocked in ConfirmationBroker::ask() waiting for
+        // the user to approve a guarded operation (e.g. a NAND write), pop a modal
+        // on the console. The worker stays blocked until the user answers here —
+        // the PC->console->console-confirm->PC round trip IS the safety. Only raise
+        // it when no other modal is active, so a screen's own dialog isn't stomped.
+        {
+            auto& broker = Services::ConfirmationBroker::instance();
+            Services::ConfirmRequest req;
+            if (!Modal::is_active() && broker.pending(req)) {
+                Modal::Options o;
+                o.title = req.transport + " requests a change";
+                o.body  = req.operation + ": " + req.target +
+                          "\n\nThis modifies protected system storage (NAND). "
+                          "Allow this operation?";
+                o.kind          = Modal::Kind::Danger;
+                o.confirm_label = "Allow";
+                o.cancel_label  = "Deny";
+                Modal::show(o);
+                // Remember which request this modal is answering, so the result
+                // routes back to the right one even if it changes underneath.
+                g_pending_confirm_id = req.id;
+                g_confirm_modal_active = true;
+            }
+        }
+
         // ── Draw ──────────────────────────────────────────────────────────────
         Renderer::begin_frame();
 
@@ -300,9 +358,19 @@ int main(int argc, char* argv[]) {
         // Modal renders on top of everything (after bars)
         if (Modal::is_active()) {
             Modal::Result res = Modal::update_and_draw();
-            if (res != Modal::Result::Pending && !stack.empty()) {
-                // Route the resolved result to the screen that raised it.
-                stack.back()->on_modal_result(static_cast<int>(res));
+            if (res != Modal::Result::Pending) {
+                if (g_confirm_modal_active) {
+                    // This modal was a broker confirmation — resolve the worker.
+                    Services::ConfirmationBroker::instance().resolve(
+                        g_pending_confirm_id,
+                        res == Modal::Result::Confirmed
+                            ? Services::ConfirmResult::Allowed
+                            : Services::ConfirmResult::Denied);
+                    g_confirm_modal_active = false;
+                } else if (!stack.empty()) {
+                    // A screen's own modal — route to that screen.
+                    stack.back()->on_modal_result(static_cast<int>(res));
+                }
             }
         }
 
@@ -317,6 +385,16 @@ int main(int argc, char* argv[]) {
     }
 
     // ── Teardown ──────────────────────────────────────────────────────────────
+    // Release any transport worker blocked on a confirmation with Denied, before
+    // we tear down the UI it was waiting on (the teardown discipline from the
+    // cancel crash — never leave a worker parked on a dead main loop).
+    Services::ConfirmationBroker::instance().shutdown();
+    // Release any transport worker blocked waiting for the title cache.
+    Services::installed_titles_shutdown();
+    // Guaranteed restore of normal sleep behaviour, even if a screen guard
+    // somehow outlived the stack — never leave the console unable to sleep.
+    Core::SleepInhibit::force_release();
+
     stack.clear();
 
     Input::shutdown();

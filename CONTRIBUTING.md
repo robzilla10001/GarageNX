@@ -31,7 +31,7 @@ Read `docs/GarageNX_Architecture.md`. It captures every design decision, the mod
 
 ## Building and testing
 
-See the [README](README.md) for build instructions. Use the PC stub target (`-DPLATFORM=PC`) for fast UI iteration; verify on hardware or an emulator before submitting anything touching `core/`, `services/`, or `install/`.
+See the [README](README.md) for build instructions. Verify on hardware or an emulator before submitting anything touching `core/`, `services/`, or `install/`.
 
 ## Licensing
 

@@ -5,6 +5,7 @@
 // USB cable — so this reports connection and session state instead.
 
 #include "screens/screen.hpp"
+#include "core/sleep_inhibit.hpp"
 #include "services/mtp_server.hpp"
 #include "services/rate_meter.hpp"
 #include <memory>
@@ -22,6 +23,12 @@ public:
     std::string hint_string() const override;
 
 private:
+    // Held for this screen's whole lifetime: while a Connectivity page is
+    // open the console must not auto-sleep, or an in-flight transfer is cut
+    // off and the client disconnects. RAII, so leaving the page always
+    // restores normal sleep behaviour.
+    Core::SleepInhibit::Guard m_stay_awake;
+
     void start_server();
 
     // The stats are sampled every frame (so the rate math stays accurate) but the

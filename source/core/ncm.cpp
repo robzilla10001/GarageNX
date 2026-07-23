@@ -107,17 +107,6 @@ std::vector<Title> list_all(bool* ok) {
 //   update → clear the 0x800 bit
 //   DLC    → clear the low 12 bits and subtract the 0x1000 add-on flag
 
-uint64_t base_application_id(uint64_t program_id, TitleType type) {
-    switch (type) {
-        case TitleType::Patch:
-            return program_id & ~0x800ULL;
-        case TitleType::AddOnContent:
-            return (program_id & ~0xFFFULL) - 0x1000ULL;
-        case TitleType::Application:
-        default:
-            return program_id;
-    }
-}
 
 std::vector<TitleGroup> group_by_application(const std::vector<Title>& all) {
     // Only user games (exclude system titles below the game id range).

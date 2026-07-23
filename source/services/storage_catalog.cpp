@@ -37,7 +37,7 @@ static const std::vector<StorageSurface> kSurfaces = {
       "bis_system:", StorageKind::Filesystem, Access::ReadOnly,  Confirm::OnDevice },
 
     { Id::Saves,           "saves",           "Save Data",
-      "save:",       StorageKind::Filesystem, Access::ReadWrite, Confirm::None },
+      "save:",       StorageKind::Filesystem, Access::ReadOnly,  Confirm::OnDevice },
 
     { Id::Album,           "album",           "Album",
       "album:",      StorageKind::Filesystem, Access::ReadWrite, Confirm::None },
@@ -78,6 +78,18 @@ std::vector<StorageSurface> StorageCatalog::enabled_surfaces(const Config::MTP& 
 const StorageSurface* StorageCatalog::find(Id id) {
     for (const auto& s : kSurfaces)
         if (s.id == id) return &s;
+    return nullptr;
+}
+
+const StorageSurface* StorageCatalog::surface_for_vfs(const std::string& vfs_path) {
+    // Match on the mount prefix. Only Filesystem surfaces have a real vfs_root;
+    // Install/TitleQuery surfaces are virtual and own no concrete path.
+    for (const auto& s : kSurfaces) {
+        if (s.kind != StorageKind::Filesystem) continue;
+        const std::string root = s.vfs_root;          // e.g. "sdmc:", "bis_user:"
+        if (root.empty()) continue;
+        if (vfs_path.compare(0, root.size(), root) == 0) return &s;
+    }
     return nullptr;
 }
 

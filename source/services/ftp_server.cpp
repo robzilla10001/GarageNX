@@ -4,6 +4,8 @@
 #include "services/ftp_paths.hpp"
 #include "services/storage_paths.hpp"
 #include "services/storage_catalog.hpp"
+#include "services/write_guard.hpp"
+#include "services/title_surface.hpp"
 #include "install/stream_driver.hpp"
 #include "core/keys.hpp"
 #include "config/config.hpp"
@@ -152,6 +154,16 @@ static void list_virtual_dir(int data_fd, const char* name, bool names_only) {
     if (names_only) { replyf(data_fd, "%s\r\n", name); return; }
     replyf(data_fd, "drwxr-xr-x 1 switch switch %10llu %s %s\r\n",
            0ull, "Jan 01  2000", name);
+}
+
+// Emit one synthetic FILE entry (a virtual NSP under Installed Titles). Listed as
+// a regular read-only file so clients offer to download it; the bytes are
+// generated on demand rather than read from disk.
+static void list_virtual_file(int data_fd, const std::string& name,
+                              uint64_t size, bool names_only) {
+    if (names_only) { replyf(data_fd, "%s\r\n", name.c_str()); return; }
+    replyf(data_fd, "-r--r--r-- 1 switch switch %10llu %s %s\r\n",
+           (unsigned long long)size, "Jan 01  2000", name.c_str());
 }
 
 static void list_dir(int data_fd, const std::string& vfs_dir, bool names_only) {
@@ -358,7 +370,8 @@ bool FtpServer_handle(FtpServer& srv, Client& c, const std::string& line,
         // client believe the file exists and prompt to overwrite. An install
         // folder has no real subdirectories, so only its root is a valid CWD.
         if (rp.kind == Services::PathKind::Root ||
-            (rp.kind == Services::PathKind::Install && rp.rel.empty())) {
+            (rp.kind == Services::PathKind::Install && rp.rel.empty()) ||
+            (rp.kind == Services::PathKind::TitleQuery && rp.rel.empty())) {
             c.cwd = posix;
             replyf(fd, "250 CWD to %s\r\n", c.cwd.c_str());
             return true;
@@ -409,6 +422,7 @@ bool FtpServer_handle(FtpServer& srv, Client& c, const std::string& line,
         int dfd = accept_data(c);
         if (dfd < 0) { reply(fd, "425 Cannot open data connection\r\n"); return true; }
         const bool names_only = (cmd == "NLST");
+        const auto rp_list = Services::sp_resolve(posix, Config::get().mtp);
         if (ftp_is_root(posix)) {
             // The root is a pure chooser: the enabled storage folders from the
             // shared catalog. Filesystem surfaces are listed ONLY if their mount is
@@ -419,7 +433,8 @@ bool FtpServer_handle(FtpServer& srv, Client& c, const std::string& line,
             // auto-appears here with no listing change. Install surfaces have no
             // mount and always list; the TitleQuery surface is skipped until Wave 3.
             for (const auto& s : Services::StorageCatalog::enabled_surfaces(Config::get().mtp)) {
-                if (s.kind == Services::StorageKind::TitleQuery) continue;
+                // TitleQuery surfaces (Installed Titles) are synthesized — they have
+                // no mount to probe, so they always list.
                 if (s.kind == Services::StorageKind::Filesystem) {
                     struct stat mst{};
                     const std::string root = std::string(s.vfs_root) + "/";
@@ -428,6 +443,13 @@ bool FtpServer_handle(FtpServer& srv, Client& c, const std::string& line,
                 }
                 list_virtual_dir(dfd, s.display, names_only);
             }
+        } else if (rp_list.kind == Services::PathKind::TitleQuery && rp_list.rel.empty()) {
+            // Synthesized: one virtual .nsp per installed title. No filesystem is
+            // touched; the listing comes from ncm. Only the surface ROOT lists —
+            // a path deeper than that names a virtual file, not a directory, and
+            // must not re-list everything.
+            for (const auto& e : Services::installed_titles_list())
+                list_virtual_file(dfd, e.name, e.size, names_only);
         } else if (ftp_is_install_dir(posix)) {
             // Install folders are write-only drop targets; they list as empty.
         } else if (!vfs.empty()) {
@@ -501,6 +523,10 @@ bool FtpServer_handle(FtpServer& srv, Client& c, const std::string& line,
         // folders themselves, and bare paths have no filesystem location.
         std::string vfs = to_vfs(c.cwd, arg);
         if (vfs.empty()) { reply(fd, "550 Cannot write here — choose a storage folder\r\n"); return true; }
+        if (Services::guard_write("FTP", "write file", vfs, Config::get().mtp)
+                != Services::WriteDecision::Allow) {
+            reply(fd, "550 Permission denied\r\n"); return true;
+        }
         FILE* f = ::fopen(vfs.c_str(), "wb");
         if (!f) { reply(fd, "550 Cannot create file\r\n"); return true; }
         reply(fd, "150 Opening data connection\r\n");
@@ -522,23 +548,37 @@ bool FtpServer_handle(FtpServer& srv, Client& c, const std::string& line,
     if (cmd == "DELE") {
         std::string vfs = to_vfs(c.cwd, arg);
         if (vfs.empty()) { reply(fd, "550 Not a writable location\r\n"); return true; }
+        if (Services::guard_write("FTP", "delete", vfs, Config::get().mtp)
+                != Services::WriteDecision::Allow) {
+            reply(fd, "550 Permission denied\r\n"); return true;
+        }
         reply(fd, (::remove(vfs.c_str()) == 0) ? "250 File deleted\r\n" : "550 Delete failed\r\n");
         return true;
     }
     if (cmd == "MKD" || cmd == "XMKD") {
         std::string vfs = to_vfs(c.cwd, arg);
         if (vfs.empty()) { reply(fd, "550 Not a writable location\r\n"); return true; }
+        if (Services::guard_write("FTP", "create folder", vfs, Config::get().mtp)
+                != Services::WriteDecision::Allow) {
+            reply(fd, "550 Permission denied\r\n"); return true;
+        }
         reply(fd, (::mkdir(vfs.c_str(), 0777) == 0) ? "257 Directory created\r\n" : "550 MKD failed\r\n");
         return true;
     }
     if (cmd == "RMD" || cmd == "XRMD") {
         std::string vfs = to_vfs(c.cwd, arg);
         if (vfs.empty()) { reply(fd, "550 Not a writable location\r\n"); return true; }
+        if (Services::guard_write("FTP", "remove folder", vfs, Config::get().mtp)
+                != Services::WriteDecision::Allow) {
+            reply(fd, "550 Permission denied\r\n"); return true;
+        }
         reply(fd, (::rmdir(vfs.c_str()) == 0) ? "250 Directory removed\r\n" : "550 RMD failed\r\n");
         return true;
     }
     if (cmd == "RNFR") {
         std::string vfs = to_vfs(c.cwd, arg);
+        // Empty vfs must not reach stat(): stat("") can spuriously succeed.
+        if (vfs.empty()) { reply(fd, "550 No such file\r\n"); return true; }
         struct stat st{};
         if (::stat(vfs.c_str(), &st) == 0) { c.rnfr = vfs; reply(fd, "350 Ready for RNTO\r\n"); }
         else reply(fd, "550 No such file\r\n");
@@ -547,6 +587,11 @@ bool FtpServer_handle(FtpServer& srv, Client& c, const std::string& line,
     if (cmd == "RNTO") {
         if (c.rnfr.empty()) { reply(fd, "503 RNFR required first\r\n"); return true; }
         std::string vfs = to_vfs(c.cwd, arg);
+        if (vfs.empty()) { reply(fd, "550 Not a writable location\r\n"); c.rnfr.clear(); return true; }
+        if (Services::guard_move("FTP", "rename", c.rnfr, vfs, Config::get().mtp)
+                != Services::WriteDecision::Allow) {
+            reply(fd, "550 Permission denied\r\n"); c.rnfr.clear(); return true;
+        }
         reply(fd, (::rename(c.rnfr.c_str(), vfs.c_str()) == 0) ? "250 Rename OK\r\n" : "550 Rename failed\r\n");
         c.rnfr.clear();
         return true;

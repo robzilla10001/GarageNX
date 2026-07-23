@@ -89,6 +89,13 @@ public:
     // Look up a surface by id. Returns nullptr if unknown.
     static const StorageSurface* find(StorageSurface::Id id);
 
+    /// Which Filesystem surface owns this concrete VFS path? Matches the path's
+    /// mount prefix ("sdmc:/x" -> SD Card, "bis_user:/y" -> NAND User). Returns
+    /// nullptr if no surface claims it — callers should treat that as "unknown,
+    /// deny" for any mutating operation. Enabled-ness is NOT considered here; ask
+    /// enabled() separately if it matters.
+    static const StorageSurface* surface_for_vfs(const std::string& vfs_path);
+
     // Does a mutating operation on this surface require on-device confirmation?
     static bool needs_confirmation(const StorageSurface& s) {
         return s.confirm == Confirm::OnDevice;

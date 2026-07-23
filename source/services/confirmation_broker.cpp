@@ -4,6 +4,11 @@
 
 namespace Services {
 
+ConfirmationBroker& ConfirmationBroker::instance() {
+    static ConfirmationBroker g_broker;
+    return g_broker;
+}
+
 ConfirmResult ConfirmationBroker::ask(const std::string& transport,
                                       const std::string& operation,
                                       const std::string& target,

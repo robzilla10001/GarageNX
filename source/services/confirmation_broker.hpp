@@ -46,6 +46,11 @@ struct ConfirmRequest {
 
 class ConfirmationBroker {
 public:
+    // Process-wide instance shared by the transport workers (which call ask())
+    // and the main loop (which drives the on-device modal via pending()/resolve()).
+    // Same singleton pattern as Config::get().
+    static ConfirmationBroker& instance();
+
     // Default: never time out on its own unless a positive timeout is given to
     // ask(). Shutdown always releases waiters.
     ConfirmationBroker() = default;

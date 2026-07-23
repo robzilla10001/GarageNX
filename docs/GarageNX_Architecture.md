@@ -1614,6 +1614,27 @@ Pieces:
 HARDWARE-CONFIRMED: install (into SD Install), clean cancel/exit teardown, and
 MTP-matching stats all verified on device. Slice A complete.
 
+## MTP file-manager parity (browse + open) — DONE, hardware-confirmed
+
+MTP exposes SD + Album (catalog-driven, storage derived from each object's path
+prefix) and now supports opening files in place from the PC, not just installing.
+The open-in-place fix took several rounds; the decisive tool each time was WIRE
+LOGGING, not reasoning. Final root cause: GetObjectPropValue (0x9803) was declared
+but never dispatched or advertised, so gvfs — which reads file SIZE through the
+object-property path, not GetObjectInfo — got OperationNotSupported for all 261 of
+its per-object size queries and rendered every file blank without ever issuing a
+read. Fix: implement + advertise GetObjectPropValue, returning each property in the
+exact datatype build_object_prop_desc declares (ObjectSize as UInt64 is the one
+that matters). Also advertised the android.com extension + GetPartialObject64,
+though the property fix was the real unblock.
+
+BUILD-SAFETY NOTE: mtp_server.cpp is libnx-only and excluded from the host test
+build, so structural edits (a str_replace eating a case header; a dropped wire
+field) pass "all tests" yet fail the real devkitPro build. Guard: run
+`g++ -fsyntax-only -DPLATFORM_SWITCH` on the file after every edit to catch
+switch/brace/structure breaks the test suite cannot see.
+
+
 ## Exit to HOME (Bugs E + D) — DONE, hardware-confirmed
 
 The app exited to hbmenu instead of HOME, and installed titles didn't appear on HOME

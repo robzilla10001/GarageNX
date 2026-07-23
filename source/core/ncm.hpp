@@ -35,7 +35,16 @@ struct Title {
 // app's program id with bit 0x800 set; DLC live just above the app id (low bits
 // 0x0001..0x0FFF above the app's 0x…000 base). This maps any title back to the
 // application it extends.
-uint64_t base_application_id(uint64_t program_id, TitleType type);
+// Pure: the base application id for a patch/DLC. Inline in the header so host
+// tests (and anything else) can use it without linking the libnx-only ncm.cpp.
+inline uint64_t base_application_id(uint64_t program_id, TitleType type) {
+    switch (type) {
+        case TitleType::Patch:        return program_id & ~0x800ULL;
+        case TitleType::AddOnContent: return (program_id & ~0xFFFULL) - 0x1000ULL;
+        case TitleType::Application:
+        default:                      return program_id;
+    }
+}
 
 // An application together with its updates and DLC, for the TitleDetail screen.
 struct TitleGroup {

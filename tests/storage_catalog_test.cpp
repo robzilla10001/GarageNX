@@ -128,10 +128,14 @@ static void test_safety_policy() {
     auto* sv = StorageCatalog::find(Id::Saves);
     auto* al = StorageCatalog::find(Id::Album);
     CHECK(StorageCatalog::writable(*sd), "SD is read-write");
-    CHECK(StorageCatalog::writable(*sv), "saves are read-write");
     CHECK(StorageCatalog::writable(*al), "album is read-write");
     CHECK(!StorageCatalog::needs_confirmation(*sd), "SD needs no confirm");
-    CHECK(!StorageCatalog::needs_confirmation(*sv), "saves need no confirm");
+    // Save data is deliberately NOT freely writable: restoring a save silently
+    // overwrites game progress and is unrecoverable for the player, so writes are
+    // gated behind the same on-device confirmation as NAND. Reads stay free —
+    // browsing/backing up saves is not affected by the write policy.
+    CHECK(!StorageCatalog::writable(*sv), "saves are not freely writable");
+    CHECK(StorageCatalog::needs_confirmation(*sv), "save writes need on-device confirm");
     std::printf("  ok: safety policy matches the decided model\n");
 }
 
