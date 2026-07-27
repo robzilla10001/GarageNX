@@ -1,6 +1,18 @@
 // source/services/http_server.cpp
 
 #include "services/http_server.hpp"
+#include "services/http_paths.hpp"
+#include "services/web_ui.hpp"
+#include "services/storage_paths.hpp"
+#include "services/storage_catalog.hpp"
+#include "services/save_surface.hpp"
+#include "services/title_surface.hpp"
+#include "core/nsp_stream.hpp"
+#include "core/ncm.hpp"
+#include "install/stream_driver.hpp"
+#include "config/config.hpp"
+#include "core/keys.hpp"
+#include "core/ncm.hpp"
 
 #include <arpa/inet.h>
 #include <dirent.h>
@@ -45,8 +57,19 @@ static std::string resolve_posix(const std::string& root, const std::string& pat
 }
 
 std::string HttpServer::resolve_vfs(const std::string& path) const {
+    // Route through the SHARED resolver, exactly as FtpServer::to_vfs does. This
+    // used to be `m_prefix + posix`, which hardcoded the SD card and made HTTP the
+    // only transport that could not reach Installed Titles, Save Data, NAND or
+    // Album — the catalog existed to prevent precisely that divergence, and HTTP
+    // simply never consumed it.
     const std::string posix = resolve_posix(m_prefix, path);
-    return m_prefix + posix; // m_prefix="sdmc:" + "/foo" -> "sdmc:/foo"; "/" -> "sdmc:/"
+    const auto r = Services::sp_resolve(posix, Config::get().http.surfaces);
+    if (r.kind == Services::PathKind::Filesystem ||
+        r.kind == Services::PathKind::StorageRoot)
+        return r.vfs;
+    if (r.kind == Services::PathKind::SaveData)
+        return Services::save_resolve(Services::sp_split_save(r.rel));
+    return "";
 }
 
 // ─── Small socket helpers ─────────────────────────────────────────────────────
@@ -211,13 +234,152 @@ void HttpServer::run() {
                         }
                     }
                     m_requests.fetch_add(1);
-                    // Clamp path traversal
-                    std::string vfs_path = resolve_vfs(path);
-                    
 
-                    std::string posix_path = resolve_posix(m_prefix, path);
+                    // Percent-DECODE before touching the filesystem. A browser
+                    // encodes anything non-trivial in a URL, so "My Game.nsp"
+                    // arrives as "My%20Game.nsp"; resolving that literally looks
+                    // for a file whose name really contains "%20" and 404s.
+                    //
+                    // This was latent while HTTP was curl-only (you type the name
+                    // you meant), and the web UI would have exposed it instantly:
+                    // every file with a space — which is most real title names —
+                    // would fail to download. Decoding happens on the PATH ONLY,
+                    // after any query string is removed.
+                    //
+                    // Routing (UI / API / install) deliberately uses the RAW path:
+                    // those helpers strip the query and decode their own operands,
+                    // so decoding twice here would corrupt a filename containing a
+                    // literal '%'.
+                    const std::string fs_path =
+                        http_percent_decode(http_path_only(path));
+
+                    // Clamp path traversal
+                    std::string vfs_path = resolve_vfs(fs_path);
+                    std::string posix_path = resolve_posix(m_prefix, fs_path);
                     // Process request
                     if (method == "GET") {
+                        // ── Web UI page ───────────────────────────────────────
+                        // Served from memory, so it works regardless of what the
+                        // SD card is doing (including being the target of the
+                        // install this very page started).
+                        if (http_is_ui_path(path)) {
+                            const size_t len = std::strlen(kWebUiHtml);
+                            replyf(cfd,
+                                   "HTTP/1.1 200 OK\r\n"
+                                   "Content-Type: text/html; charset=utf-8\r\n"
+                                   "Content-Length: %zu\r\n"
+                                   "Cache-Control: no-cache\r\n"
+                                   "Connection: close\r\n\r\n", len);
+                            send_all(cfd, kWebUiHtml, len);
+                            m_bytes_sent.fetch_add(len);
+                            ::close(cfd); m_clients.fetch_sub(1); continue;
+                        }
+
+                        // ── JSON API ──────────────────────────────────────────
+                        if (http_is_api_path(path)) {
+                            const std::string api = http_path_only(path);
+
+                            if (api == "/api/status") {
+                                // Note: during an install the accept loop is busy
+                                // and cannot reach here — the page knows that and
+                                // polls only while idle. This answers the
+                                // before/after state and the last result.
+                                const bool inst = m_installing.load();
+                                std::string j = "{";
+                                j += "\"installing\":";
+                                j += inst ? "true" : "false";
+                                j += ",\"wire_size\":"  + std::to_string(m_wire_size.load());
+                                j += ",\"wire_recv\":"  + std::to_string(m_wire_recv.load());
+                                j += ",\"bytes_total\":" +
+                                     std::to_string(m_install_progress.bytes_total.load());
+                                j += ",\"bytes_done\":" +
+                                     std::to_string(m_install_progress.bytes_done.load());
+                                j += ",\"success\":";
+                                j += m_install_progress.success.load() ? "true" : "false";
+                                j += ",\"message\":\"" +
+                                     json_escape(m_install_progress.message) + "\"";
+                                j += "}";
+                                replyf(cfd,
+                                       "HTTP/1.1 200 OK\r\n"
+                                       "Content-Type: application/json\r\n"
+                                       "Content-Length: %zu\r\n"
+                                       "Connection: close\r\n\r\n", j.size());
+                                send_all(cfd, j.data(), j.size());
+                                ::close(cfd); m_clients.fetch_sub(1); continue;
+                            }
+
+                            if (api == "/api/list") {
+                                // The listing the page renders. Reuses the same
+                                // resolve/clamp path as a normal GET, so the web
+                                // UI cannot reach anywhere curl could not.
+                                const std::string want = http_query_param(path, "path");
+                                const std::string lpos =
+                                    resolve_posix(m_prefix, want.empty() ? "/" : want);
+                                reply(cfd, "HTTP/1.1 200 OK\r\n"
+                                           "Content-Type: application/json\r\n"
+                                           "Connection: close\r\n\r\n");
+                                // Dispatches on surface kind: root chooser, the
+                                // synthesized Save Data levels, Installed Titles,
+                                // or a real directory.
+                                list_path_json(cfd, lpos);
+                                ::close(cfd); m_clients.fetch_sub(1); continue;
+                            }
+
+                            reply(cfd, "HTTP/1.1 404 Not Found\r\n"
+                                       "Content-Type: application/json\r\n"
+                                       "Connection: close\r\n\r\n"
+                                       "{\"error\":\"unknown endpoint\"}");
+                            ::close(cfd); m_clients.fetch_sub(1); continue;
+                        }
+
+                        // ── Installed Titles: stream a virtual NSP ────────────
+                        // The same NspStream FTP RETR and MTP GetObject use — one
+                        // builder, three transports, which is what it was extracted
+                        // for. Content-Length is known up front (total_size), so a
+                        // browser shows a real progress bar and resumeless clients
+                        // still know when they are done.
+                        {
+                            const std::string gp = resolve_posix(m_prefix, fs_path);
+                            const auto rq = Services::sp_resolve(
+                                gp, Config::get().http.surfaces);
+                            if (rq.kind == Services::PathKind::TitleQuery &&
+                                !rq.rel.empty()) {
+                                Core::Ncm::Title t;
+                                if (!Services::installed_titles_find(rq.rel, t)) {
+                                    reply(cfd, "HTTP/1.1 404 Not Found\r\n"
+                                               "Connection: close\r\n\r\n");
+                                    ::close(cfd); m_clients.fetch_sub(1); continue;
+                                }
+                                std::string err;
+                                auto src = Core::NspStream::open(t, Core::Keys::get(), &err);
+                                if (!src) {
+                                    replyf(cfd, "HTTP/1.1 500 Internal Server Error\r\n"
+                                                "Connection: close\r\n\r\n"
+                                                "Cannot build NSP: %s\n",
+                                           err.empty() ? "unknown error" : err.c_str());
+                                    ::close(cfd); m_clients.fetch_sub(1); continue;
+                                }
+                                replyf(cfd,
+                                       "HTTP/1.1 200 OK\r\n"
+                                       "Content-Type: application/octet-stream\r\n"
+                                       "Content-Length: %llu\r\n"
+                                       "Content-Disposition: attachment; filename=\"%s\"\r\n"
+                                       "Connection: close\r\n\r\n",
+                                       (unsigned long long)src->total_size(),
+                                       rq.rel.c_str());
+
+                                std::vector<char> nbuf(1024 * 1024);
+                                for (;;) {
+                                    if (should_stop()) break;
+                                    const int64_t got = src->read(nbuf.data(), nbuf.size());
+                                    if (got <= 0) break;
+                                    if (!send_all(cfd, nbuf.data(), (size_t)got)) break;
+                                    m_bytes_sent.fetch_add((uint64_t)got);
+                                }
+                                ::close(cfd); m_clients.fetch_sub(1); continue;
+                            }
+                        }
+
                         struct stat st{};
                         if (::stat(vfs_path.c_str(), &st) == 0) {
                             if (S_ISDIR(st.st_mode)) {
@@ -257,7 +419,72 @@ void HttpServer::run() {
                             reply(cfd, "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
                         }
                     } else if (method == "PUT") {
-                        if (m_allow_upload) {
+                        if (!m_allow_upload) {
+                            reply(cfd, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+                            ::close(cfd); m_clients.fetch_sub(1); continue;
+                        }
+
+                        // ── Install branch ────────────────────────────────────
+                        // Classify the RAW url path (not the VFS path): a PUT to
+                        // /install/sd or /install/nand drives an install through
+                        // the same StreamDriver MTP and FTP use. Anything else
+                        // falls through to the plain-file write below.
+                        std::string install_leaf;
+                        const HttpTarget itgt = http_classify(path, install_leaf);
+                        if (itgt == HttpTarget::SdInstall ||
+                            itgt == HttpTarget::NandInstall) {
+                            // Config gating, identical to the listing and to FTP:
+                            // a disabled target is not installable even by a client
+                            // that guesses the URL.
+                            const auto& s = Config::get().http.surfaces;
+                            const bool enabled = (itgt == HttpTarget::SdInstall)
+                                                     ? s.sd_install : s.nand_install;
+                            if (!enabled) {
+                                reply(cfd, "HTTP/1.1 403 Forbidden\r\n"
+                                           "Connection: close\r\n\r\n"
+                                           "Install target not enabled\n");
+                                ::close(cfd); m_clients.fetch_sub(1); continue;
+                            }
+
+                            // Content-Length (exact wire size).
+                            uint64_t clen = 0;
+                            std::string::size_type cl_pos =
+                                header_block.find("Content-Length:");
+                            if (cl_pos != std::string::npos) {
+                                std::string::size_type cl_end =
+                                    header_block.find('\n', cl_pos);
+                                if (cl_end != std::string::npos) {
+                                    std::string cl = header_block.substr(
+                                        cl_pos + 15, cl_end - cl_pos - 15);
+                                    while (!cl.empty() &&
+                                           (cl.back() == ' ' || cl.back() == '\r'))
+                                        cl.pop_back();
+                                    size_t b = cl.find_first_not_of(' ');
+                                    if (b != std::string::npos) cl = cl.substr(b);
+                                    try { clen = std::stoull(cl); } catch (...) { clen = 0; }
+                                }
+                            }
+
+                            // Body bytes already read with the headers become the
+                            // FirstChunk fed to the driver.
+                            std::string prebuf;
+                            std::string::size_type hend = header_block.find("\r\n\r\n");
+                            if (hend != std::string::npos &&
+                                hend + 4 < header_block.size())
+                                prebuf = header_block.substr(hend + 4);
+
+                            const bool ok = http_install(cfd, itgt, install_leaf,
+                                                         prebuf, clen);
+                            reply(cfd, ok
+                                ? "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n"
+                                  "Install complete\n"
+                                : "HTTP/1.1 500 Internal Server Error\r\n"
+                                  "Connection: close\r\n\r\nInstall failed "
+                                  "(see GarageNX log)\n");
+                            ::close(cfd); m_clients.fetch_sub(1); continue;
+                        }
+
+                        {
                             // Create directory if needed
                             std::string dir_path = vfs_path;
                             size_t last_slash = dir_path.rfind('/');
@@ -321,8 +548,6 @@ void HttpServer::run() {
                             } else {
                                 reply(cfd, "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n");
                             }
-                        } else {
-                            reply(cfd, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
                         }
                     } else {
                         // Method not allowed
@@ -337,6 +562,189 @@ void HttpServer::run() {
 
     ::close(listen_fd);
     set_status(Status::Stopped);
+}
+
+// JSON envelope helpers. Defined once each so the literal brace characters in
+// this file stay balanced — the syntax guard counts braces without stripping
+// string literals, and a listing built from inline "{...}" fragments reports a
+// false imbalance. A guard that cries wolf is a guard people stop reading.
+static void json_open(std::string& out)  { out = "{\"entries\":["; }
+static void json_close(std::string& out) { out += "]}"; }
+
+// Emit one synthesized directory entry.
+static void json_virtual_dir(std::string& out, bool& first, const std::string& name) {
+    if (!first) out += ",";
+    first = false;
+    out += "{\"name\":\"" + json_escape(name) + "\",\"type\":\"dir\",\"size\":0}";
+}
+
+// The listing the web UI reads. Dispatches on the resolved path kind so every
+// surface FTP and MTP expose is reachable here too — root chooser, the two
+// synthesized Save Data levels, the synthesized Installed Titles list, and real
+// directories. Mirrors FtpServer's LIST structure deliberately: the two should
+// answer the same question the same way.
+void HttpServer::list_path_json(int fd, const std::string& posix) {
+    const auto r = Services::sp_resolve(posix, Config::get().http.surfaces);
+
+    std::string out;
+    json_open(out);
+    bool first = true;
+
+    if (r.kind == Services::PathKind::Root) {
+        // Pure chooser: the enabled surfaces. Filesystem surfaces are listed only
+        // when their mount is actually available — the shared probe, so an
+        // unmounted surface is hidden identically on every transport.
+        for (const auto& srf :
+             Services::StorageCatalog::enabled_surfaces(Config::get().http.surfaces)) {
+            if (!Services::StorageCatalog::mount_available(srf)) continue;
+            json_virtual_dir(out, first, srf.display);
+        }
+    } else if (r.kind == Services::PathKind::SaveData) {
+        const auto sp = Services::sp_split_save(r.rel);
+        if (sp.level == Services::SavePath::Level::Users) {
+            for (const auto& name : Services::save_user_names())
+                json_virtual_dir(out, first, name);
+        } else if (sp.level == Services::SavePath::Level::Titles) {
+            // Blocking is correct here: this is a TRANSPORT WORKER, and the main
+            // loop is free to service the wait. (The on-device screens must not.)
+            for (const auto& label : Services::save_title_labels(sp.user))
+                json_virtual_dir(out, first, label);
+        } else {
+            // Inside a mounted save — a real directory.
+            const std::string vfs = Services::save_resolve(sp);
+            if (!vfs.empty()) { json_close(out); list_dir_json(fd, posix, vfs); return; }
+        }
+    } else if (r.kind == Services::PathKind::TitleQuery) {
+        // Installed Titles: synthesized NSP files, sized as a client would receive.
+        for (const auto& e : Services::installed_titles_list()) {
+            if (!first) out += ",";
+            first = false;
+            out += "{\"name\":\"" + json_escape(e.name) + "\","
+                   "\"type\":\"" + std::string(e.is_dir ? "dir" : "file") + "\","
+                   "\"size\":" + std::to_string(e.size) + "}";
+        }
+    } else if (r.kind == Services::PathKind::Install) {
+        // Install targets accept uploads but hold nothing to list.
+    } else if (r.kind == Services::PathKind::Filesystem ||
+               r.kind == Services::PathKind::StorageRoot) {
+        json_close(out);
+        list_dir_json(fd, posix, r.vfs);
+        return;
+    }
+
+    json_close(out);
+    send_all(fd, out.data(), out.size());
+}
+
+// ─── Install over HTTP (PUT to /install/sd or /install/nand) ──────────────────
+
+bool HttpServer::http_install(int cfd, HttpTarget target, const std::string& leaf,
+                              const std::string& prebuffered, uint64_t content_length) {
+#ifdef PLATFORM_SWITCH
+    const auto dest = (target == HttpTarget::NandInstall)
+                          ? Core::Ncm::Storage::BuiltIn
+                          : Core::Ncm::Storage::SdCard;
+
+    if (!Core::Keys::available()) Core::Keys::load();
+    if (!Core::Keys::available()) {
+        m_install_progress.reset();
+        m_install_progress.message = Core::Keys::requirement_message();
+        m_install_progress.push_log("ERROR: " + Core::Keys::requirement_message());
+        save_install_log(leaf, false);
+        return false;
+    }
+
+    m_install = std::make_unique<Install::StreamInstaller>(
+        dest, Core::Keys::get(), m_install_progress);
+    m_installing.store(true);
+
+    // Content-Length is the exact WIRE size — cleaner than FTP, which declares
+    // none. Passing it as the declared size with exact=true lets the driver run
+    // the ETA off a real total from the first byte instead of recovering the size
+    // from the container table.
+    if (!m_install->begin(leaf, content_length)) {
+        save_install_log(leaf, false);
+        m_install.reset(); m_installing.store(false);
+        return false;
+    }
+
+    std::vector<uint8_t> scratch(256 * 1024);
+
+    Install::StreamSource src;
+    src.buffer      = scratch.data();
+    src.buffer_size = scratch.size();
+    // The socket is the byte source. content_length bounds the read so a
+    // keep-alive client that reuses the connection does not bleed the next
+    // request into this install; a peer close (0) also ends it.
+    uint64_t remaining = content_length;
+    const bool bounded = content_length > 0;
+    src.read = [this, cfd, &remaining, bounded](uint8_t* buf, size_t n) -> ssize_t {
+        if (bounded) {
+            if (remaining == 0) return 0;                 // exact end of body
+            if ((uint64_t)n > remaining) n = (size_t)remaining;
+        }
+        ssize_t r = ::recv(cfd, buf, n, 0);
+        if (r > 0) {
+            m_bytes_recv.fetch_add((uint64_t)r);
+            if (bounded) remaining -= (uint64_t)r;
+        }
+        return r;   // 0 = peer closed = end; <0 = error
+    };
+    src.stop  = [this] { return should_stop(); };
+    // A socket transport needs no drain: closing the connection discards unread
+    // bytes. (Only MTP's shared USB pipe must be drained.)
+    src.drain = [](uint64_t) {};
+
+    m_wire_size.store(0);
+    m_wire_recv.store(0);
+    Install::WireSink wire;
+    wire.set_size = [this](uint64_t sz) { m_wire_size.store(sz); };
+    wire.add_recv = [this](uint64_t n)  { m_wire_recv.fetch_add(n); };
+
+    // The body bytes already read alongside the headers are the FirstChunk — the
+    // driver feeds them before pulling more from the socket, so nothing is lost.
+    // They were counted against `remaining` only if they came from the socket;
+    // these came from the header read, so subtract them from remaining now.
+    if (bounded && !prebuffered.empty()) {
+        const uint64_t pre = std::min<uint64_t>(prebuffered.size(), remaining);
+        remaining -= pre;
+        m_bytes_recv.fetch_add(pre);
+    }
+    Install::FirstChunk first{
+        reinterpret_cast<const uint8_t*>(prebuffered.data()),
+        prebuffered.size()
+    };
+
+    const Install::DriveResult dr =
+        Install::drive(*m_install, src, first, content_length, /*exact*/bounded, wire);
+
+    const bool ok = (dr == Install::DriveResult::Ok);
+    if (!ok && dr == Install::DriveResult::Cancelled)
+        m_install_progress.push_log("Install cancelled");
+    save_install_log(leaf, ok);
+    m_install.reset();
+    m_installing.store(false);
+    return ok;
+#else
+    (void)cfd; (void)target; (void)leaf; (void)prebuffered; (void)content_length;
+    return false;
+#endif
+}
+
+void HttpServer::save_install_log(const std::string& filename, bool ok) {
+#ifdef PLATFORM_SWITCH
+    const std::string dir = "sdmc:/switch/GarageNX/logs";
+    ::mkdir("sdmc:/switch", 0777);
+    ::mkdir("sdmc:/switch/GarageNX", 0777);
+    ::mkdir(dir.c_str(), 0777);
+    FILE* f = ::fopen((dir + "/http_install.log").c_str(), "a");
+    if (!f) return;
+    std::fprintf(f, "GarageNX HTTP install — %s : %s\n",
+                 filename.c_str(), ok ? "OK" : "FAILED");
+    ::fclose(f);
+#else
+    (void)filename; (void)ok;
+#endif
 }
 
 // ─── Construction ─────────────────────────────────────────────────────────────

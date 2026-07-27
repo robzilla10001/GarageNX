@@ -1,6 +1,7 @@
 // source/screens/ftp_screen.cpp
 
 #include "screens/ftp_screen.hpp"
+#include "ui/stats_format.hpp"
 #include "core/net.hpp"
 #include "core/fs.hpp"
 #include "config/config.hpp"
@@ -15,20 +16,6 @@
 #include <cstdio>
 #include <string>
 
-namespace {
-// Format a duration in seconds as "12s", "3m 05s", "1h 02m". Mirrors the MTP
-// screen's formatter. Caps so a near-zero rate doesn't print an absurd number.
-std::string format_eta(double seconds) {
-    if (seconds < 0 || seconds > 359999) return "—";
-    const int total = (int)(seconds + 0.5);
-    const int h = total / 3600, m = (total % 3600) / 60, s = total % 60;
-    char buf[32];
-    if (h > 0)      std::snprintf(buf, sizeof(buf), "%dh %02dm", h, m);
-    else if (m > 0) std::snprintf(buf, sizeof(buf), "%dm %02ds", m, s);
-    else            std::snprintf(buf, sizeof(buf), "%ds", s);
-    return buf;
-}
-} // namespace
 
 void FTPScreen::start_server() {
     const auto& ftp = Config::get().ftp;
@@ -97,7 +84,7 @@ void FTPScreen::refresh_latched_stats() {
     const uint64_t wire_size = m_server->current_wire_size();
     const uint64_t wire_recv = m_server->current_wire_recv();
     if (wire_size > 0 && wire_recv <= wire_size && cur > 1.0)
-        m_disp_eta = format_eta((double)(wire_size - wire_recv) / cur);
+        m_disp_eta = UI::format_eta((double)(wire_size - wire_recv) / cur);
     else
         m_disp_eta = "—";
 }

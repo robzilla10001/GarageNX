@@ -1614,6 +1614,26 @@ Pieces:
 HARDWARE-CONFIRMED: install (into SD Install), clean cancel/exit teardown, and
 MTP-matching stats all verified on device. Slice A complete.
 
+## Working with ncm — read the existing callers first
+
+Wave 3 lost roughly six hardware rounds to the same mistake, in four different
+places: writing a fresh ncm caller when this codebase already contained a proven
+one, then debugging the divergence.
+
+  * Bulk resolve_control() from a transport thread crashed the console —
+    screens/title_list.cpp had always done exactly one per frame on the main thread.
+  * ncmContentMetaDatabaseGetSize() was used for a title's size; it returns the
+    ~100-byte META RECORD size, so every title displayed as "100 B".
+  * ncmContentStorageGetSizeFromContentId() per NCA made enumeration 10x slower
+    (2s -> 20s) — the size is already in the NcmContentInfo record via
+    ncmContentInfoSizeToU64(), which core/title_ops.cpp already used.
+
+RULE: before calling an ncm API, grep for an existing caller in this repo and copy
+its usage — thread, pacing, and which API it chose. The compiler cannot check any
+of that, and neither the host test build nor the -fsyntax-only guard covers these
+files. A manual API audit against the real headers has caught several errors that
+nothing else would have.
+
 ## MTP file-manager parity (browse + open) — DONE, hardware-confirmed
 
 MTP exposes SD + Album (catalog-driven, storage derived from each object's path
@@ -1652,3 +1672,1169 @@ HARDWARE-CONFIRMED on both forwarder and applet launches.
 
 
 *Rev 4 (cycle-accurate to hardware test): Slice 4c XCI/XCZ stream install is COMPLETE and hardware-validated — NSP/NSZ/XCI/XCZ install and cancel cleanly. Work this cycle: collector refactor re-cut (the rev-3 entry claiming it was done proved false); XCI/XCZ HFS0 front-end added; PFS0/HFS0 string-table bound; NSZ/XCZ refusal noun; WrapNav wrap-delay 450→300. The MTP cancel crash took the most effort and six wrong theories before the crash report's exception type (Data Abort @ 0x0, not the ncm result 2168-0002) revealed the true cause: a C++ destruction-order use-after-free fixed by giving MtpServer a destructor that joins the worker before members are destroyed. Three real bugs were fixed en route (OverlapBuffer teardown race, double-abort, and the destruction order). Lesson recorded: when a fault has a crash dump, read the exception type, not the result register. Full detail in §16 Open Items.*
+
+
+## Save Data as a shared surface (3d-b FTP, 3d-c MTP)
+
+Save data is the one surface the catalog's "one vfs_root" model does not
+describe: `save:` only becomes valid once a specific (user, title) pair is
+mounted, and only one may be mounted at a time. The top two levels
+(`/Save Data/<User>/<Title>/...`) are synthesized; only the third is real.
+
+`services/save_surface.{hpp,cpp}` is the single definition of that surface — the
+two synthesized listings and, crucially, the SINGLE-SLOT MOUNT POLICY. Every
+request from every transport routes through `save_resolve()`, which mounts a
+file-level path's title (releasing whatever was mounted) and releases for
+anything shallower. That is what makes "navigate away from a title and it
+unloads" true without any transport tracking navigation state.
+
+It was extracted from `ftp_server.cpp` when MTP became the second consumer,
+unifying onto the implementation that had already been hardware-verified rather
+than the reverse — the same discipline as folding `dump.cpp` onto `NspStream`.
+
+### Why a save object cannot be interned by its real path
+
+This is the difference between Save Data and Installed Titles, and it is not
+obvious. A virtual NSP has no path on disk, but its NAME is unique, so
+`titles:/<name>` is a sufficient MTP handle key. A save file's real path is
+`save:/slot1.dat` — and that names a DIFFERENT FILE depending on which title is
+mounted right now. MTP handles must stay valid for a whole session, so interning
+by the real path would let two titles' files collide on one handle and hand the
+host the wrong bytes, silently, with no error raised anywhere.
+
+Save objects are therefore interned as:
+
+    savedata:/<User>/<Title>/<rest...>
+
+carrying the full three-level identity, with the concrete path derived at the
+moment of use. The part after the prefix is exactly the `rel` that
+`sp_split_save()` already parses, so no second decomposition exists to drift.
+
+The prefix deliberately does NOT begin with `save:`. `StorageCatalog::
+surface_for_vfs()` and `mtp_storage_for_path()` both identify a surface by a
+plain prefix compare against `vfs_root`, so a `save:`-prefixed synthetic path
+would be mistaken for a mounted one by the write guard. `save_surface_test`
+asserts that property directly rather than trusting the spelling.
+
+### Browsing must not mount
+
+An MTP host requests an ObjectInfo for EVERY object it lists. Answering "is this
+a directory?" for a title folder by mounting it would mount and unmount every
+save on the console just to browse one user's folder — the bulk-churn pattern
+that crashed the console in 3b. User and title folders are directories BY
+CONSTRUCTION, so `save_synth_is_synthesized_dir()` answers them without touching
+the mount. Only paths inside a title resolve, and all children of one listing
+belong to the same title, so the slot stays put.
+
+### Concurrency: verified, not assumed
+
+`SaveMount`'s slot globals carry no mutex, which would be a cross-thread hazard
+if FTP and MTP could run at once. They cannot: `FTPScreen::on_exit()` and
+`MTPScreen::on_exit()` both `m_server.reset()`, and each server's destructor
+stops and joins its worker. One connectivity screen is on top at a time, so one
+transport exists at a time. This is load-bearing and invisible — if a future
+change lets two services run concurrently (a "keep serving in the background"
+option, say), the mount slot needs a lock and an owner BEFORE that ships.
+
+
+## The syntax guard was checking nothing (fixed)
+
+The documented guard for libnx-only files was
+
+    g++ -fsyntax-only -std=c++17 -I source -DPLATFORM_SWITCH <file>
+    # header-not-found errors are EXPECTED and should be ignored
+
+and it never checked anything at all. A missing header is a FATAL error, not an
+ignorable one: the compiler prints `fatal error: switch.h: No such file or
+directory / compilation terminated.` and STOPS. The parser never reaches the
+function bodies, so the exact class of breakage the guard was added to catch —
+a `str_replace` eating a `case` header, a dropped wire field — passed it every
+time. On `mtp_server.cpp` the guard produced six lines of output and zero
+coverage.
+
+Fixed by `tools/syntax_guard.sh` + `tools/stubs/`: EMPTY stand-ins for
+`switch.h` and the SDL headers let the preprocessor complete so the PARSER runs
+over the whole file. Undeclared types then produce ordinary non-fatal errors,
+which are filtered out; what survives the filter is structure. Reparsing
+`mtp_server.cpp` this way goes from 6 lines to 628, and the brace-balance check
+runs alongside.
+
+The filter is deliberately NARROW. A first draft also matched `expected ';'
+before X`, which fires on every `u32 n = 0;` in the tree because the stubs leave
+libnx's typedefs undeclared — it flagged four perfectly well-formed files. That
+is a type symptom, not a structural one.
+
+The stubs are NOT a PC build and must never grow declarations to silence errors:
+a stub complete enough to type-check would be a second, lying definition of
+libnx, which is precisely what rev 3 deleted the PC stub build for.
+
+LIMITS ARE UNCHANGED, and a pass still means only "this file will parse":
+wrong types and wrong field names pass, and a manual audit of every libnx call
+against its real header is still required.
+
+
+## Transport parity is about ORDER, not just outcome
+
+Save Data over MTP shipped refusing every mutation, while FTP raised the
+on-device confirmation and performed the operation on Allow. Both transports read
+the same catalog and called the same guard; the difference was entirely in
+**where each one resolved relative to where it guarded**.
+
+FTP's `to_vfs()` resolves a Save Data path to its mounted `save:/...` form before
+any command touches the guard. So `guard_write()` sees a path the catalog claims
+(Saves, ReadOnly + `Confirm::OnDevice`), raises the modal, and the command
+proceeds if the user allows it. MTP guarded the *synthetic* `savedata:/...` key,
+which no surface claims — so it default-denied, and no modal could ever appear.
+
+The rule that follows: **resolve, then guard.** Every MTP mutation
+(`DeleteObject`, `SetObjectPropValue`, `arm_incoming_object`) now resolves a
+synthetic save path through `save_resolve_synth()` — which mounts the title the
+handle names — and guards the concrete result.
+
+Two things stay deliberately asymmetric, and both are still parity:
+
+* **The handle key stays synthetic.** Filesystem work uses `save:/...`; the
+  interned handle remains `savedata:/<User>/<Title>/<leaf>`. A handle keyed on
+  the concrete path would name a different file as soon as another title mounted.
+* **The storage root and synthesized levels refuse with no prompt**, because FTP
+  refuses them too (`to_vfs()` returns `""`, the command answers 550). There is no
+  (user, title) at those levels, so a prompt could not name a real destination.
+
+### The window MTP has and FTP does not
+
+FTP's `STOR` resolves and writes within one command. MTP splits the same work
+across `SendObjectInfo` (which armed `m_pending_path`) and `SendObject` (which
+wrote it), and a client may issue anything in between — including a browse of
+another title, which remounts the single save slot. A bare `save:/<leaf>` armed
+in the first command would then have written into a **different game's save**,
+silently, after the user approved a prompt naming the right one.
+
+`m_pending_save_synth` holds the synthetic key across that gap and `SendObject`
+re-resolves from it. No second confirmation is asked: the key pins user, title
+and leaf, so re-resolution cannot reach a destination the user did not already
+approve — it can only fail, and failure is a refusal.
+
+Generalise this when adding any transport: **a two-command protocol turns a
+resolved path into a stale one.** Anything resolved in a first command and used
+in a second must be re-resolved, or carry enough identity to be re-resolved.
+
+
+## Save writes must be COMMITTED, and capacity must be honest
+
+Two failures with one root: a surface's advertised properties and its write
+mechanics were both inherited from a read-only surface, and stayed wrong after
+Save Data stopped being read-only.
+
+**Journalled saves.** A Switch save filesystem journals writes made through the
+`save:` mount and DISCARDS them at unmount unless `fsdevCommitDevice("save")` is
+called. An uncommitted write reports success, reads back correctly for as long as
+the mount is live, and is gone when the game next opens it. `Core::SaveMount::
+commit()` and `Services::save_commit_if_save_path()` are called after every
+successful mutation on every transport, and BEFORE success is reported to the
+client — a failed commit fails the operation instead of lying about it. The
+helper takes the path rather than a flag so a caller cannot forget which surface
+it wrote to; a non-save path is a no-op. Note that this was missing from FTP as
+well, since 3d-b: browse and pull never touch the journal, so the hardware pass
+that verified them could not have caught it.
+
+**Capacity is a wire field whose truth depends on policy.** MTP's StorageInfo
+`FreeSpaceInBytes` was 0 for Save Data, copied from Installed Titles where
+nothing can ever be written. Hosts check that field BEFORE opening a transfer, so
+once confirmed writes were allowed, every write was refused client-side — "not
+enough space" for a 553-byte file, with no request reaching the device and
+nothing in a wire log to see. The surface to copy was NAND (User): read-only by
+policy, writable per operation after a confirmation, real capacity figures.
+
+The general rule: **when a surface's ACCESS changes, re-audit every value derived
+from the old access.** Nothing in the type system or the host tests can catch
+this class — the value is a protocol field whose correctness depends on a policy
+decision made in a different file.
+
+### Known-dead setting
+
+`Config::Behavior::saves_ro_mode` is declared, persisted and read by nothing.
+It looks like the DBI "mount saves read-only" option. Either wire it into
+`save_resolve()` (mount read-only, and make the guard refuse regardless of
+confirmation) or delete it — a setting that silently does nothing is worse than
+an absent one, especially a SAFETY setting a user may believe is protecting them.
+
+
+## "Read-only" does not mean unwritable
+
+Three surfaces are `Access::ReadOnly` **and** `Confirm::OnDevice`: NAND (User),
+NAND (System) and Save Data. That combination means read-only by POLICY —
+writable per operation once the user confirms on the console. Only
+`ReadOnly + Confirm::None` (Game Card, Installed Titles) is genuinely unwritable.
+
+Missing that distinction produced the same bug twice. MTP's StorageInfo reported
+zero free space for Save Data and for NAND (System), reasoning that neither was
+writable. Hosts check `FreeSpaceInBytes` *before* opening a transfer, so every
+confirmed write was refused client-side with "not enough space" — for a 553-byte
+file, on a console with tens of gigabytes free, with no request reaching the
+device and nothing in a wire log to look at.
+
+`StorageCatalog::is_writable()` now states the rule once, and
+`storage_catalog_test` pins the classification of all nine surfaces with a
+failure message that points at capacity reporting. Give a surface a confirmation
+path in future and a host test will fail and say what else to check.
+
+The general shape, worth carrying to the HTTP transport: **a protocol field whose
+correct value depends on a policy decision in another file cannot be verified
+locally.** Comments do not survive the change that invalidates them. Where the
+dependency is real, express it in a shared helper and pin it in a test.
+
+
+## Config ordering, and toggles that are not global
+
+`Core::mount_nand()` is config-gated. It used to run at `main.cpp:141`;
+`Config::load()` runs at 168. So it gated on compile-time defaults, and
+`bis_system:` could never be mounted however `config.json` was set.
+
+The bug was invisible for a precise reason: `nand_user` defaults to **true**, so
+`bis_user:` always mounted and NAND (User) always worked. `nand_system` is the
+only surface defaulting to **false**, so it was the only one that could expose
+the ordering — and being off by default, nobody hit it until someone deliberately
+turned it on.
+
+`Config::get()` now logs once, loudly, when called before `Config::load()`.
+Reading config early yields defaults that are indistinguishable from a user's
+real choices, so the mistake surfaces much later as "the app ignores my config".
+Nothing in the type system can catch an ordering bug; a log line can. Anything
+config-gated must be called below the load, and there is a marker comment at the
+old site saying so.
+
+### Mounts are global; toggles are per-transport
+
+Surface toggles now live per transport (`Config::Surfaces`, one each in MTP, FTP
+and HTTP), so saves can be served over FTP without being exposed over MTP. But a
+**mount is process-wide**. Anything that mounts, initialises a service, or makes
+any other global decision must ask
+`Config::any_transport_exposes(&Surfaces::field)` rather than any single
+transport's block — otherwise enabling NAND for FTP alone leaves the partition
+unmounted, and the folder appears but refuses to open.
+
+Migration is behaviour-preserving by construction: a legacy `config.json` has
+flat keys under `"mtp"` and no `"surfaces"` object, and those flat keys seed all
+three transports — exactly what the shared block used to do. Precedence per key
+is: this transport's block, then the legacy flat key, then the compile-time
+default. `"surfaces"` present means new format; absent means legacy, so no
+version stamp is needed.
+
+### The mount probe belongs to the catalog, not to a transport
+
+FTP probed a surface's mount root and hid it when absent. MTP did not, and
+advertised storages whose enumeration then failed — the host reports "could not
+get object handles" and the user has a storage they cannot open. One config, one
+catalog, two behaviours. `StorageCatalog::mount_available()` is now the single
+definition, with the Save Data and non-Filesystem exemptions stated once.
+
+Any future transport gets this for free, which is the whole reason the catalog
+exists. A per-transport copy of a rule about a shared resource will drift; the
+only question is which copy is wrong when it does.
+
+
+## Writing config is the risky part of a settings screen
+
+The UI is the easy half. `Config::save()` sat unused for the whole project, and
+giving it a caller changed two things from harmless to dangerous.
+
+**A field missing from the serialiser silently resets.** Anything present in the
+`All` struct but absent from `to_json`/`from_json` would be quietly returned to
+its default the first time a user touched any setting. All 56 fields were audited
+before the screen was wired, and `test_every_field_round_trips` now pins them —
+enumerated by hand deliberately, because a reflection-style loop would pass while
+proving nothing. The tedium is the feature: adding a config field should mean
+adding a line to that test.
+
+**A wholesale rewrite deletes what it does not model.** `save()` used to write
+`to_json()` over the file, which would remove any key the struct has no field
+for — one added by hand, or written by a newer build. It now overlays our values
+onto the file *as loaded* (RFC 7386 `merge_patch`), so unknown keys survive. The
+single deliberate exception is the pre-split flat surface keys under `"mtp"`,
+which have been migrated into `"surfaces"`; leaving a stale `"nand_system": true`
+beside `"surfaces": {"nand_system": false}` would read as though the surface were
+on, so removing them is what makes the migration one-way and finished.
+
+### When a protection was only ever inconvenience
+
+NAND (System) was guarded by being awkward to reach: a user had to hand-edit
+JSON. That is not a safety property, it is friction, and a menu toggle removes it
+completely. So enabling it now raises a Danger modal that names the real risk.
+Disabling never asks — removing access is not the dangerous direction, and
+confirming it would only train the user to dismiss the dialog unread.
+
+The general point for any future UI over an existing setting: **ask what was
+actually protecting the dangerous option before you make it convenient.** If the
+answer is "it was hard to find", the protection has to be rebuilt explicitly in
+the same change that makes it easy, or the feature ships as a net safety
+regression.
+
+### Save-on-exit is really flush-on-boundary
+
+`push()` calls `on_exit()` on the parent screen, so a settings screen's
+`on_exit()` fires when navigating deeper, not only when leaving. That makes the
+persistence rule "flush pending changes at any navigation boundary" — which is
+the safer reading: a change cannot be lost to an unexpected exit, and a
+non-destructive save costs only a rewrite. A failed save keeps the dirty flag so
+the next boundary retries it; clearing it would turn one failed write into a
+setting the user believes they made.
+
+
+## Two "measure text" functions, on purpose
+
+`Renderer::measure_text()` and `Font::measure_width()` both return the width of a
+string and are NOT duplicates. Unifying them is the obvious cleanup and it is
+wrong.
+
+`Renderer::measure_text()` is part of the cached-text path: it rasterises and
+uploads the string, populating the texture cache so the subsequent `draw_text()`
+is free. It is for "I am about to draw exactly this".
+
+`Font::measure_width()` is pure TTF metrics with no texture. It is for
+measurement that is NOT going to be drawn — above all, word wrapping, which
+measures dozens of trial prefixes ("NAND (Sys", "NAND (Syst", ...) per call.
+Routing wrapping through the cached path would fill the cache with strings that
+never appear on screen and evict the ones that do.
+
+`ui/text_wrap.hpp` holds the wrapping algorithm itself, header-only and free of
+SDL, with the measurement function injected. That is what lets it be host-tested
+with an exact synthetic metric ("every glyph is 10px") and assert precise break
+columns, rather than being eyeballed on a console.
+
+### Wrap once, not per frame
+
+`Modal::show()` wraps and stores the lines; `update_and_draw()` only consumes
+them. The body cannot change while a modal is up, and the main thread is the
+thread a transport worker is blocked on while waiting for a confirmation — so
+per-frame wrapping would be waste in the one place waste is least affordable.
+
+The body is also clamped to what fits the screen. An over-tall modal hides its
+own buttons, which for a broker confirmation means no way to answer and a
+transport blocked until timeout.
+
+
+## Save Manager: a fourth consumer, not a fourth implementation
+
+`SaveManagerScreen` is the on-device path to save data, alongside FTP, MTP and
+(later) HTTP. It implements none of the save handling itself.
+
+The two synthesized levels come from `Services::save_user_names()` and
+`save_title_labels()`. Entering a title mounts through
+`Services::save_resolve()` — the same choke point the transports use — so the
+single-slot rule holds on the on-device path too, and navigating back to the
+user list releases the mount for free, because `save_user_names()` releases as
+part of listing. Browsing is `FileBrowserScreen` pointed at `save:/`, which is
+what that screen was built for.
+
+This is the payoff for having extracted `save_surface` when MTP became the second
+consumer rather than copying FTP's logic: the third and fourth consumers cost
+almost nothing, and none of them can drift on the mount policy.
+
+### Filename sanitisation is a correctness problem, not a cosmetic one
+
+Backup directories are named after **account nicknames and game titles**. Neither
+is constrained to anything. Real Switch titles contain `:` ("Pokemon: Let's Go"),
+`?` ("Who Wants to Be a Millionaire?"), and trailing dots. FAT32 and exFAT reject
+those characters outright, so an unsanitised path does not produce an ugly folder
+name — it produces a **failed copy**, silently, on exactly the titles a user is
+most likely to want backed up.
+
+Three subtleties beyond replacing illegal characters, all host-tested:
+
+* FAT silently **drops** trailing dots and spaces, so a caller that built a path
+  ending in one would then look for a directory that does not exist under that
+  name. Strip them before building the path, not after the copy fails.
+* Truncating a long name must land on a **UTF-8 code-point boundary**. A broken
+  sequence in a filename is worse than in a label: some tools reject the name
+  entirely rather than drawing a replacement glyph.
+* Two different awkward titles must not collapse onto the same sanitised name, or
+  one game's backup lands inside another's folder. The application id in brackets
+  is all legal characters, so it always survives intact and does the
+  disambiguating.
+
+### Timestamps that sort
+
+`Core::DateTime::log_stamp()` honours the user's configured date order, which is
+right for a log file a human opens by name. It is wrong for backups: for a DMY
+user, `12-07-2026` sorts before `05-08-2026`, so "newest" is not the bottom of
+the list. `sortable_stamp()` is fixed year-month-day for names that a machine
+orders and a human scans.
+
+The general rule: **ask whether a formatted string is read by a person or sorted
+by a machine before reusing a formatter.**
+
+
+## Restore is designed around the rollback, not the action
+
+Save restore is the only operation in GarageNX that destroys something a user
+cannot get back from anywhere else. The flow reflects that:
+
+1. A pre-restore snapshot is taken **before the user is asked**.
+2. The Danger modal **names that snapshot's path**, so the way back is visible
+   while deciding rather than offered afterwards as a consolation.
+3. Only then is the save replaced.
+
+If the snapshot fails, the restore is never offered. A restore with no way back is
+not a decision worth putting in front of someone.
+
+The cost is that a cancelled restore has spent one wasted copy to the SD card.
+That is the right trade: a few seconds and a few megabytes, against a
+confirmation that would otherwise have to promise a backup and hope. A cancelled
+restore also **keeps** its snapshot — it is a real backup, and deleting it to tidy
+up would discard something the user may want.
+
+### Why this one does NOT use ConfirmationBroker
+
+The broker exists so a **transport-initiated** write has to be approved on the
+console: the PC-to-console round trip *is* the safety property. A restore started
+from the Save Manager already has the user at the console, so the Danger modal
+(hold-to-confirm) is that gate. Routing it through the broker as well would be two
+dialogs for one decision, and two dialogs for one decision is how people learn to
+dismiss both.
+
+### Ordering and refusals
+
+The **source is validated before the save is touched**. Deleting the save and
+then discovering the backup is unreadable is the worst possible ordering, and it
+is the one you get for free if you do not check first.
+
+Two things are refused outright:
+
+* A directory that does not match the stamp shape is never listed as a restore
+  source. An SD card is the user's own — stray folders, half-extracted archives,
+  a Mac's `.DS_Store` all sit beside real backups, and restoring one would replace
+  a save with garbage.
+* An **empty** backup is refused. Restoring one would delete the save and copy
+  nothing back. That almost certainly means an interrupted backup rather than a
+  user who wants to erase their progress — and if they do want that, deleting in
+  the file browser is the honest way to ask for it, and does not look like a
+  restore that quietly did nothing.
+
+The commit happens **once, over the whole replace**. Per-file commits would make
+each intermediate state durable, which is not what "replace this save" means. A
+failed commit fails the restore, because the journal will discard the writes at
+unmount and reporting success would describe a save that is about to revert to a
+half-deleted state.
+
+
+## A mount root is not an object
+
+"/Save Data/<User>/<Title>" resolves to exactly `save:/`. That is a legal path to
+**list** — it is why browsing a save works at all — and an illegal target for
+**delete or rename**, because it is the filesystem rather than a file in it.
+
+This is not a theoretical distinction. An ordinary FTP or MTP client deletes a
+folder by clearing its contents and then removing the folder, so deleting a save
+produced two confirmation dialogs, both approved, followed by an rmdir of a mount
+point that could never succeed.
+
+The failure mode worth naming: **a confirmation dialog for an operation that
+cannot succeed is worse than no dialog at all.** It teaches people that approving
+these prompts does nothing, and this project's entire safety model rests on those
+prompts being meaningful. `Services::save_is_mount_root()` refuses such mutations
+with no prompt, on every transport.
+
+## When a surface gains a consumer, re-check its invariants
+
+Save writes must be committed or the journal discards them at unmount. That was
+fixed for FTP and MTP when those were the only writers. Then the Save Manager
+pointed `FileBrowserScreen` at `save:/` — and the file browser's delete, rename
+and paste had gone straight to `Fs::` since the day they were written, which was
+correct for every surface they had ever seen.
+
+The result: an on-device delete appeared to work, and the file came back as soon
+as the user left the save and the mount was released.
+
+The general lesson: **giving an existing component access to a new surface is a
+change to that component**, even when not a line of it is edited. Every invariant
+the surface imposes has to be re-checked against it, not just the ones the new
+wiring touches.
+
+The durable fix is structural rather than per-caller: nothing should mutate a save
+except through a helper that commits. Four call sites all remembering
+independently is a bug waiting for the fifth.
+
+
+## Four ways to fail identically
+
+`classify_write()` returns `Deny` for four different reasons, and two more
+refusals now happen before the guard is consulted at all. From outside the
+console every one of them looks the same: the operation fails and no dialog
+appears.
+
+1. empty or unresolved path
+2. no surface claims the path (including a synthetic `savedata:/...` path that
+   reached the guard unresolved)
+3. the surface is **disabled for that transport**
+4. read-only with no confirmation path
+5. the save mount root, refused before guarding
+6. a synthetic save path that failed to resolve
+
+Reason 3 became newly confusing when surfaces went per-transport: the same save
+write can be confirmable over MTP and silently denied over FTP, with nothing on
+screen to explain the difference.
+
+Six causes with one observable symptom is a diagnosis problem, not a logic
+problem, and no amount of reasoning from the symptom will separate them. Every
+one of them now writes a line to `logs/write_guard.log` naming the reason, the
+path, the matched surface and whether it is enabled — plus a `FAILED` line
+carrying `errno` when the filesystem call itself is what refused, which is the
+one outcome the guard could never account for.
+
+This is §5.1 applied to a subsystem rather than a bug: **when several distinct
+causes share one symptom, the fix is to make them distinguishable before
+attempting a diagnosis, not after the second wrong guess.**
+
+
+## "Delete the save folder" means "wipe the save"
+
+The bug that presented as "deletes fail with no modals" was not a delete bug at
+all. The log added the round before named it in one line: the target was always
+"save:/", the synthesized save mount root. The user was deleting the title folder
+to clear a save, and an earlier over-eager refusal was rejecting that intent
+silently.
+
+The title folder is the mount point, not a real directory, so it cannot be
+removed with rmdir — but emptying the save is a real, common operation.
+`Services::save_wipe()` deletes every child of the mounted save and commits, and
+FTP `DELE`/`RMD` and MTP `DeleteObject` on the save root route to it THROUGH the
+write guard, so a wipe over a transport gets the same on-device confirmation as
+any other save write. The on-device Save Manager offers the same operation as
+"Erase Save", snapshot-first like restore.
+
+The wider lesson is about diagnosis, not saves. Three rounds were spent here: two
+guesses that each changed the symptom without fixing it, then a log that settled
+it immediately — and the answer was a category the guesses never considered,
+because the operation the user wanted was not the operation the UI names. When a
+refusal is firing "correctly" and the user still cannot do what they set out to
+do, the question is not "why is the check wrong" but "what did they actually
+mean", and only an observation of the real request answers that.
+
+
+## Clear vs delete: two operations the UI must not blur
+
+A save has two destructive operations that look similar and are not:
+
+* **Wipe / Erase** empties the save's contents through the mounted `save:`
+  filesystem and commits. The save-data RECORD survives, so the title stays in the
+  list with an empty save — the equivalent of Nintendo's in-console "reset".
+* **Delete** removes the record itself, by `save_data_id`, through the fs service
+  (not through a mount). The title leaves the list and the game creates a fresh
+  save next launch.
+
+The delete bug three rounds back came from having only wipe and presenting it as
+"delete": the folder returned empty and the user expected the title to vanish.
+Both operations now exist and are named for what they do.
+
+Deletion is **by `save_data_id`**, never by application id — the fs API has no
+by-app deletion, and the id from `FsSaveDataInfo` is the only stable handle. It
+runs with nothing mounted, because deleting a filesystem out from under a live
+mount is undefined.
+
+### Why delete is on-device only
+
+Wipe is exposed over transports because a client deleting a folder has an obvious
+meaning: clear its contents. Deleting a save *record* has no folder gesture — it
+is a Switch concept a file-manager client cannot form intentionally — so a
+transport delete could only ever be a wrong-target accident, and with no on-device
+snapshot behind it. Delete is therefore console-only, where the snapshot-first
+confirmation lives. Same principle as the ConfirmationBroker: put the dangerous
+operation where the human already is.
+
+### The one unverified call
+
+`fsDeleteSaveDataFileSystemBySaveDataSpaceId` could not be checked against a libnx
+header in the build sandbox, so per §5.4 it is isolated in a single primitive,
+logs its Result, and the call site records the fallback spellings. That is the
+honest shape for a call taken on knowledge rather than a verified header: contain
+it, log it, and write down what to try if it is wrong.
+
+
+## Backups must outlive the saves they protect
+
+A backup exists precisely to survive the loss of its save. So a save manager whose
+only path to a backup runs THROUGH the live save is self-defeating: delete the
+save and the backup becomes unreachable at the exact moment it matters. This was a
+real hole — snapshot-first delete took a backup the user then could not get to.
+
+The fix is that the backup TREE is browsable on its own terms. The directory
+layout `<root>/<user>/<title>/<stamp>` is a complete index by itself, so
+`backup_users()` / `backup_titles()` enumerate it straight from the filesystem
+with no reference to live saves, reached from a pinned "Manage Backups" entry that
+is present even when no live saves exist.
+
+Restoring an orphaned backup then has to RECREATE the deleted save, not just mount
+it. `save_resolve()` only matches live saves by design; `save_resolve_for_restore()`
+recreates the record first, keyed on the application id recovered from the backup's
+own folder label — which, once the live save is gone, is the only surviving record
+of which title the backup belongs to. That is why the id is embedded in the label
+at backup time and parsed back out here (`app_id_from_label`, pure and tested):
+the backup has to be self-describing enough to restore with no help from the system
+it is restoring into.
+
+Two consequences fall out of this and are easy to get wrong:
+
+* Restoring from the backup tree takes NO pre-restore snapshot. The current save
+  may not exist, so there is nothing to protect and a snapshot attempt would fail
+  and abort the restore. The snapshot is for protecting a save that is about to be
+  overwritten; there isn't one.
+* The recreation call (`fsCreateSaveDataFileSystem`) is another §5.4 unverifiable,
+  handled the same way as delete: probe-then-create, isolated, logged, with the
+  fallbacks written at the call site.
+
+
+## Automatic backup: the feature the platform won't let you build, and the one it will
+
+"Pre-play snapshot" assumes the app can act at game-launch time. It can't:
+GarageNX is homebrew, not resident while a game runs — once a title launches,
+GarageNX is gone from memory. There is no launch hook to hang a snapshot on, so
+the literal feature is unbuildable on this platform.
+
+The intent behind it survives translation, though: "my saves get backed up on a
+schedule without me remembering." The buildable form is a staleness sweep at
+app-open — back up any live save whose newest backup is older than a configured
+number of days. Same guarantee, a trigger that actually exists.
+
+### Staleness is pure, and tested like it matters
+
+The decision (`save_is_stale`) is the kind of logic that fails silently in both
+directions: too eager thrashes the SD card on every launch, too lax quietly backs
+up nothing and the safety net is a no-op. So it is pure and host-tested hard —
+including leap years, year boundaries, and the exact threshold boundary.
+
+It compares by **calendar day number** (Hinnant's civil-from-days algorithm), not
+by subtracting two `time_t` values. Backup stamps are local wall-clock; "now" is
+local wall-clock; the question is "how many days ago", so day-number arithmetic is
+both correct and free of every timezone and DST hazard that `time_t` subtraction
+would invite. Hour-of-day never enters the comparison.
+
+### One label definition, or auto-backups vanish
+
+Auto-backup must write to the exact directory the manual restore path later reads,
+which means both must build the `"<Name> [APPID]"` label identically. This was
+already duplicated between two functions; adding a third copy in the sweep would
+have been a latent silent failure — a label that differed by one character would
+make every auto-backup invisible to restore, with no error anywhere.
+
+`Services::save_build_label()` is now the single definition, and
+`save_title_labels()` routes through it. This is the same anti-drift move as
+`StorageCatalog` and `NspStream`, applied to a string: the moment a second
+consumer appears, the derivation becomes shared rather than copied.
+
+### The trigger runs after the first frame, never during startup
+
+The sweep is synchronous and can touch every save on the console (one mount slot,
+so strictly sequential), and `save_enumerate_all()` blocks priming the name cache.
+Running any of that before the menu is on screen would be an unbounded freeze on a
+black screen. So it fires as a one-shot on the *second* loop iteration — the first
+has already drawn the UI — guarded by the feature being enabled. When it is off
+(the default) the whole path is a single comparison that returns immediately.
+
+Because the sweep blocks the main loop, it draws its OWN frames: it reports phase
+and per-save progress through a callback, and the trigger draws a "checking /
+backing up N of M" overlay on each. This matters more than it looks — the slow
+part is the *enumeration* (priming the ncm name cache), not the copying, so a
+naive "back up N saves" spinner would show nothing during the very phase that
+takes the time. The overlay names the enumerate phase explicitly. A blocking
+sweep with no self-drawn frames is indistinguishable from a hang; the reported
+"~10s freeze for 7 saves" was exactly that, and exactly the enumeration cost.
+
+
+## HTTP install: the third adapter on one driver
+
+Install over HTTP is a thin adapter on `Install::drive()`, exactly like FTP and
+MTP. The engine, the cancel semantics, and the teardown order that took real
+device crashes to get right in 4c are shared, not re-implemented — the whole point
+of extracting the driver was that the third and fourth transports would cost an
+adapter, not a re-derivation.
+
+HTTP's adapter differs from FTP's in two small, favourable ways. Content-Length is
+an exact wire size, so the ETA runs off a real total from the first byte rather
+than being recovered from the container's own table. And the body bytes that
+arrived alongside the headers are handed to the driver as its FirstChunk, so the
+header read never costs a lost byte.
+
+The route is chosen by a pure classifier (`http_paths.hpp`), host-tested before any
+socket code depended on it, the same discipline as `ftp_paths`. It uses a
+slash-delimited `/install/sd` / `/install/nand` prefix rather than FTP's
+space-containing folder names: a URL with a space must be percent-encoded, and a
+client that forgets would silently mis-route, so the transport gets the spelling
+that is unambiguous in a URL while the target meanings stay identical across
+transports.
+
+### Applying a scar before it reopens
+
+`~HttpServer() { stop(); }` was added the moment `HttpServer` gained an `m_install`
+member — not after a crash. Cancelling a transfer crashed both MTP and FTP with
+the same cross-thread use-after-free (members destroyed before the base class
+joined the worker still inside the install) until each got that one-liner. The
+rule from the delete-commit bug generalises here: giving a component a new member
+that a worker thread touches is a change to that component's destruction
+requirements, whether or not the crash has happened yet. This time the invariant
+was re-checked at the moment the consumer appeared, and the scar was applied
+before it could reopen.
+
+
+## The web UI, and the constraint that shaped it
+
+The front-end is one embedded string (`web_ui.hpp`), not files on the SD card.
+That is a correctness choice, not a packaging one: the page must work while the SD
+card is being browsed, rewritten, or is the very target of the install the page
+just started. Reading UI assets off the card the app is mutating gives you a UI
+that breaks precisely when it is needed. It also removes the "asset missing"
+failure mode entirely — if GarageNX runs, its web UI runs — and keeps the page
+working on a LAN with no internet, since there are no CDN fonts or frameworks to
+fetch.
+
+### Progress had to come from the browser, and that turned out to be honest
+
+`HttpServer` runs a strictly serial accept loop: one connection, handled inline,
+no threading. During an install the loop is inside `http_install()` for minutes, so
+a browser polling a server-side progress endpoint would have its connection sit
+unanswered in the listen backlog until the install finished. A progress bar that
+updates once, after the thing it measures is over.
+
+So live progress comes from the browser's own `xhr.upload.onprogress`. For a
+*streaming* install this is not a workaround but an accurate measure: the console
+consumes bytes as it receives them, so TCP backpressure makes "bytes the console
+accepted" track "bytes the console installed" closely. `/api/status` is polled only
+while idle, for state and the last result.
+
+Making the server concurrent would allow true console-side stats mid-install — and
+would put a second thread next to the install object whose destruction order took
+real device crashes to get right. That is not a trade worth making for a progress
+bar. The constraint was found by reading the accept loop before designing the
+progress channel, which is the cheap place to find it.
+
+### A new consumer exposes the old bugs, again
+
+The request path was never percent-decoded before filesystem use. Every file whose
+name contains a space — which is most real title names — was undownloadable over
+HTTP. It stayed invisible because HTTP was curl-only, where you type the name you
+meant; the moment a browser became a client, it would have failed on the first
+click.
+
+This is the third time this session the pattern has appeared: the delete-commit bug
+when the file browser gained save paths, the destruction-order UAF when HTTP gained
+an install member, and now this. **Giving an existing component a new kind of
+consumer is a change to that component**, and its latent assumptions have to be
+re-checked against the new caller even though not a line of it was edited.
+
+
+## A stale roadmap entry is a hazard, not just untidiness
+
+Slice C ("MTP file-manager parity") was listed as unstarted long after it was
+finished — the entry predated the save-data rounds that built out MTP's
+enumeration, object properties, partial reads and plain-file push. Taken at face
+value it would have prompted a second implementation of a working, hardware-
+verified subsystem.
+
+The check is cheap and the failure is expensive, so the rule is: **before building
+from a roadmap item, verify the item against the code.** The entry now records what
+was audited and when, rather than what someone once intended to do.
+
+## Three transports, one stat set
+
+`format_eta()` lived twice as byte-identical file-local copies. Two identical
+copies are not yet a bug; they are a bug waiting for the first person to fix one of
+them. Adding HTTP as a third consumer was the moment to extract it
+(`ui/stats_format.hpp`), which is the same rule already applied to the save label
+and the mount probe: the second consumer is the warning, the third is the
+obligation.
+
+Extracting it also fixed something the copies hid. The guard read
+`seconds < 0 || seconds > 359999`, and **both comparisons are false for NaN**, so a
+NaN estimate fell through to `(int)(NaN + 0.5)` — `INT_MIN` — and would have
+rendered as a nonsense duration. It was unreachable because every call site happens
+to guard with `cur > 1.0`, which is exactly the kind of safety that holds until
+someone adds a fourth call site. The shared version is NaN-safe at the source.
+
+### What the meter measures matters more after a UI exists
+
+The HTTP screen sampled `bytes_sent() + bytes_recv()` — every byte the server
+moved. That was merely imprecise while HTTP was curl-driven. Once the web UI
+existed, those totals included the HTML page on every load, a JSON listing on every
+navigation, and a status poll every five seconds, so the speed readout would have
+presented page chatter as install throughput. It now samples the install's wire
+bytes, like MTP and FTP.
+
+The general shape, seen yet again: **adding a consumer does not just exercise
+existing code, it changes what the existing code means.**
+
+
+## Manual and automatic backup: one sweep, two policies
+
+The main-menu "Back Up Saves" action and the automatic staleness sweep are the
+same operation with different selection rules, so they share one implementation
+(`sweep_impl`) and one progress overlay (`ui/backup_overlay.hpp`). They differ in
+exactly one line: whether a save is filtered by `save_is_stale()`.
+
+The manual action deliberately ignores staleness. A button wired to the stale
+policy would do nothing when auto-backup is off — which is the default — or when
+nothing happened to be stale, and **a control that silently no-ops is worse than
+no control**, because the user cannot tell "it worked" from "it ignored me".
+Pressing a button means "do it now".
+
+Zero backed up is reported as "nothing backed up", never as success: zero covers
+both "this console has no save data" and "every copy failed", and claiming success
+for the second is the kind of lie that costs someone their progress later.
+
+## Never use a translated string as a printf format
+
+The completion message was first written as
+`snprintf(buf, n, Lang::t("...").c_str(), count)`. That is the classic
+format-string hazard wearing ordinary clothes: a lang file is **data**, and a
+translation that carries `%s` where the caller passes an `int` is undefined
+behaviour on the console, reachable through nothing worse than a bad translation
+or a corrupted asset.
+
+The safe shape — used everywhere else in this codebase, which is why the mistake
+stood out on audit — is a **literal** format with the translated text as an
+argument: `snprintf(f, n, "%s: %d", Lang::t("...").c_str(), value)`. Counts are
+concatenated rather than formatted through translated text.
+
+The general rule: a format string is code. Anything loaded from disk is not.
+
+
+## When a label becomes a filename, a cache miss becomes permanent
+
+`save_build_label()` produces `"<Name> [APPID]"`, or `"Title <APPID>"` when the
+name cache cannot resolve the title. In the Save Manager that fallback is a
+transient display state — the row re-labels a second later as names arrive.
+
+In the backup path it is **not** a display string. It becomes the backup
+directory's name on the SD card. A name that was merely unresolved at that instant
+is written to the filesystem and stays there forever.
+
+That is what made the §5.5 mirror bug worse the second time it appeared.
+`save_enumerate_all()` blocked on `installed_titles_list()` from the main thread —
+the thread that resolves names — so it timed out with nothing resolved, and every
+backup either sweep produced was named `Title 0100000000010000/`. The comment on
+that line asserted "not a UI path", which was simply wrong, and a wrong comment is
+worse than none: it argues against the reader noticing.
+
+The rule this leaves behind: **before persisting a derived string, ask whether the
+derivation can fail transiently.** A display can be wrong for a frame. A filename
+is wrong until someone deletes it.
+
+The fix has two halves, and both were necessary:
+
+* New backups: `save_enumerate_all()` takes a `pump`. Supplying it declares the
+  caller to be the main thread, so the function drives the resolver itself and
+  calls back between units for a redraw, rather than blocking on a loop it has
+  parked. It waits on `installed_titles_names_resolved()` — enumeration finished
+  *and* every name through the resolver — because "enumerated" alone is true while
+  names are still arriving one per tick.
+* Existing backups: their folders keep their names. Renaming would invalidate
+  every path already recorded, and is not the app's to do. The Manage Backups list
+  instead recovers the application id from the folder name and re-resolves it for
+  **display only**, leaving the path untouched. This is why `app_id_from_label()`
+  parses both the bracket form and the id-only fallback: the fallback is not just
+  a legacy artifact, it is the thing that makes the old data recoverable.
+
+
+## Committing a save is part of the mutation, not a step after it
+
+A Switch save filesystem is journalled: writes are discarded at unmount unless
+`fsdevCommitDevice()` runs. Every save mutation therefore needs a commit — and for
+most of this project that requirement lived in fourteen call sites across four
+files, each remembering independently.
+
+That is a convention, not an invariant, and it failed twice. `FileBrowserScreen`
+never committed — correct for its whole life, since it only saw SD and NAND, until
+the Save Manager pointed it at `save:/`. And writing the fix found two more still
+live: `do_new_dir()` and `do_new_file()` created a folder or file in the active
+pane with no commit, so making a folder inside a save quietly vanished.
+
+`Services::SaveWrite::*` folds the commit into the operation. It is a no-op
+success on every other surface, so a caller never has to know which surface it is
+on — which is exactly the knowledge callers turn out not to have.
+
+### A lint, because the invariant is between two statements
+
+`tests/save_commit_discipline_test.cpp` reads the source and fails the build if a
+mutation in a save-capable file is not accompanied by a commit or marked
+`// NO-COMMIT: <reason>`. It is the only lint in the suite, and it earns that
+exception twice over: the invariant lives in the *relationship* between a call and
+its follow-up, where no unit test can reach it, and the failure mode is silent loss
+of a user's save data with no error anywhere.
+
+It was verified to fail — reintroducing the `do_new_dir` bug makes it name the file
+and line. A check that cannot fail is decoration.
+
+### The exemption that is easy to "fix" wrongly
+
+Reviewing every flagged site produced one genuinely subtle case worth recording.
+MTP's partial-write cleanup removes a half-written file and does **not** commit. On
+a save that is correct and deliberate: the failed write and its removal are both
+uncommitted, so the journal discards them together and the save returns to its last
+committed state. **Not committing is the rollback.** Adding a commit there would
+make a failed transfer durable — a plausible-looking "fix" that would introduce the
+bug. The reasoning now sits at the line rather than in someone's memory, which is
+the other thing the lint bought: it forced every mutation site to be adjudicated
+and its answer written down.
+
+
+## The host build does not compile the screens
+
+`settings_screen.cpp` — like every screen and transport — is excluded from the
+host test build, which compiles only the pure modules. A clean `ctest` run says
+nothing about whether a screen's member pointers name real fields.
+
+That mattered when Settings round 2 wired roughly thirty config fields through
+`bool Config::Behavior::*` and `bool Config::Visibility::*` member pointers. A
+typo would be a compile error **on the Switch build only** — days later, on
+someone else's machine. The syntax guard parsed the file happily, exactly as
+documented: it proves structure, not names.
+
+So every field was verified by hand against `config.hpp` before shipping. The
+general rule this reinforces: **"the tests pass" is a claim about the modules the
+tests compile.** For anything outside that set, the manual audit is not belt and
+braces, it is the only check there is.
+
+The corollary took a build break to learn. A duplicate `case` label in
+`menu_dispatch.cpp` reached the devkitPro build even though the syntax guard had
+compiled the file and seen g++ report it — the guard only surfaces errors matching
+its `STRUCTURAL` pattern, and that string was not in the list, so it printed a
+green tick over a real error. The pattern now includes `duplicate case value`,
+`redefinition of` and `multiple definition of`: none can be produced by a missing
+libnx header, so they are safe to trust without reintroducing the noise the filter
+exists to suppress.
+
+For files outside the host build the guard is the *only* mechanical check they
+get. Anything it can be taught to catch, it should be — and the teaching has to be
+verified by reintroducing the bug, because a filter that matches nothing looks
+identical to a file that is clean.
+
+The same reasoning added a second check. Wrong field names surface as g++'s "has
+no member named", which the filter discards — correctly, since a libnx struct
+reduced to an empty stub genuinely has no members and the message is meaningless
+there. But when the type is in **our** namespace the stubs are irrelevant and the
+error is real, so the guard now surfaces that subset specifically. It was verified
+by planting a bad field on `Services::SaveRef`.
+
+The blind spot that remains, stated rather than papered over: wrong field names on
+*libnx* types still pass, because the stubs make that error indistinguishable from
+noise. Those are what the manual audit against real headers is for.
+
+### A deferral can go stale
+
+Round 2 was deferred because it needed the software keyboard, and §5.4 says a
+guessed applet call has already crashed this console once. By the time it came up,
+`ui/keyboard.hpp` already wrapped swkbd with both `get_text()` and `get_number()`,
+and the file browser's new-file prompt had been hardware-verified. The risk was
+retired; the note recording it was not.
+
+Checking a deferral against the code before honouring it costs one grep. Honouring
+a stale one costs either a redundant implementation or an unnecessary refusal —
+the same failure that nearly rebuilt Slice C.
+
+
+## A config field is not evidence of a feature
+
+Settings round 2 exposed every behaviour toggle that had a config field and a lang
+key. Seven of them — `action_logging`, `highlight_update_files`,
+`verify_hash_on_install`, `show_cache_warming`, `rotate_screen`,
+`use_overclocking`, `screen_dim_seconds` — are read by no code at all. They were
+aspirational fields from an earlier design, and their presence looked like
+evidence that something honoured them.
+
+It does not. **Before exposing a setting, grep for a consumer.** A toggle that
+changes nothing is worse than an absent one: it presents as a feature, and the user
+cannot distinguish it from a broken one — the same reasoning that made the manual
+backup button back up everything rather than run a policy that could silently
+no-op.
+
+The fields stay in `Config` (harmless, round-tripped, ready if implemented); they
+are simply not offered.
+
+## Fall-through groups are a trap for new cases
+
+`case MenuItem::Settings:` was added to the head of an existing group of
+unimplemented menu cases that shared a single `return nullptr`. The new case
+brought its own `return SettingsScreen::root()` with it — and the four cases
+already in the group fell into it. Browsing the NAND partitions opened the Settings
+screen, and had done since that round.
+
+The switch now carries a warning at the point of edit. The general shape is worth
+naming: **adding a label to a shared branch changes the behaviour of every label
+already on it**, and a `case` list is the one place in C++ where adding a line
+above your own code silently rewrites someone else's.
+
+## Menu entries are a promise
+
+An entry that dispatches to `nullptr` does nothing when pressed, which is
+indistinguishable from broken. Five of them were shipping — including
+`InstallCartridge`, a top-level item nobody had reported, found by auditing the
+whole dispatch rather than only the items named in the report.
+
+Entries are now listed only when dispatch returns a real screen. The enum values
+and their `nullptr` cases remain, so re-adding one is a single line the day its
+screen exists.
+
+
+## Changing a default is not a migration
+
+`Defaults::UPDATE_CHECK_URL` was corrected from a placeholder to the real
+repository, and nothing changed on device. `from_json` reads a stored key whenever
+it is present, so a default only applies to a config that has never seen that key —
+which, after the first run, is no config at all.
+
+The fix is an exact-match migration: if the stored value is precisely the old
+placeholder, replace it; anything else, including a URL the user chose, is left
+untouched. The placeholder constant stays in `defaults.hpp` purely so `from_json`
+can recognise it.
+
+The rule: **when correcting a default, ask what existing configs already hold.**
+Usually they hold the old value, and only a migration reaches them. The
+per-transport surfaces split needed the same treatment for the same reason.
+
+## Two activity queries, one reliable
+
+`Core::Activity::summary()` reports N/A for everything on hardware, deliberately.
+The pdm event stream includes system-applet churn and its first entries predate the
+RTC being set, so aggregate session counts and "first played" dates do not match
+what other tools show; accurate totals need the play-log save archive at
+`SYSTEM:/save/80000000000000F0`, a system save in an undocumented format.
+
+Per-title statistics are a different query — addressed directly by application id
+rather than derived from the event log — and are the figures other homebrew
+activity tools display. Unreliable aggregates and correct per-title numbers coexist
+in the same service, which is why the Activity Log screen is built on the second
+and the System Information screen still honestly says N/A for the first.
+
+The screen enumerates *installed* titles, so a game played and then deleted has
+statistics pdm still holds that the list will not show. That limitation is stated
+in the header rather than papered over, because the alternative — enumerating pdm's
+own title set — needs the same save archive that put the aggregates out of reach.
+
+
+## Tickets: claim only what the code can check
+
+The Installed Tickets screen derives a title id from bytes 0-7 of each rights ID
+(big-endian) and resolves it to a name. It does **not** derive key generation from
+the rights ID, even though the layout is well known — this codebase reads key
+generation from the NCA header, so taking it from the rights ID would be asserting
+something nothing else here corroborates.
+
+The display is self-validating. A correct title id resolves to an installed
+title's name; one that does not resolve renders as the **raw rights ID**. So a
+wrong derivation would show up as "unresolved" rather than as a confidently wrong
+title name — and "not installed" is a legitimate, common state in any case, because
+a ticket outlives the title it belongs to.
+
+This is the general shape for reading a format the project does not own: derive the
+part you can check, display the raw bytes for the part you cannot, and let a
+failure present as absence rather than as fiction.
+
+The screen is read-only. Deleting a ticket can make an installed title
+unlaunchable, and destructive operations here arrive with their own confirmation
+and rollback story — the Save Manager pattern — rather than riding in as a button
+on a list.
+
+
+## HTTP was the transport that never consumed the catalog
+
+`StorageCatalog` and `sp_resolve` exist so that FTP, MTP and HTTP cannot disagree
+about which surfaces exist or where they live. HTTP never used them: its
+`resolve_vfs()` was `m_prefix + posix`, hardcoding `sdmc:`. The result was a
+transport that could install to SD and NAND but could only *browse* the SD card,
+while the other two served Installed Titles, Save Data, NAND and Album.
+
+That is the exact drift the shared definition was written to prevent, and sharing a
+definition does not help if a consumer quietly declines to consume it. Worth
+remembering when adding a fourth transport: the catalog is not automatic.
+
+Listing now dispatches on `PathKind` the way FTP's `LIST` does — root chooser,
+Save Data's two synthesized levels, the synthesized Installed Titles list, real
+directories — and downloading an installed title streams the same
+`Core::NspStream` that FTP `RETR` and MTP `GetObject` use. One builder, three
+transports, which is what extracting it bought.
+
+## A false positive is still a cost
+
+The new JSON listing tripped the syntax guard's brace counter, which does not strip
+string literals and saw unbalanced `{`/`}` inside JSON fragments. Its own comment
+predicts this ("a smell test, not a proof"), so the easy response was to shrug.
+
+The response taken instead was to give the JSON envelope one definition each for
+open and close, which balances the literal braces in the file. **A guard that cries
+wolf is a guard people stop reading**, and the whole value of these mechanical
+checks is that a FAIL means something. Two lines of refactor is cheap next to
+training yourself to ignore a red line.
+
+The same instinct applies to tests. `test_save_preserves_key_order` passed on its
+first run — vacuously, because the test's own `json` alias alphabetised the input
+before it ever reached the file. A test that cannot fail for the reason it claims
+is worse than no test, because it reports confidence that is not there.
+
+
+## A shared catalog helps generic consumers, not hand-written ones
+
+When the Game Card surface finally gained a mount, it appeared on FTP and HTTP
+immediately and was missing from MTP and the console menu. Nothing was broken in
+either — the difference is how each consumes the catalog.
+
+FTP and HTTP iterate `StorageCatalog::enabled_surfaces()` generically, so a new
+surface costs them nothing. MTP maps catalog ids onto **wire** storage ids by hand
+(the protocol requires stable numeric ids), and the console Browse menu lists its
+entries by hand. Neither had an entry for a surface that had never been mountable.
+
+The rule for adding a surface: **the catalog is necessary but not sufficient.**
+Grep for everywhere that enumerates surfaces by hand.
+
+That rule was written and then immediately broken. Adding Gamecard to MTP needed
+four edits — the wire-id constant, both mapping functions, and a hardcoded
+eight-line `if` chain in `GetStorageIDs`. Three were made and the fourth was
+missed, so the card appeared on FTP and HTTP and not on MTP.
+
+`GetStorageIDs` now **derives** its list from `StorageCatalog::all()` through
+`surface_to_mtp_id()`, which deletes the fourth place permanently. The remaining
+hand-maintained parts — the id constant and the two mapping functions — cannot be
+derived, because MTP requires stable numeric wire ids that outlive any reordering
+of the catalog. But they are a compile-visible pair now, not a list that silently
+omits.
+
+The general form: when a rule says "remember to update N places", the fix is to
+make it fewer places, not to remember harder.
+
+### MTP sends no change events
+
+There is an interrupt endpoint in the descriptor (the PTP class mandates one) and
+nothing ever writes to it. So a host that has already enumerated storages will not
+learn about one that appears later — a game card inserted mid-session is invisible
+until the host re-enumerates, typically on reconnect. Proper `StoreAdded`/
+`StoreRemoved` events would fix it and are not implemented.
+
+The Browse Game Card entry is gated on the *storage surface* rather than its own
+visibility flag. "Can this console see game cards" is one decision, and a second
+toggle could disagree with the first, offering a menu entry into a surface the
+transports have been told to hide.
+
+
+## A fallback that impersonates is worse than one that refuses
+
+`build_storage_info()` described every unrecognised MTP storage as the SD card —
+its name *and* its capacity figures. When the game card arrived, hosts showed two
+storages both called "SD Card", told apart only by a numeric id.
+
+The bug was not the missing case. It was that the default branch produced a
+**plausible wrong answer** instead of an error. Only the real SD id gets the SD
+block now; anything else returns empty and the caller answers `InvalidStorageId`,
+so the next surface added without a case fails loudly.
+
+Note the same number meaning opposite things in two places. Reporting zero free
+space is a **bug** for NAND System — the surface is writable through the
+confirmation broker, and a host reads zero free as "full" and refuses the write
+client-side. It is **correct** for a game card, which is physically read-only, and
+is exactly what stops a host attempting a write it could never complete. What
+decides it is whether writes are possible at all, not the value itself.
+
+### Three lists in three rounds
+
+Adding one surface to MTP surfaced three separate hand-maintained places: the wire
+id mapping, `GetStorageIDs`, and `build_storage_info`. `GetStorageIDs` was fixed by
+deriving it from the catalog. The other two cannot be derived — MTP needs stable
+numeric ids, and capacity/type/access genuinely differ per surface — but they can
+be made to fail loudly rather than silently omit or silently impersonate. When a
+list cannot be eliminated, make its failure mode obvious.

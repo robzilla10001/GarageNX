@@ -57,7 +57,7 @@ static void test_find() {
 
 // Config gating: each surface maps to the right flag, and defaults match config.
 static void test_gating_defaults() {
-    Config::MTP c;   // defaults: nand_system=false, nand_install=false, gamecard=false
+    Config::Surfaces c;   // defaults: nand_system=false, nand_install=false, gamecard=false
     CHECK(StorageCatalog::enabled(Id::SdCard, c),          "SD on by default");
     CHECK(StorageCatalog::enabled(Id::SdInstall, c),       "SD Install on by default");
     CHECK(!StorageCatalog::enabled(Id::NandInstall, c),    "NAND Install OFF by default");
@@ -65,14 +65,21 @@ static void test_gating_defaults() {
     CHECK(!StorageCatalog::enabled(Id::NandSystem, c),     "NAND system OFF by default");
     CHECK(StorageCatalog::enabled(Id::Saves, c),           "Saves on by default");
     CHECK(StorageCatalog::enabled(Id::Album, c),           "Album on by default");
-    CHECK(!StorageCatalog::enabled(Id::Gamecard, c),       "Gamecard OFF by default");
+    // Gamecard is ON by default as of the gamecard-mount work. It was off only
+    // because nothing mounted the surface, so it would have shown as a folder that
+    // always failed to open. A game card is PHYSICALLY read-only, so exposing it
+    // carries none of the risk that keeps NAND (System) off.
+    CHECK(StorageCatalog::enabled(Id::Gamecard, c),        "Gamecard on by default");
+    // NAND (System) is still the one surface that must default OFF — the assertion
+    // this file most needs to keep.
+    CHECK(!StorageCatalog::enabled(Id::NandSystem, c),     "NAND (System) OFF by default");
     CHECK(StorageCatalog::enabled(Id::InstalledTitles, c), "Installed Titles on by default");
     std::printf("  ok: config gating matches defaults\n");
 }
 
 // Flipping a config flag flips only that surface.
 static void test_gating_responds_to_config() {
-    Config::MTP c;
+    Config::Surfaces c;
     c.sd_card = false;
     c.nand_system = true;
     c.gamecard = true;
@@ -86,15 +93,24 @@ static void test_gating_responds_to_config() {
 
 // enabled_surfaces returns only enabled ones, preserving catalog order.
 static void test_enabled_surfaces() {
-    Config::MTP c;                 // NAND install, system, gamecard off by default
+    Config::Surfaces c;                 // NAND install, system, gamecard off by default
     auto en = StorageCatalog::enabled_surfaces(c);
     for (const auto& s : en)
         CHECK(StorageCatalog::enabled(s.id, c), "enabled_surfaces contains only enabled");
-    // The three default-off surfaces must be absent.
+    // The default-off surfaces must be absent. Gamecard left this list when a
+    // mount for it finally existed; it is physically read-only, so it never
+    // needed the caution that keeps these two off.
     for (const auto& s : en) {
         CHECK(s.id != Id::NandInstall, "NAND Install excluded by default");
         CHECK(s.id != Id::NandSystem,  "NAND System excluded by default");
-        CHECK(s.id != Id::Gamecard,    "Gamecard excluded by default");
+    }
+    // ...and an explicitly DISABLED surface is excluded too, which is the property
+    // that actually matters: exclusion must follow the config, not the default.
+    {
+        Config::Surfaces off = c;
+        off.gamecard = false;
+        for (const auto& s : StorageCatalog::enabled_surfaces(off))
+            CHECK(s.id != Id::Gamecard, "explicitly disabled Gamecard is excluded");
     }
     // Order preserved: each entry's index in `all` is strictly increasing.
     const auto& all = StorageCatalog::all();
@@ -154,6 +170,40 @@ static void test_kinds() {
     std::printf("  ok: kinds and vfs roots are correct\n");
 }
 
+// Which surfaces a write can reach — and the consequence that has now bitten
+// twice. MTP's StorageInfo must report REAL capacity for every writable surface,
+// because a host checks FreeSpaceInBytes BEFORE opening a transfer and refuses
+// client-side when the file "does not fit". Save Data and NAND System both
+// shipped advertising zero free space and refused every write with a misleading
+// "not enough space", with nothing reaching the device to see in a log.
+//
+// Access::ReadOnly does NOT mean unwritable: NAND and Save Data are read-only by
+// POLICY and become writable per operation once the user confirms on-device.
+//
+// If a change to the table below makes this fail, the fix is NOT to update the
+// expectation on its own — check that build_storage_info() reports real capacity
+// for anything that just became writable.
+static void test_writable_surfaces_need_real_capacity() {
+    struct Expect { StorageSurface::Id id; bool writable; const char* why; };
+    const Expect expected[] = {
+        { StorageSurface::Id::SdCard,          true,  "read-write, no confirmation" },
+        { StorageSurface::Id::SdInstall,       true,  "install target" },
+        { StorageSurface::Id::NandInstall,     true,  "install target" },
+        { StorageSurface::Id::Album,           true,  "read-write, no confirmation" },
+        { StorageSurface::Id::NandUser,        true,  "writable after on-device confirm" },
+        { StorageSurface::Id::NandSystem,      true,  "writable after on-device confirm" },
+        { StorageSurface::Id::Saves,           true,  "writable after on-device confirm" },
+        { StorageSurface::Id::Gamecard,        false, "read-only medium, no confirm path" },
+        { StorageSurface::Id::InstalledTitles, false, "synthesized NSPs, never writable" },
+    };
+    for (const auto& e : expected) {
+        const StorageSurface* s = StorageCatalog::find(e.id);
+        CHECK(s != nullptr, e.why);
+        CHECK(StorageCatalog::is_writable(*s) == e.writable, e.why);
+    }
+    std::printf("  ok: writable surfaces (real capacity required for each)\n");
+}
+
 int main() {
     std::printf("StorageCatalog (shared storage surface definition)\n");
     test_all_surfaces_present();
@@ -163,6 +213,7 @@ int main() {
     test_enabled_surfaces();
     test_safety_policy();
     test_kinds();
+    test_writable_surfaces_need_real_capacity();
     std::printf("ALL PASS (%d checks)\n", g_checks);
     return 0;
 }

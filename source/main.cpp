@@ -19,11 +19,18 @@
 #include "ui/input.hpp"
 #include "ui/title_bar.hpp"
 #include "ui/status_bar.hpp"
+#include "ui/widgets.hpp"
+#include "ui/font.hpp"
+#include "ui/layout.hpp"
 #include "ui/modal.hpp"
 #include "config/config.hpp"
 #include "lang/localization.hpp"
+#include "core/save_backup.hpp"
+#include "ui/backup_overlay.hpp"
 #include "core/album_mount.hpp"
 #include "core/nand_mount.hpp"
+#include "core/gamecard_mount.hpp"
+#include "core/save_mount.hpp"
 #include "core/keys.hpp"
 #include "services/title_surface.hpp"
 #include "core/sleep_inhibit.hpp"
@@ -137,7 +144,9 @@ static bool startup() {
     setsysInitialize();
     setInitialize();
     Core::mount_album();   // expose album:/ for the file-manager transports
-    Core::mount_nand();    // expose bis_user:/bis_system: (config-gated, read-only)
+    // NOTE: mount_nand() is deliberately NOT here. It is CONFIG-GATED, and the
+    // config is not loaded until further down — calling it here read compile-time
+    // defaults instead of config.json. See the call site below.
 
     // Load the keyset once, here, on the main thread before any server can start.
     // Title display names come from encrypted Control NCAs, so a transport listing
@@ -169,6 +178,23 @@ static bool startup() {
     }
 
     const auto& cfg = Config::get();
+
+#ifdef PLATFORM_SWITCH
+    // Mount NAND *after* the config is loaded — mount_nand() is config-gated, so
+    // calling it before this point gates on compile-time DEFAULTS.
+    //
+    // This was a real bug, latent since Wave 2 and invisible for a specific
+    // reason: nand_user defaults to TRUE, so bis_user: always mounted and NAND
+    // (User) always worked. nand_system defaults to FALSE — the only surface with
+    // a false default — so bis_system: was NEVER mounted however config.json was
+    // set. The transports then read the LOADED config, agreed the surface was
+    // enabled, and tried to browse a device that did not exist: FTP's mount probe
+    // hid the folder entirely, and MTP (which had no probe) advertised a storage
+    // whose enumeration failed with "could not get object handles".
+    //
+    // Keep any future config-gated mount below this line.
+    Core::mount_nand();    // expose bis_user:/bis_system: (config-gated, read-only)
+#endif
 
     // ── Theme ─────────────────────────────────────────────────────────────────
     Theme::set(cfg.app.theme == "light" ? Theme::Variant::Light : Theme::Variant::Dark);
@@ -244,6 +270,9 @@ static void shutdown_services() {
     ncmExit();
     nssuExit();
     nsExit();
+    // Never leave a save filesystem mounted after we exit.
+    Core::SaveMount::release();
+    Core::gamecard_unmount();
     Core::unmount_nand();
     Core::unmount_album();
     romfsExit();
@@ -275,6 +304,16 @@ int main(int argc, char* argv[]) {
 
     uint32_t last_status_refresh = 0;
 
+    // Auto-backup runs ONCE, and only after the first frame is on screen — never
+    // during startup. It can touch every save on the console (sequential, one
+    // mount slot) and save_enumerate_all() blocks priming the name cache, so
+    // running it before the menu is visible would freeze on a black screen for an
+    // unbounded time. Deferring one frame costs nothing and keeps the UI honest.
+    // When the feature is off (the default) the sweep returns immediately, so this
+    // one-shot is a no-op for anyone who has not opted in.
+    bool auto_backup_done = (Config::get().behavior.save_auto_backup_days <= 0);
+    uint32_t first_frame_at = 0;
+
     while (running && !stack.empty()) {
         // ── Input ─────────────────────────────────────────────────────────────
         if (!Input::poll()) {
@@ -288,6 +327,16 @@ int main(int argc, char* argv[]) {
         uint32_t now = SDL_GetTicks();
         if (now - last_status_refresh >= 1000) {
             refresh_status_bar();
+
+            // Follow the physical game card. Unlike NAND this cannot be a
+            // one-shot at startup: a card can be inserted or ejected at any
+            // moment, and the surface has to appear and disappear with it.
+            // Piggy-backing the 1 Hz tick keeps the IPC cost negligible while
+            // still feeling immediate — nobody notices a card taking a second to
+            // show up, and everybody notices a folder that errors on entry
+            // because the card left.
+            Core::gamecard_refresh();
+
             last_status_refresh = now;
         }
 
@@ -298,6 +347,33 @@ int main(int argc, char* argv[]) {
         // Resolve one installed-title display name per frame, on this thread.
         // Transports read the results; they never decrypt anything themselves.
         Services::installed_titles_tick();
+
+        // ── One-shot auto-backup of stale saves ────────────────────────────────
+        // Fires on the SECOND loop iteration: the first has already drawn the menu
+        // (see the draw at the bottom of this loop), so the user sees the UI, not a
+        // freeze. The sweep is synchronous and its slow phase (enumeration) blocks,
+        // so it draws its OWN frames via the progress callback below — otherwise
+        // the screen would sit frozen for the whole sweep with nothing to explain
+        // it. That was the reported "looks frozen for ~10s" bug.
+        if (!auto_backup_done) {
+            if (first_frame_at == 0) {
+                first_frame_at = SDL_GetTicks();       // remember the first frame
+            } else if (SDL_GetTicks() - first_frame_at >= 1) {
+                auto_backup_done = true;               // one attempt, whatever happens
+
+
+                const int n = Core::SaveBackup::auto_backup_stale(UI::draw_backup_overlay);
+
+                if (n > 0) {
+                    Modal::Options o;
+                    o.kind          = Modal::Kind::Info;
+                    o.title         = Lang::t("auto_backup.done_title");
+                    o.body          = Lang::t("auto_backup.done_body");
+                    o.confirm_label = Lang::t("common.ok");
+                    Modal::show(o);
+                }
+            }
+        }
 
         // ── Update ────────────────────────────────────────────────────────────
         if (!stack.empty() && !Modal::is_active()) {

@@ -2,6 +2,12 @@
 
 #include "screens/menu_dispatch.hpp"
 #include "screens/submenu_screen.hpp"
+#include "screens/settings_screen.hpp"
+#include "screens/save_manager.hpp"
+#include "screens/save_backup_screen.hpp"
+#include "screens/file_browser.hpp"
+#include "screens/activity_log.hpp"
+#include "core/fs.hpp"
 #include "screens/screen.hpp"
 #include "lang/localization.hpp"
 #include "config/config.hpp"
@@ -22,8 +28,13 @@
 
 const std::vector<MenuEntry>& menu_top_level() {
     static const std::vector<MenuEntry> v = {
-        { MenuItem::InstallCartridge, "main_menu.install_from_cartridge" },
+        // NOTE: entries are listed here ONLY when dispatch returns a real screen.
+        // An item that dispatches to nullptr looks broken when pressed, so it stays
+        // out of the menu until its screen exists — the enum value and its
+        // (nullptr) dispatch case remain, so re-adding it is one line.
+        // Currently withheld for that reason: InstallCartridge.
         { MenuItem::InstalledTitles,  "main_menu.installed_titles"       },
+        { MenuItem::BackupSaves,      "main_menu.backup_saves"           },
         { MenuItem::BrowseMenu,       "main_menu.browse"                 },
         { MenuItem::ConnectivityMenu, "main_menu.connectivity"           },
         { MenuItem::SystemMenu,       "main_menu.system"                 },
@@ -37,11 +48,15 @@ const std::vector<MenuEntry>& menu_browse_items() {
         { MenuItem::BrowseSD,              "main_menu.browse_sd"               },
         { MenuItem::BrowseSystemPartition, "main_menu.browse_system_partition" },
         { MenuItem::BrowseUserPartition,   "main_menu.browse_user_partition"   },
-        { MenuItem::BrowseUSB,             "main_menu.browse_usb"              },
-        { MenuItem::BrowseNetwork,         "main_menu.browse_network"          },
+        { MenuItem::BrowseGamecard,        "main_menu.browse_gamecard"         },
         { MenuItem::Homebrew,              "main_menu.homebrew"                },
-        { MenuItem::Tickets,               "main_menu.tickets"                 },
         { MenuItem::Saves,                 "main_menu.saves"                   },
+        // Withheld: BrowseUSB, BrowseNetwork (no backing service).
+        // REMOVED DELIBERATELY: Tickets. Listing tickets invites deleting them,
+        // deleting one can make an installed title unlaunchable, and almost no
+        // homebrew uses titlekey crypto — so the feature carried real risk for
+        // very little reach. Core::Es::list_common_tickets() stays (it is proven
+        // and harmless) in case a future need is clearer.
     };
     return v;
 }
@@ -57,7 +72,7 @@ const std::vector<MenuEntry>& menu_connectivity_items() {
 
 const std::vector<MenuEntry>& menu_system_items() {
     static const std::vector<MenuEntry> v = {
-        { MenuItem::Tools,       "main_menu.tools"        },
+        { MenuItem::SystemInfo,       "main_menu.system_info"        },
         { MenuItem::Settings,    "main_menu.settings"     },
         { MenuItem::ActivityLog, "main_menu.activity_log" },
     };
@@ -107,15 +122,30 @@ bool menu_item_visible(MenuItem id) {
     const auto& vis = Config::get().visibility;
     switch (id) {
         case MenuItem::BrowseSD:              return vis.browse_sd;
+        // Gated on the STORAGE SURFACE, not a separate visibility flag. "Can this
+        // console see game cards" is one decision, and duplicating it as a second
+        // toggle would let the two disagree — a menu entry that opens a surface the
+        // transports have been told to hide. It also disappears with the card,
+        // because an unmounted surface fails the same probe FTP and MTP use.
+        case MenuItem::BrowseGamecard:
+            // BOTH conditions. The surface being enabled is a user preference; the
+            // card being INSERTED is a fact about the world, and the entry must
+            // follow the fact too. Gating only on the preference left a row that
+            // was always visible and did nothing when no card was in — the
+            // dead-button problem, reintroduced by me in the round that was
+            // supposed to remove dead buttons.
+            return Config::any_transport_exposes(&Config::Surfaces::gamecard)
+                   && Fs::is_directory("gamecard:/");
         case MenuItem::BrowseSystemPartition: return vis.browse_system_partition;
         case MenuItem::BrowseUserPartition:   return vis.browse_user_partition;
         case MenuItem::BrowseUSB:             return vis.browse_usb;
         case MenuItem::BrowseNetwork:         return vis.browse_network;
         case MenuItem::InstallCartridge:      return vis.install_from_cartridge;
         case MenuItem::InstalledTitles:       return vis.view_installed_games;
-        case MenuItem::Tools:                 return vis.tools;
+        case MenuItem::SystemInfo:            return vis.tools;
         case MenuItem::Tickets:               return vis.view_tickets;
         case MenuItem::Saves:                 return vis.view_saves;
+        case MenuItem::BackupSaves:           return vis.backup_saves;
         case MenuItem::MTP:                   return vis.start_mtp;
         case MenuItem::FTP:                   return vis.start_ftp;
         case MenuItem::HTTP:                  return vis.start_http;
@@ -169,25 +199,65 @@ std::unique_ptr<Screen> menu_activate(MenuItem id, bool& pop) {
         case MenuItem::InstalledTitles:
             return std::make_unique<TitleListScreen>();
 
-        case MenuItem::Tools:
-            // Until a dedicated Tools screen lands, route to System Information.
+        case MenuItem::SystemInfo:
             return std::make_unique<SystemInfoScreen>();
 
         case MenuItem::FTP:  return std::make_unique<FTPScreen>();
         case MenuItem::HTTP: return std::make_unique<HTTPScreen>();
         case MenuItem::MTP:  return std::make_unique<MTPScreen>();
 
-        // Not yet implemented leaves — no-op until their screens land.
+        // CAUTION: every case below returns its OWN screen. Do not add a new case
+        // to an existing fall-through group without checking what that group
+        // returns — a `case X:` dropped into the "unimplemented" list silently
+        // inherits its return. That is exactly how BrowseSystemPartition,
+        // BrowseUserPartition, BrowseUSB and BrowseNetwork all ended up opening
+        // the SETTINGS screen: MenuItem::Settings was added to the head of their
+        // shared group and they fell into its return.
+        case MenuItem::Settings:
+            return SettingsScreen::root();
+
+        // NAND partitions, read-only unless the write guard says otherwise. The
+        // mount is config-gated (mount_nand), so if the surface is disabled the
+        // browser opens on a device that is not there — hence the mount check.
         case MenuItem::BrowseSystemPartition:
+            if (!Fs::is_directory("bis_system:/")) return nullptr;
+            return std::unique_ptr<Screen>(
+                new FileBrowserScreen("bis_system:/", Lang::t("main_menu.browse_system_partition")));
+
         case MenuItem::BrowseUserPartition:
+            if (!Fs::is_directory("bis_user:/")) return nullptr;
+            return std::unique_ptr<Screen>(
+                new FileBrowserScreen("bis_user:/", Lang::t("main_menu.browse_user_partition")));
+
+        case MenuItem::BrowseGamecard:
+            // Same mount check the partitions use: the surface can be enabled while
+            // no card is inserted, and opening a browser on an absent device gives
+            // an empty folder that errors rather than an honest "nothing here".
+            if (!Fs::is_directory("gamecard:/")) return nullptr;
+            return std::unique_ptr<Screen>(
+                new FileBrowserScreen("gamecard:/", Lang::t("main_menu.browse_gamecard")));
+
+        case MenuItem::Homebrew:
+            return std::unique_ptr<Screen>(
+                new FileBrowserScreen("sdmc:/switch/", Lang::t("main_menu.homebrew")));
+
+        case MenuItem::Saves:
+            return std::unique_ptr<Screen>(new SaveManagerScreen());
+
+        case MenuItem::BackupSaves:
+            return std::unique_ptr<Screen>(new SaveBackupScreen());
+
+        // Genuinely unimplemented: no screen and no backing service yet. These are
+        // HIDDEN from the menu by default (see menu_item_visible) rather than left
+        // clickable, because a menu entry that does nothing when pressed is
+        // indistinguishable from one that is broken.
+        case MenuItem::ActivityLog:
+            return std::unique_ptr<Screen>(new ActivityLogScreen());
+
+        case MenuItem::InstallCartridge:
         case MenuItem::BrowseUSB:
         case MenuItem::BrowseNetwork:
-        case MenuItem::InstallCartridge:
-        case MenuItem::Homebrew:
         case MenuItem::Tickets:
-        case MenuItem::Saves:
-        case MenuItem::ActivityLog:
-        case MenuItem::Settings:
             return nullptr;
 
         case MenuItem::ExitToHome:

@@ -33,7 +33,21 @@ enum class WritePolicy {
 /// PURE decision: may a mutating operation touch `vfs_path`? Host-testable.
 /// Unknown paths and disabled surfaces are DENIED, so a client cannot reach a
 /// protected surface by guessing a path that isn't listed.
-WritePolicy classify_write(const std::string& vfs_path, const Config::MTP& cfg);
+/// Classify a mutating operation on `vfs_path` under one transport's surface
+/// config. `transport`/`operation` are for the decision log only and may be null;
+/// the classification never depends on them.
+/// Record a refusal that happens BEFORE the guard is consulted, into the same
+/// log and the same format. Without this, the branches that reject early are
+/// invisible: the operation fails, no modal appears, and the guard log is silent
+/// because it was never asked — which is indistinguishable from a guard Deny to
+/// anyone reading the log afterwards.
+void guard_log_note(const char* transport, const char* operation,
+                    const char* decision, const char* reason,
+                    const std::string& path);
+
+WritePolicy classify_write(const std::string& vfs_path, const Config::Surfaces& cfg,
+                           const char* transport = nullptr,
+                           const char* operation = nullptr);
 
 // The final answer after any confirmation has happened.
 enum class WriteDecision { Allow, Deny };
@@ -44,11 +58,12 @@ enum class WriteDecision { Allow, Deny };
 /// ConfirmationBroker until the user answers on the console. Denied by default if
 /// the user declines, the request times out, or the app is shutting down.
 /// Config is passed in rather than read from the global so this stays testable and
-/// has no hidden dependency; callers pass Config::get().mtp.
+/// has no hidden dependency; callers pass their OWN transport's surfaces
+/// (Config::get().ftp.surfaces, .mtp.surfaces, .http.surfaces).
 WriteDecision guard_write(const std::string& transport,
                           const std::string& operation,
                           const std::string& vfs_path,
-                          const Config::MTP& cfg);
+                          const Config::Surfaces& cfg);
 
 /// Rename/move touches TWO locations, and BOTH must pass — moving a file OUT of
 /// NAND mutates NAND just as much as moving one in. If either side needs
@@ -58,6 +73,6 @@ WriteDecision guard_move(const std::string& transport,
                          const std::string& operation,
                          const std::string& from_vfs,
                          const std::string& to_vfs,
-                         const Config::MTP& cfg);
+                         const Config::Surfaces& cfg);
 
 } // namespace Services

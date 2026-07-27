@@ -3,6 +3,8 @@
 #include "screens/file_browser.hpp"
 #include "screens/file_viewer.hpp"
 #include "core/fs.hpp"
+#include "services/save_surface.hpp"
+#include "services/save_write.hpp"
 #include "core/keys.hpp"
 #include "core/datetime.hpp"
 #include "install/installer.hpp"
@@ -119,7 +121,8 @@ void FileBrowserScreen::on_modal_result(int result) {
         m_progress.reset();
         m_op_active = true;
         m_op_label  = Lang::t("file_browser.op_deleting");
-        Fs::remove_many(targets, m_progress);
+        // Commits internally when the batch was in a save; no-op elsewhere.
+        Services::SaveWrite::remove_many(targets, m_progress);
         m_progress.done = true;
     } else {
         m_pending_delete.clear();
@@ -445,6 +448,13 @@ void FileBrowserScreen::do_paste(bool cut) {
         if (cut) Fs::move(src, dest_dir, m_progress, resolver);
         else     Fs::copy(src, dest_dir, m_progress, resolver);
     }
+    // Commit once for the whole paste, and for a MOVE also commit the SOURCE
+    // side: moving a file out of a save deletes it there, and that deletion is
+    // journalled just like any other. Fs::copy/move stream through their own
+    // handles, so this is the after_write form.
+    Services::SaveWrite::after_write(dest_dir);
+    if (cut && !m_clipboard.empty())
+        Services::SaveWrite::after_write(m_clipboard.front());
     m_progress.done = true;
 
     if (cut) { m_clipboard.clear(); m_clip_mode = ClipMode::None; }
@@ -490,7 +500,7 @@ void FileBrowserScreen::do_rename() {
     if (Keyboard::get_text(opts, new_name) && !new_name.empty()) {
         std::string from = Fs::join(pane.path, e->name);
         std::string to   = Fs::join(pane.path, new_name);
-        if (!Fs::rename(from, to)) {
+        if (!Services::SaveWrite::rename(from, to)) {
             Modal::show({ Lang::t("modal.error_title"),
                           Lang::t("errors.write_error"),
                           Modal::Kind::Info, Lang::t("modal.ok"), "" });
@@ -506,7 +516,7 @@ void FileBrowserScreen::do_new_dir() {
 
     std::string name;
     if (Keyboard::get_text(opts, name) && !name.empty()) {
-        Fs::make_directory(Fs::join(pane.path, name));
+        Services::SaveWrite::make_directory(Fs::join(pane.path, name));
         pane.reload();
     }
 }
@@ -518,7 +528,7 @@ void FileBrowserScreen::do_new_file() {
 
     std::string name;
     if (Keyboard::get_text(opts, name) && !name.empty()) {
-        Fs::create_empty_file(Fs::join(pane.path, name));
+        Services::SaveWrite::create_empty_file(Fs::join(pane.path, name));
         pane.reload();
     }
 }
@@ -825,7 +835,7 @@ void FileBrowserScreen::save_install_log() {
     m_install_log_saved = true;
 
     const std::string dir = Config::get().paths.log_folder;
-    if (!dir.empty() && !Fs::exists(dir)) Fs::make_directory(dir);
+    if (!dir.empty() && !Fs::exists(dir)) Fs::make_directory(dir);  // NO-COMMIT: log folder on SD, never a save
 
     const std::string stamp = Core::DateTime::log_stamp_now();
     const std::string path  = (dir.empty() ? std::string("sdmc:/switch/GarageNX/logs")

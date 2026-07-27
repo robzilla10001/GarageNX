@@ -3,6 +3,7 @@
 #include "services/title_surface.hpp"
 #include "services/title_naming.hpp"
 #include "core/keys.hpp"
+#include "core/nsp_stream.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -25,14 +26,18 @@ bool                            g_shutdown = false;
 std::vector<Core::Ncm::Title>   g_titles;
 std::vector<VirtualEntry>       g_entries;
 std::map<uint64_t, std::string> g_names;
+std::map<uint64_t, uint64_t>    g_exact_sizes;   // meta_id -> exact NSP bytes
 size_t                          g_next_resolve = 0;
 bool                            g_enumerated = false;
+uint64_t                        g_seen_gen   = 0;   // last title-db generation built
 bool                            g_wanted     = false;
 
 #ifdef PLATFORM_SWITCH
-// TEMP DIAGNOSTIC: three attempts at this listing have now failed differently
-// (placeholder names, a fatal, a silent exit). Record what actually happens so the
-// next round is decided by evidence rather than another theory.
+// Kept deliberately (not temporary): logs only RARE events — one line per
+// enumeration, plus any title whose Control NCA will not resolve. This listing
+// failed four different ways during development and the log is what identified
+// each cause; a title that silently loses its name is exactly the kind of thing
+// worth a breadcrumb. Per-title progress chatter was removed.
 void tlog(const char* fmt, ...) {
     FILE* f = ::fopen("sdmc:/switch/GarageNX/logs/titles.log", "a");
     if (!f) return;
@@ -116,17 +121,51 @@ bool installed_titles_find(const std::string& filename, Core::Ncm::Title& out) {
 
 // ─── Main-thread side: ALL ncm work happens here, a little at a time ──────────
 
+std::vector<VirtualEntry> installed_titles_request_nonblocking() {
+#ifdef PLATFORM_SWITCH
+    std::lock_guard<std::mutex> lk(g_mutex);
+    g_wanted = true;          // ask the main loop to enumerate/resolve
+    g_cv.notify_all();
+    return g_entries;         // whatever is ready; empty is fine on the first call
+#else
+    return {};
+#endif
+}
+
+bool installed_titles_enumerated() {
+#ifdef PLATFORM_SWITCH
+    std::lock_guard<std::mutex> lk(g_mutex);
+    return g_enumerated;
+#else
+    return false;
+#endif
+}
+
+bool installed_titles_names_resolved() {
+#ifdef PLATFORM_SWITCH
+    std::lock_guard<std::mutex> lk(g_mutex);
+    return g_enumerated && g_next_resolve >= g_titles.size();
+#else
+    return true;
+#endif
+}
+
 void installed_titles_tick() {
 #ifdef PLATFORM_SWITCH
     std::lock_guard<std::mutex> lk(g_mutex);
 
     if (!g_wanted) return;   // nobody has asked; do nothing at all
 
-    if (Core::Ncm::titles_dirty()) {
-        Core::Ncm::clear_titles_dirty();
+    // Compare generations rather than consuming the dirty flag: the on-device
+    // title list is a separate observer of the same signal, and clearing it here
+    // meant an uninstall never reached that screen.
+    const uint64_t gen = Core::Ncm::titles_generation();
+    if (gen != g_seen_gen) {
+        g_seen_gen   = gen;
         g_enumerated = false;
         g_names.clear();
-        tlog("titles dirty -> will re-enumerate");
+        g_exact_sizes.clear();
+        tlog("title db generation %llu -> re-enumerating", (unsigned long long)gen);
     }
 
     // Enumerate ONCE, here on the main thread. This used to happen on whichever
@@ -184,18 +223,13 @@ void installed_titles_tick() {
             // add-on; DLC commonly has no Control content at all, so asking for one
             // walks a path nothing else in this codebase exercises.
             //
-            // Logged BEFORE the call: if a specific title takes the app down, the
-            // last line in the log names it.
-            tlog("resolving %zu/%zu meta=%016llX",
-                 g_next_resolve + 1, g_titles.size(), (unsigned long long)t.meta_id);
-
             Core::Nca::ControlData cd =
                 Core::Ncm::resolve_control(t, Core::Keys::get(), /*want_icon*/ false);
             if (cd.ok && !cd.name.empty()) {
                 g_names[t.meta_id] = cd.name;
             } else {
                 g_names[t.meta_id] = std::string();   // remember: don't retry forever
-                tlog("  -> FAILED: %s",
+                tlog("resolve %016llX FAILED: %s", (unsigned long long)t.meta_id,
                      cd.fail_reason.empty() ? "unknown" : cd.fail_reason.c_str());
             }
             did_expensive_work = true;
@@ -217,11 +251,44 @@ void installed_titles_tick() {
     }
 
     rebuild_entries_locked();
-    if (g_next_resolve >= g_titles.size()) {
-        tlog("resolve pass complete (%zu titles)", g_titles.size());
-        g_cv.notify_all();
-    }
+    if (g_next_resolve >= g_titles.size()) g_cv.notify_all();
 #endif
+}
+
+uint64_t installed_titles_exact_size(const std::string& filename) {
+    Core::Ncm::Title t;
+    if (!installed_titles_find(filename, t)) return 0;
+
+    {   // cached?
+        std::lock_guard<std::mutex> lk(g_mutex);
+        auto it = g_exact_sizes.find(t.meta_id);
+        if (it != g_exact_sizes.end()) return it->second;
+    }
+
+    // Build the stream OUTSIDE the lock: it does ncm work, and holding the mutex
+    // would block the main-loop tick for the duration.
+    uint64_t size = 0;
+#ifdef PLATFORM_SWITCH
+    auto src = Core::NspStream::open(t, Core::Keys::get(), nullptr);
+    if (src) size = src->total_size();
+#endif
+
+    std::lock_guard<std::mutex> lk(g_mutex);
+    g_exact_sizes[t.meta_id] = size;
+    return size;
+}
+
+std::string installed_titles_name_for_app(uint64_t application_id) {
+    std::lock_guard<std::mutex> lk(g_mutex);
+    for (const auto& t : g_titles) {
+        if (t.type != Core::Ncm::TitleType::Application) continue;
+        if (Core::Ncm::base_application_id(t.program_id, t.type) != application_id)
+            continue;
+        auto it = g_names.find(t.meta_id);
+        if (it != g_names.end() && !it->second.empty()) return it->second;
+        return std::string();
+    }
+    return std::string();
 }
 
 void installed_titles_shutdown() {

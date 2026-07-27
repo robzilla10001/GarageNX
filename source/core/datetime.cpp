@@ -88,6 +88,22 @@ std::string log_stamp(std::time_t t) {
     return date(tm, order, '-') + "_" + tbuf;
 }
 
+std::string sortable_stamp(std::time_t t) {
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%04d%02d%02d-%02d%02d%02d",
+                  tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                  tm.tm_hour, tm.tm_min, tm.tm_sec);
+    return std::string(buf);
+}
+
+std::string sortable_stamp_now() { return sortable_stamp(std::time(nullptr)); }
+
 std::string log_stamp_now() { return log_stamp(std::time(nullptr)); }
 
 } // namespace Core::DateTime

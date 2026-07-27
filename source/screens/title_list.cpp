@@ -39,8 +39,8 @@ void TitleListScreen::on_enter() {
     if (m_phase == Phase::Ready || m_phase == Phase::Loading) {
         // Already loaded — but if a child screen changed the installed set
         // (e.g. deleted a title), rebuild instead of showing a stale list.
-        if (Core::Ncm::titles_dirty()) {
-            Core::Ncm::clear_titles_dirty();
+        if (Core::Ncm::titles_generation() != m_seen_gen) {
+            m_seen_gen = Core::Ncm::titles_generation();
             free_icons();
             m_rows.clear();
             m_cursor = 0;

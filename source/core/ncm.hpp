@@ -64,7 +64,19 @@ std::vector<TitleGroup> group_by_application(const std::vector<Title>& all);
 
 // Set/cleared to signal that the installed-title set changed (e.g. after a
 // delete), so a cached TitleList knows to rebuild on next entry.
+// The title database changed (install/uninstall). Bumps a GENERATION counter.
+//
+// This used to be a single boolean that the first observer cleared — which broke
+// as soon as there were two observers: the on-device title list and the transports'
+// Installed Titles cache. Whichever ran first consumed the flag and the other never
+// saw the change (symptom: uninstall a title and the on-device list still shows it
+// until you back out and re-enter). A counter lets every observer notice
+// independently by remembering the last generation it acted on.
 void mark_titles_dirty();
+
+/// Current generation. An observer stores this when it rebuilds and rebuilds again
+/// whenever the value differs.
+uint64_t titles_generation();
 bool titles_dirty();
 void clear_titles_dirty();
 

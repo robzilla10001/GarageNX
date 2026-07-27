@@ -1,7 +1,6 @@
 // source/core/nand_mount.cpp
 
 #include "core/nand_mount.hpp"
-#include "services/storage_catalog.hpp"
 #include "config/config.hpp"
 
 #ifdef PLATFORM_SWITCH
@@ -35,16 +34,21 @@ namespace Core {
 
 void mount_nand() {
 #ifdef PLATFORM_SWITCH
-    using Services::StorageCatalog;
-    using Id = Services::StorageSurface::Id;
-    const auto& cfg = Config::get().mtp;
-
-    // Only mount a partition if its catalog surface is enabled. NAND system is
-    // OFF by default, so bis_system: is not even mounted unless the user opts in.
-    if (!g_user_mounted && StorageCatalog::enabled(Id::NandUser, cfg))
+    // Mount if ANY transport exposes the partition. A mount is process-wide but
+    // the toggles are per-transport, so asking one transport's block would leave
+    // the device unmounted for a user who enabled NAND on a different one — the
+    // surface would then appear and fail to open, which is the exact symptom this
+    // module's gating was meant to prevent.
+    //
+    // CALL ORDER MATTERS: this reads config, so it must run AFTER Config::load().
+    // It used to run before, which meant it gated on compile-time defaults and
+    // bis_system: could never mount however config.json was set. See main.cpp.
+    if (!g_user_mounted &&
+        Config::any_transport_exposes(&Config::Surfaces::nand_user))
         g_user_mounted = mount_bis(FsBisPartitionId_User, "bis_user");
 
-    if (!g_system_mounted && StorageCatalog::enabled(Id::NandSystem, cfg))
+    if (!g_system_mounted &&
+        Config::any_transport_exposes(&Config::Surfaces::nand_system))
         g_system_mounted = mount_bis(FsBisPartitionId_System, "bis_system");
 #endif
 }

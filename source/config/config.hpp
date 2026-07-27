@@ -23,7 +23,6 @@ struct Behavior {
     bool highlight_update_files = true;
     bool rotate_screen          = false;
     bool use_overclocking       = false;
-    bool saves_ro_mode          = false;
     bool show_cache_warming     = false;
     int  screen_dim_seconds     = 30;
     bool button_repeat_on_hold  = true;
@@ -52,12 +51,23 @@ struct Visibility {
     bool tools                   = true;
     bool view_tickets            = true;
     bool view_saves              = true;
+    bool backup_saves            = true;
     bool start_mtp               = true;
     bool start_ftp               = true;
     bool start_http              = true;
 };
 
-struct MTP {
+// Which storage surfaces a transport exposes. One instance PER TRANSPORT, so a
+// user can serve saves over FTP without exposing them over MTP, or open NAND on
+// one and not the other.
+//
+// This was a single shared block called `MTP` that FTP and HTTP also read — a
+// key named mtp.* silently governing FTP is the kind of thing that misleads
+// exactly when someone is trying to lock a surface down.
+//
+// NOTE for anything that MOUNTS: a mount is global, a toggle is per-transport.
+// A partition must be mounted if ANY transport exposes it — see mount_nand().
+struct Surfaces {
     bool sd_card         = true;
     bool nand_user       = true;
     bool nand_system     = false;
@@ -66,11 +76,20 @@ struct MTP {
     bool nand_install    = false;
     bool saves           = true;
     bool album           = true;
-    bool gamecard        = false;
+    bool gamecard        = true;   // physically read-only; see defaults.hpp
     bool user_storages   = true;
 };
 
+/// True if `id` is exposed by AT LEAST ONE transport. For global decisions —
+/// mounting, service init — that cannot be made per-transport.
+bool any_transport_exposes(bool Surfaces::* field);
+
+struct MTP {
+    Surfaces surfaces;
+};
+
 struct FTP {
+    Surfaces    surfaces;
     // FTP server
     uint16_t    server_port        = 5000;
     bool        allow_anonymous    = true;
@@ -85,6 +104,7 @@ struct FTP {
 };
 
 struct HTTP {
+    Surfaces    surfaces;
     // HTTP server
     uint16_t    server_port   = 8080;
     bool        allow_upload  = true;

@@ -81,10 +81,10 @@ public:
 
     // Is this surface currently enabled in config?  (The gate that decides whether
     // a transport should enumerate it at all.)
-    static bool enabled(StorageSurface::Id id, const Config::MTP& cfg);
+    static bool enabled(StorageSurface::Id id, const Config::Surfaces& cfg);
 
     // Enabled surfaces only, in display order — what a transport should expose.
-    static std::vector<StorageSurface> enabled_surfaces(const Config::MTP& cfg);
+    static std::vector<StorageSurface> enabled_surfaces(const Config::Surfaces& cfg);
 
     // Look up a surface by id. Returns nullptr if unknown.
     static const StorageSurface* find(StorageSurface::Id id);
@@ -95,6 +95,40 @@ public:
     /// deny" for any mutating operation. Enabled-ness is NOT considered here; ask
     /// enabled() separately if it matters.
     static const StorageSurface* surface_for_vfs(const std::string& vfs_path);
+
+    /// Can a client's write ever reach this surface — freely, or after an
+    /// on-device confirmation?
+    ///
+    /// `Access::ReadOnly` alone does NOT mean unwritable: NAND and Save Data are
+    /// ReadOnly by POLICY and become writable per operation once the user
+    /// confirms on the console. Only ReadOnly + Confirm::None is unwritable.
+    ///
+    /// This exists because that distinction has to be consulted from outside the
+    /// guard. MTP's StorageInfo must report REAL capacity for anything writable:
+    /// a host checks FreeSpaceInBytes before opening a transfer and refuses
+    /// client-side if the file does not fit, so advertising zero on a writable
+    /// surface produces "there is not enough space on the destination" for a
+    /// 553-byte file, with no request reaching the device and nothing in a wire
+    /// log. Save Data and NAND System both shipped with that bug.
+    static bool is_writable(const StorageSurface& s);
+
+    /// Is this surface's backing mount actually present RIGHT NOW?
+    ///
+    /// A surface can be enabled in config and still have no device behind it —
+    /// a mount that failed, or one that has not happened yet. Listing such a
+    /// surface produces a folder that errors on entry over FTP, and a storage
+    /// whose enumeration fails with "could not get object handles" over MTP.
+    ///
+    /// Shared because the two transports disagreed: FTP probed and hid the
+    /// surface, MTP did not probe and advertised it. Same config, same catalog,
+    /// two behaviours — the drift this class exists to prevent.
+    ///
+    /// Non-Filesystem surfaces (Install targets, the synthesized Installed
+    /// Titles) have no mount and are always available. Save Data is
+    /// Filesystem-kind so the write guard recognises "save:" paths, but its top
+    /// two levels are synthesized and nothing is mounted until a title folder is
+    /// entered — probing "save:/" would hide it entirely, so it is exempt.
+    static bool mount_available(const StorageSurface& s);
 
     // Does a mutating operation on this surface require on-device confirmation?
     static bool needs_confirmation(const StorageSurface& s) {

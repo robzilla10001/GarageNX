@@ -20,6 +20,7 @@ enum class MenuItem {
     // Top level leaves
     InstallCartridge,
     InstalledTitles,
+    BackupSaves,
 
     // Submenu openers
     BrowseMenu,
@@ -32,6 +33,7 @@ enum class MenuItem {
     BrowseSystemPartition,
     BrowseUserPartition,
     BrowseUSB,
+    BrowseGamecard,
     BrowseNetwork,
     Homebrew,
     Tickets,
@@ -43,7 +45,7 @@ enum class MenuItem {
     HTTP,
 
     // System submenu
-    Tools,
+    SystemInfo,
     Settings,
     ActivityLog,
 

@@ -2,6 +2,8 @@
 
 #include "services/storage_catalog.hpp"
 
+#include <sys/stat.h>
+
 namespace Services {
 
 using Id = StorageSurface::Id;
@@ -49,11 +51,24 @@ static const std::vector<StorageSurface> kSurfaces = {
       "",            StorageKind::TitleQuery, Access::ReadOnly,  Confirm::None },
 };
 
+bool StorageCatalog::mount_available(const StorageSurface& s) {
+    if (s.kind != StorageKind::Filesystem) return true;   // nothing to mount
+    if (s.id == Id::Saves)                 return true;   // synthesized top levels
+    if (!s.vfs_root || !*s.vfs_root)       return true;   // vfs_root is a const char*
+    struct stat st{};
+    const std::string root = std::string(s.vfs_root) + "/";
+    return ::stat(root.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+bool StorageCatalog::is_writable(const StorageSurface& s) {
+    return s.access == Access::ReadWrite || s.confirm == Confirm::OnDevice;
+}
+
 const std::vector<StorageSurface>& StorageCatalog::all() {
     return kSurfaces;
 }
 
-bool StorageCatalog::enabled(Id id, const Config::MTP& c) {
+bool StorageCatalog::enabled(Id id, const Config::Surfaces& c) {
     switch (id) {
         case Id::SdCard:          return c.sd_card;
         case Id::SdInstall:       return c.sd_install;
@@ -68,7 +83,7 @@ bool StorageCatalog::enabled(Id id, const Config::MTP& c) {
     return false;
 }
 
-std::vector<StorageSurface> StorageCatalog::enabled_surfaces(const Config::MTP& c) {
+std::vector<StorageSurface> StorageCatalog::enabled_surfaces(const Config::Surfaces& c) {
     std::vector<StorageSurface> out;
     for (const auto& s : kSurfaces)
         if (enabled(s.id, c)) out.push_back(s);

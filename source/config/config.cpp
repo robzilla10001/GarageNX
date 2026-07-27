@@ -6,12 +6,24 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 
-using json = nlohmann::json;
+// ordered_json preserves INSERTION ORDER; plain nlohmann::json is a std::map and
+// re-sorts every key alphabetically on save. That meant a user's hand-edited
+// config.json was silently reshuffled the first time any setting changed —
+// harmless to the parser, but it destroys the grouping a human put there and
+// makes a diff between two configs unreadable.
+using json = nlohmann::ordered_json;
 
 namespace Config {
 
 static All         s_config;
 static std::string s_path;
+static bool        s_loaded = false;   // has load() been ATTEMPTED yet?
+// The file exactly as it was parsed. save() overlays our values onto THIS rather
+// than writing a fresh document, so keys we do not model survive a save — a
+// hand-added key, a setting from a newer build, a comment-ish field someone put
+// there. Writing to_json() wholesale would silently delete all of it the first
+// time a user touched any setting, and that user would have no way to know.
+static json        s_raw = json::object();
 
 // ─── JSON helpers ─────────────────────────────────────────────────────────────
 // Each get_or() call reads a key from JSON with a typed default fallback.
@@ -28,6 +40,47 @@ static T jget(const json& j, const std::string& key, T def) {
 
 // ─── Serialize ────────────────────────────────────────────────────────────────
 
+// One surfaces block <-> JSON. Written nested under each transport.
+static json surfaces_to_json(const Surfaces& s) {
+    return json{
+        {"sd_card",         s.sd_card},
+        {"nand_user",       s.nand_user},
+        {"nand_system",     s.nand_system},
+        {"installed_games", s.installed_games},
+        {"sd_install",      s.sd_install},
+        {"nand_install",    s.nand_install},
+        {"saves",           s.saves},
+        {"album",           s.album},
+        {"gamecard",        s.gamecard},
+        {"user_storages",   s.user_storages},
+    };
+}
+
+// `o` is this transport's "surfaces" object; `legacy` is the old flat "mtp"
+// block, used for any key `o` does not carry. Compile-time defaults are the last
+// resort, so a brand-new config gets the documented defaults and an upgraded one
+// keeps every choice its owner already made.
+template <typename J>
+static Surfaces surfaces_from_json(const J& o, const J& legacy) {
+    auto pick = [&](const char* key, bool dflt) {
+        if (o.contains(key))      return jget<bool>(o, key, dflt);
+        if (legacy.contains(key)) return jget<bool>(legacy, key, dflt);
+        return dflt;
+    };
+    Surfaces s;
+    s.sd_card         = pick("sd_card",         Defaults::MTP_SD_CARD);
+    s.nand_user       = pick("nand_user",       Defaults::MTP_NAND_USER);
+    s.nand_system     = pick("nand_system",     Defaults::MTP_NAND_SYSTEM);
+    s.installed_games = pick("installed_games", Defaults::MTP_INSTALLED_GAMES);
+    s.sd_install      = pick("sd_install",      Defaults::MTP_SD_INSTALL);
+    s.nand_install    = pick("nand_install",    Defaults::MTP_NAND_INSTALL);
+    s.saves           = pick("saves",           Defaults::MTP_SAVES);
+    s.album           = pick("album",           Defaults::MTP_ALBUM);
+    s.gamecard        = pick("gamecard",        Defaults::MTP_GAMECARD);
+    s.user_storages   = pick("user_storages",   Defaults::MTP_USER_STORAGES);
+    return s;
+}
+
 static json to_json(const All& c) {
     return {
         {"app", {
@@ -41,7 +94,6 @@ static json to_json(const All& c) {
             {"highlight_update_files",  c.behavior.highlight_update_files},
             {"rotate_screen",           c.behavior.rotate_screen},
             {"use_overclocking",        c.behavior.use_overclocking},
-            {"saves_ro_mode",           c.behavior.saves_ro_mode},
             {"show_cache_warming",      c.behavior.show_cache_warming},
             {"screen_dim_seconds",      c.behavior.screen_dim_seconds},
             {"button_repeat_on_hold",   c.behavior.button_repeat_on_hold},
@@ -68,23 +120,16 @@ static json to_json(const All& c) {
             {"tools",                    c.visibility.tools},
             {"view_tickets",             c.visibility.view_tickets},
             {"view_saves",               c.visibility.view_saves},
+            {"backup_saves",             c.visibility.backup_saves},
             {"start_mtp",                c.visibility.start_mtp},
             {"start_ftp",                c.visibility.start_ftp},
             {"start_http",               c.visibility.start_http},
         }},
         {"mtp", {
-            {"sd_card",         c.mtp.sd_card},
-            {"nand_user",       c.mtp.nand_user},
-            {"nand_system",     c.mtp.nand_system},
-            {"installed_games", c.mtp.installed_games},
-            {"sd_install",      c.mtp.sd_install},
-            {"nand_install",    c.mtp.nand_install},
-            {"saves",           c.mtp.saves},
-            {"album",           c.mtp.album},
-            {"gamecard",        c.mtp.gamecard},
-            {"user_storages",   c.mtp.user_storages},
+            {"surfaces", surfaces_to_json(c.mtp.surfaces)},
         }},
         {"ftp", {
+            {"surfaces", surfaces_to_json(c.ftp.surfaces)},
             {"server_port",        c.ftp.server_port},
             {"allow_anonymous",    c.ftp.allow_anonymous},
             {"login_user",         c.ftp.login_user},
@@ -96,6 +141,7 @@ static json to_json(const All& c) {
             {"hidden_ssid",        c.ftp.hidden_ssid},
         }},
         {"http", {
+            {"surfaces", surfaces_to_json(c.http.surfaces)},
             {"server_port",   c.http.server_port},
             {"allow_upload",  c.http.allow_upload},
         }},
@@ -112,6 +158,14 @@ static void from_json(const json& j, All& c) {
     c.app.language         = jget<std::string>(app, "language",         Defaults::LANGUAGE);
     c.app.theme            = jget<std::string>(app, "theme",            Defaults::THEME);
     c.app.update_check_url = jget<std::string>(app, "update_check_url", Defaults::UPDATE_CHECK_URL);
+
+    // MIGRATION: an early build shipped a PLACEHOLDER update URL, and every
+    // config.json written since has that placeholder stored — so changing the
+    // compile-time default fixes nothing for anyone who has run the app, because
+    // a stored key always beats a default. Rewrite that exact string, and only
+    // that string: a URL the user deliberately set is never touched.
+    if (c.app.update_check_url == Defaults::LEGACY_PLACEHOLDER_UPDATE_URL)
+        c.app.update_check_url = Defaults::UPDATE_CHECK_URL;
     c.app.titledb_url      = jget<std::string>(app, "titledb_url",      Defaults::TITLEDB_URL);
 
     auto beh = j.value("behavior", json::object());
@@ -119,7 +173,6 @@ static void from_json(const json& j, All& c) {
     c.behavior.highlight_update_files = jget<bool>(beh, "highlight_update_files", Defaults::HIGHLIGHT_UPDATE_FILES);
     c.behavior.rotate_screen          = jget<bool>(beh, "rotate_screen",          Defaults::ROTATE_SCREEN);
     c.behavior.use_overclocking       = jget<bool>(beh, "use_overclocking",       Defaults::USE_OVERCLOCKING);
-    c.behavior.saves_ro_mode          = jget<bool>(beh, "saves_ro_mode",          Defaults::SAVES_RO_MODE);
     c.behavior.show_cache_warming     = jget<bool>(beh, "show_cache_warming",     Defaults::SHOW_CACHE_WARMING);
     c.behavior.screen_dim_seconds     = jget<int> (beh, "screen_dim_seconds",     Defaults::SCREEN_DIM_SECONDS);
     c.behavior.button_repeat_on_hold  = jget<bool>(beh, "button_repeat_on_hold",  Defaults::BUTTON_REPEAT);
@@ -146,23 +199,29 @@ static void from_json(const json& j, All& c) {
     c.visibility.tools                   = jget<bool>(vis, "tools",                     Defaults::VIS_TOOLS);
     c.visibility.view_tickets            = jget<bool>(vis, "view_tickets",              Defaults::VIS_VIEW_TICKETS);
     c.visibility.view_saves              = jget<bool>(vis, "view_saves",                Defaults::VIS_VIEW_SAVES);
+    c.visibility.backup_saves            = jget<bool>(vis, "backup_saves",              Defaults::VIS_BACKUP_SAVES);
     c.visibility.start_mtp               = jget<bool>(vis, "start_mtp",                Defaults::VIS_START_MTP);
     c.visibility.start_ftp               = jget<bool>(vis, "start_ftp",                Defaults::VIS_START_FTP);
     c.visibility.start_http              = jget<bool>(vis, "start_http",               Defaults::VIS_START_HTTP);
 
-    auto mtp = j.value("mtp", json::object());
-    c.mtp.sd_card         = jget<bool>(mtp, "sd_card",         Defaults::MTP_SD_CARD);
-    c.mtp.nand_user       = jget<bool>(mtp, "nand_user",       Defaults::MTP_NAND_USER);
-    c.mtp.nand_system     = jget<bool>(mtp, "nand_system",     Defaults::MTP_NAND_SYSTEM);
-    c.mtp.installed_games = jget<bool>(mtp, "installed_games", Defaults::MTP_INSTALLED_GAMES);
-    c.mtp.sd_install      = jget<bool>(mtp, "sd_install",      Defaults::MTP_SD_INSTALL);
-    c.mtp.nand_install    = jget<bool>(mtp, "nand_install",    Defaults::MTP_NAND_INSTALL);
-    c.mtp.saves           = jget<bool>(mtp, "saves",           Defaults::MTP_SAVES);
-    c.mtp.album           = jget<bool>(mtp, "album",           Defaults::MTP_ALBUM);
-    c.mtp.gamecard        = jget<bool>(mtp, "gamecard",        Defaults::MTP_GAMECARD);
-    c.mtp.user_storages   = jget<bool>(mtp, "user_storages",   Defaults::MTP_USER_STORAGES);
+    // ── Surfaces, now per-transport ─────────────────────────────────────────
+    // MIGRATION. Until this change every transport read the single "mtp" block,
+    // whose surface keys sat directly under it. An existing config.json therefore
+    // has flat keys and no "surfaces" object. Reading those flat keys as the
+    // fallback for ALL THREE transports reproduces the old behaviour EXACTLY —
+    // which is the point: an upgrade must not silently expose or hide a surface
+    // someone deliberately configured. A user who had opened NAND (System) keeps
+    // it open, on every transport, exactly as before.
+    //
+    // No version stamp is needed. "surfaces" present means new-format; absent
+    // means legacy, and legacy is unambiguous.
+    auto mtp    = j.value("mtp", json::object());
+    auto legacy = mtp;   // the old flat block doubles as the migration source
+
+    c.mtp.surfaces  = surfaces_from_json(mtp.value("surfaces",  json::object()), legacy);
 
     auto ftp = j.value("ftp", json::object());
+    c.ftp.surfaces  = surfaces_from_json(ftp.value("surfaces",  json::object()), legacy);
     c.ftp.server_port        = (uint16_t)jget<int>(ftp, "server_port",     Defaults::FTP_SERVER_PORT);
     c.ftp.allow_anonymous    = jget<bool>       (ftp, "allow_anonymous",   Defaults::FTP_ALLOW_ANON);
     c.ftp.login_user         = jget<std::string>(ftp, "login_user",        Defaults::FTP_LOGIN_USER);
@@ -174,6 +233,7 @@ static void from_json(const json& j, All& c) {
     c.ftp.hidden_ssid        = jget<bool>       (ftp, "hidden_ssid",        Defaults::FTP_HIDDEN_SSID);
 
     auto http = j.value("http", json::object());
+    c.http.surfaces = surfaces_from_json(http.value("surfaces", json::object()), legacy);
     c.http.server_port   = (uint16_t)jget<int>(http, "server_port",   Defaults::HTTP_SERVER_PORT);
     c.http.allow_upload  = jget<bool>       (http, "allow_upload",  Defaults::HTTP_ALLOW_UPLOAD);
 
@@ -185,6 +245,10 @@ static void from_json(const json& j, All& c) {
 
 bool load(const std::string& config_path) {
     s_path = config_path;
+    // Set before parsing: a FAILED load leaves defaults in place, which is a
+    // legitimate state. What the flag detects is reading config before load was
+    // ever attempted, not whether the file happened to parse.
+    s_loaded = true;
 
     // Apply defaults first — so even a partial file works
     reset_to_defaults();
@@ -199,6 +263,7 @@ bool load(const std::string& config_path) {
     try {
         json j;
         file >> j;
+        s_raw = j;                 // remember the file so save() can preserve it
         from_json(j, s_config);
         SDL_Log("Config::load — loaded from %s", config_path.c_str());
         return true;
@@ -215,13 +280,33 @@ bool save() {
     }
 
     try {
-        json j = to_json(s_config);
+        // NON-DESTRUCTIVE. Start from the file as loaded and overlay our values,
+        // so anything we do not model is preserved rather than deleted. RFC 7386
+        // merge semantics: objects merge recursively, scalars overwrite. None of
+        // our values are null, so nothing is ever removed by the merge itself.
+        json j = s_raw.is_object() ? s_raw : json::object();
+        j.merge_patch(to_json(s_config));
+
+        // The ONE deliberate removal: the pre-split flat surface keys under
+        // "mtp". They have been migrated into "mtp"/"surfaces", and leaving them
+        // beside their replacements would be actively misleading — a stale
+        // "nand_system": true sitting next to "surfaces": {"nand_system": false}
+        // reads like the surface is on when it is off. Removing them is what
+        // makes the migration one-way and finished.
+        if (j.contains("mtp") && j["mtp"].is_object()) {
+            for (const char* k : {"sd_card", "nand_user", "nand_system",
+                                  "installed_games", "sd_install", "nand_install",
+                                  "saves", "album", "gamecard", "user_storages"})
+                j["mtp"].erase(k);
+        }
+
         std::ofstream file(s_path);
         if (!file.is_open()) {
             SDL_Log("Config::save — cannot open %s for writing", s_path.c_str());
             return false;
         }
         file << j.dump(2);
+        s_raw = j;                 // keep in sync so a second save is idempotent
         SDL_Log("Config::save — written to %s", s_path.c_str());
         return true;
     } catch (const std::exception& e) {
@@ -242,7 +327,33 @@ void reset_to_defaults() {
 
 // ─── Access ───────────────────────────────────────────────────────────────────
 
-const All& get()         { return s_config; }
+bool any_transport_exposes(bool Surfaces::* field) {
+    // A MOUNT is global; a TOGGLE is per-transport. Anything that mounts, opens a
+    // service, or otherwise makes a process-wide decision must ask this rather
+    // than any single transport's block — otherwise turning a surface on for FTP
+    // alone would leave its device unmounted and the folder would appear, empty
+    // and unenterable, on the transport that was supposed to serve it.
+    const All& c = s_config;
+    return c.mtp.surfaces.*field || c.ftp.surfaces.*field || c.http.surfaces.*field;
+}
+
+const All& get() {
+    // Reading config before load() silently yields COMPILE-TIME DEFAULTS, which
+    // is indistinguishable from a user who chose those values — so the mistake
+    // shows up much later as behaviour that ignores config.json. That is exactly
+    // how NAND (System) stayed unmountable: mount_nand() ran before load(), read
+    // the default nand_system=false, and never mounted bis_system:. Nothing in
+    // the type system can catch an ordering bug; a log line can.
+    if (!s_loaded) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            SDL_Log("Config::get() called BEFORE Config::load() — caller is seeing "
+                    "COMPILE-TIME DEFAULTS, not config.json. Move it after load().");
+        }
+    }
+    return s_config;
+}
 All&       get_mutable() { return s_config; }
 
 } // namespace Config

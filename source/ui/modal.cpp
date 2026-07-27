@@ -9,6 +9,10 @@
 #include "ui/widgets.hpp"
 #include <SDL2/SDL.h>
 
+#include <algorithm>
+#include <string>
+#include <vector>
+
 namespace Modal {
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -21,6 +25,12 @@ static Result  s_result  = Result::Pending;
 // Hold-to-confirm state for Danger modals: the confirm button requires holding
 // A for HOLD_SECONDS rather than a single press, adding friction to
 // irreversible actions (file deletes, etc.).
+// Body wrapped ONCE in show(), not per frame. Wrapping measures many trial
+// substrings, and the body cannot change while a modal is up, so re-wrapping
+// every frame would be pure waste on the main thread — the same thread the
+// transports block on waiting for a confirmation.
+static std::vector<std::string> s_body_lines;
+
 static uint32_t s_hold_start = 0;   // SDL_GetTicks when the A-hold began (0=idle)
 static float    s_hold_frac  = 0.f;
 static constexpr float MODAL_HOLD_SECONDS = 1.5f;
@@ -62,6 +72,34 @@ static void draw_button(int x, int y, int w, int h,
 
 void show(const Options& opts) {
     s_opts   = opts;
+
+    // Wrap here rather than at draw time. NOTE the measurement path: wrapping
+    // uses Font::measure_width (pure TTF metrics), NOT Renderer::measure_text,
+    // even though the latter also returns a width. measure_text populates the
+    // TEXT TEXTURE CACHE as a side effect, and wrapping measures dozens of
+    // throwaway substrings ("NAND (Sys", "NAND (Syst", ...) that will never be
+    // drawn. Routing wrapping through it would fill the cache with garbage and
+    // evict the entries that are actually on screen. They are not duplicates of
+    // each other; do not "unify" them.
+    const int body_w = Layout::MODAL_W - Layout::PAD_LG * 2;
+    s_body_lines = Font::wrap(opts.body, body_w, Font::Size::Body,
+                              Font::Weight::Regular);
+
+    // Clamp a body long enough to overflow the SCREEN, which would otherwise
+    // draw a modal taller than the display and hide its own buttons — leaving no
+    // way to answer it, and for a broker confirmation, a transport blocked until
+    // the timeout.
+    const int line_h   = static_cast<int>(Font::Size::Body) + 6;
+    const int chrome_h = Layout::PAD_LG
+                       + static_cast<int>(Font::Size::Large) + Layout::PAD_MD
+                       + Layout::PAD_LG + 44 + Layout::PAD_MD;
+    const int max_lines = std::max(
+        1, (Layout::SCREEN_H - Layout::PAD_LG * 4 - chrome_h) / line_h);
+    if (static_cast<int>(s_body_lines.size()) > max_lines) {
+        s_body_lines.resize(max_lines);
+        s_body_lines.back() += "...";
+    }
+
     s_active = true;
     s_focus  = 0;
     s_result = Result::Pending;
@@ -85,10 +123,15 @@ Result update_and_draw() {
     SDL_SetRenderDrawColor(r, 0, 0, 0, 160);
     Renderer::fill_rect(0, 0, Layout::SCREEN_W, Layout::SCREEN_H);
 
-    // ── Compute modal height ─────────────────────────────────────────────────
-    int body_lines = 1;
-    for (char c : s_opts.body) if (c == '\n') body_lines++;
-    int body_h = body_lines * (static_cast<int>(Font::Size::Body) + 6);
+    // Height follows the WRAPPED line count (computed in show()). This used to
+    // count only explicit '\n' and render each stretch as ONE line, so any body
+    // longer than the modal ran off the box and off the screen. It was marked a
+    // placeholder; it became a real bug the moment a modal carried a sentence
+    // rather than a label. The write-confirmation modals were exposed to the same
+    // thing without anyone hitting it yet — they show FILE PATHS, which contain
+    // no spaces and so need the mid-token break too.
+    const int line_h = static_cast<int>(Font::Size::Body) + 6;
+    int body_h = static_cast<int>(s_body_lines.size()) * line_h;
     int modal_h = std::max(Layout::MODAL_MIN_H,
                             Layout::PAD_LG                           // top pad
                             + static_cast<int>(Font::Size::Large) + Layout::PAD_MD  // title
@@ -123,25 +166,13 @@ Result update_and_draw() {
     // ── Body ─────────────────────────────────────────────────────────────────
     {
         SDL_Color bc = Theme::get(Theme::Token::FgSecondary);
-        // Simple line-by-line word wrap placeholder — full wrapping in Milestone 2
-        std::string line;
-        int line_h = static_cast<int>(Font::Size::Body) + 6;
-        for (char ch : s_opts.body) {
-            if (ch == '\n') {
+        for (const auto& line : s_body_lines) {
+            if (!line.empty()) {
                 SDL_Surface* surf = Font::render(line, Font::Size::Body,
                                                   Font::Weight::Regular, bc);
                 if (surf) { Renderer::blit(surf, cx, cy); SDL_FreeSurface(surf); }
-                cy += line_h;
-                line.clear();
-            } else {
-                line += ch;
             }
-        }
-        if (!line.empty()) {
-            SDL_Surface* surf = Font::render(line, Font::Size::Body,
-                                              Font::Weight::Regular, bc);
-            if (surf) { Renderer::blit(surf, cx, cy); SDL_FreeSurface(surf); }
-            cy += line_h;
+            cy += line_h;      // an empty line still advances: blank = spacing
         }
         cy += Layout::PAD_LG;
     }

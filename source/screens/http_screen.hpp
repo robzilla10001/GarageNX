@@ -31,6 +31,11 @@ private:
 
     void start_server();
 
+    // Stats sampled every frame (accurate rate math), displayed values latched at
+    // 1 Hz — same approach as the MTP and FTP screens: keeps the numbers legible
+    // and avoids churning the text cache 60x/s, without throttling the render loop.
+    void refresh_latched_stats();
+
     std::unique_ptr<Services::HttpServer> m_server;
     std::string m_ip = "0.0.0.0";
     uint16_t    m_port = 8080;
@@ -38,4 +43,12 @@ private:
     Services::RateMeter m_rate;   // sampled each frame from the server's byte counters
     Core::Qr::Code m_qr;          // cached; re-encoded only when the URL changes
     std::string    m_qr_url;      // URL m_qr was built from
+
+    // Latched display strings, rebuilt at ~1Hz by refresh_latched_stats().
+    uint32_t    m_last_latch_ms = 0;
+    std::string m_disp_sent = "0 B";
+    std::string m_disp_recv = "0 B";
+    std::string m_disp_cur  = "\u2014";   // current speed
+    std::string m_disp_avg  = "\u2014";   // average speed (install data phase)
+    std::string m_disp_eta  = "\u2014";   // ETA, "—" until wire size known
 };

@@ -27,6 +27,11 @@ public:
     void draw() override;
 
 private:
+    // Last title-database generation this screen rebuilt for. Compared rather
+    // than consuming a shared dirty flag, so another observer (the transports'
+    // Installed Titles cache) cannot swallow the notification.
+    uint64_t m_seen_gen = 0;
+
     // One resolved application row.
     struct Row {
         Core::Ncm::TitleGroup group;      // app + its updates/DLC

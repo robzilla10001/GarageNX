@@ -1,6 +1,8 @@
 // source/core/es.cpp
 
 #include "core/es.hpp"
+
+#include <array>
 #include <SDL2/SDL.h>
 #include <cstring>
 #include <vector>
@@ -225,6 +227,37 @@ bool get_ticket_and_cert(const uint8_t rights_id[0x10],
     g_es_diag = b;
     return !ticket.empty();
 #endif
+}
+
+std::vector<TicketRef> list_common_tickets() {
+    std::vector<TicketRef> out;
+#ifdef PLATFORM_SWITCH
+    s32 count = 0;
+    if (R_FAILED(esCountCommonTicket(&count)) || count <= 0) return out;
+
+    // Ask for exactly what the console reported, plus headroom: the count can
+    // grow between the two calls if something installs a title concurrently, and
+    // ListCommonTicket reports how many it actually wrote.
+    std::vector<std::array<uint8_t, 0x10>> ids((size_t)count + 8);
+    s32 written = 0;
+    if (R_FAILED(esListCommonTicket(&written, ids.data(),
+                                    ids.size() * sizeof(ids[0]))))
+        return out;
+    if (written < 0) return out;
+    if ((size_t)written > ids.size()) written = (s32)ids.size();
+
+    out.reserve((size_t)written);
+    for (s32 i = 0; i < written; ++i) {
+        TicketRef t;
+        t.rights_id = ids[(size_t)i];
+        // Title id = first 8 bytes, BIG-endian.
+        uint64_t id = 0;
+        for (int b = 0; b < 8; ++b) id = (id << 8) | t.rights_id[(size_t)b];
+        t.title_id = id;
+        out.push_back(t);
+    }
+#endif
+    return out;
 }
 
 } // namespace Core::Es

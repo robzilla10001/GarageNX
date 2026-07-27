@@ -12,7 +12,14 @@ namespace Config::Defaults {
 // ── App ────────────────────────────────────────────────────────────────────────
 inline constexpr const char* LANGUAGE         = "en";
 inline constexpr const char* THEME            = "dark";
-inline constexpr const char* UPDATE_CHECK_URL = "https://github.com/YOUR_ORG/GarageNX/releases/latest";
+// The placeholder an early build shipped. Kept ONLY so from_json can recognise it
+// in an existing config.json and replace it — a stored value beats a default, so
+// without this the corrected URL would never reach anyone who had already run the
+// app. Do not reuse or "tidy away".
+inline constexpr const char* LEGACY_PLACEHOLDER_UPDATE_URL =
+    "https://github.com/YOUR_ORG/GarageNX/releases/latest";
+
+inline constexpr const char* UPDATE_CHECK_URL = "https://github.com/robzilla10001/GarageNX/releases/latest";
 inline constexpr const char* TITLEDB_URL      = "https://github.com/blawar/titledb/raw/master/versions.txt";
 
 // ── Behavior ──────────────────────────────────────────────────────────────────
@@ -20,7 +27,6 @@ inline constexpr bool ACTION_LOGGING        = true;
 inline constexpr bool HIGHLIGHT_UPDATE_FILES= true;
 inline constexpr bool ROTATE_SCREEN        = false;
 inline constexpr bool USE_OVERCLOCKING     = false;
-inline constexpr bool SAVES_RO_MODE        = false;
 inline constexpr bool SHOW_CACHE_WARMING   = false;
 inline constexpr int  SCREEN_DIM_SECONDS   = 30;
 inline constexpr bool BUTTON_REPEAT        = true;
@@ -49,6 +55,7 @@ inline constexpr bool VIS_VIEW_INSTALLED_GAMES    = true;
 inline constexpr bool VIS_TOOLS                   = true;
 inline constexpr bool VIS_VIEW_TICKETS            = true;
 inline constexpr bool VIS_VIEW_SAVES              = true;
+inline constexpr bool VIS_BACKUP_SAVES            = true;
 inline constexpr bool VIS_START_MTP               = true;
 inline constexpr bool VIS_START_FTP               = true;
 inline constexpr bool VIS_START_HTTP              = true;
@@ -62,7 +69,17 @@ inline constexpr bool MTP_SD_INSTALL     = true;
 inline constexpr bool MTP_NAND_INSTALL   = false;
 inline constexpr bool MTP_SAVES          = true;
 inline constexpr bool MTP_ALBUM          = true;
-inline constexpr bool MTP_GAMECARD       = false;
+// ON by default now that a mount exists. A game card is PHYSICALLY read-only, so
+// exposing it carries none of the risk that keeps NAND (System) off — it was false
+// only because nothing mounted the surface and a folder that always failed to open
+// would have been worse than an absent one.
+//
+// NOTE this changes the default for NEW configs only. An existing config.json
+// already stores gamecard=false, and a stored key beats a default — deliberately
+// NOT migrated, because unlike the placeholder update URL, `false` here could be a
+// real choice and overriding it would be presumptuous. Existing users enable it
+// once in Settings > Storage Surfaces.
+inline constexpr bool MTP_GAMECARD       = true;
 inline constexpr bool MTP_USER_STORAGES  = true;
 
 // ── FTP / access point ────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 // source/screens/http_screen.cpp
 
 #include "screens/http_screen.hpp"
+#include "ui/stats_format.hpp"
 #include "core/net.hpp"
 #include "core/fs.hpp"
 #include "config/config.hpp"
@@ -41,17 +42,53 @@ std::unique_ptr<Screen> HTTPScreen::update(bool& pop) {
 
     if (Input::pressed(Input::Button::B)) { pop = true; return nullptr; }
 
-    // Feed the rate meter from the server's cumulative counters. The service
-    // thread publishes bytes only; turning that into a speed is the UI's job.
-    if (m_server && m_server->is_running())
-        m_rate.sample(m_server->bytes_sent() + m_server->bytes_recv());
+    if (m_server && m_server->is_running()) {
+        // Feed the meter the WIRE bytes of the active install, NOT
+        // bytes_sent+bytes_recv. Those totals now include the web UI's own
+        // traffic — the HTML page on every load and a JSON listing on every
+        // navigation and status poll — so using them would report page chatter as
+        // install throughput. Before B2 that distinction barely mattered; with a
+        // browser client polling every 5s it would be actively misleading.
+        // When no install is running current_wire_recv() is 0 and the meter idles.
+        m_rate.sample(m_server->current_wire_recv());
+        const uint32_t now = SDL_GetTicks();
+        if (now - m_last_latch_ms >= 1000) {
+            m_last_latch_ms = now;
+            refresh_latched_stats();
+        }
+    }
 
     // X toggles the server.
     if (Input::pressed(Input::Button::X)) {
         if (m_server && m_server->is_running()) { m_server->stop(); m_rate.reset(); }
         else { m_rate.reset(); start_server(); }
+        m_disp_sent = m_disp_recv = "0 B";
+        m_disp_cur = m_disp_avg = m_disp_eta = "\u2014";
+        m_last_latch_ms = 0;
     }
     return nullptr;
+}
+
+void HTTPScreen::refresh_latched_stats() {
+    if (!m_server) return;
+    m_disp_sent = Fs::format_size(m_server->bytes_sent());
+    m_disp_recv = Fs::format_size(m_server->bytes_recv());
+
+    const double cur = m_rate.bytes_per_sec();
+    const double avg = m_rate.average_bytes_per_sec();
+    m_disp_cur = cur > 0 ? (Fs::format_size((uint64_t)cur) + "/s") : "\u2014";
+    m_disp_avg = (m_rate.data_phase_started() && avg > 0)
+                     ? (Fs::format_size((uint64_t)avg) + "/s") : "\u2014";
+
+    // ETA against WIRE bytes. Content-Length gives HTTP an exact size from the
+    // first byte, so unlike FTP this is meaningful immediately rather than only
+    // once the container table has been read.
+    const uint64_t wire_size = m_server->current_wire_size();
+    const uint64_t wire_recv = m_server->current_wire_recv();
+    if (wire_size > 0 && wire_recv <= wire_size && cur > 1.0)
+        m_disp_eta = UI::format_eta((double)(wire_size - wire_recv) / cur);
+    else
+        m_disp_eta = "\u2014";
 }
 
 void HTTPScreen::draw() {
@@ -99,19 +136,29 @@ void HTTPScreen::draw() {
             Widgets::draw_text(cx + 0 * kColW, y, f,
                                Font::Size::Body, Font::Weight::Regular, Theme::Token::FgSecondary);
 
-            std::snprintf(f, sizeof(f), "\u2191 %s",
-                          Fs::format_size(m_server->bytes_sent()).c_str());
+            std::snprintf(f, sizeof(f), "\u2191 %s", m_disp_sent.c_str());
             Widgets::draw_text(cx + 1 * kColW, y, f,
                                Font::Size::Body, Font::Weight::Regular, Theme::Token::FgSecondary);
 
-            std::snprintf(f, sizeof(f), "\u2193 %s",
-                          Fs::format_size(m_server->bytes_recv()).c_str());
+            std::snprintf(f, sizeof(f), "\u2193 %s", m_disp_recv.c_str());
             Widgets::draw_text(cx + 2 * kColW, y, f,
                                Font::Size::Body, Font::Weight::Regular, Theme::Token::FgSecondary);
 
-            std::snprintf(f, sizeof(f), "%s/s",
-                          Fs::format_size((uint64_t)m_rate.bytes_per_sec()).c_str());
+            // Same stat set and the same lang keys as MTP and FTP — one column
+            // layout across all three transports, so the pages read identically.
+            std::snprintf(f, sizeof(f), "%s: %s",
+                          Lang::t("mtp.speed_now").c_str(), m_disp_cur.c_str());
             Widgets::draw_text(cx + 3 * kColW, y, f,
+                               Font::Size::Body, Font::Weight::Regular, Theme::Token::FgSecondary);
+
+            std::snprintf(f, sizeof(f), "%s: %s",
+                          Lang::t("mtp.speed_avg").c_str(), m_disp_avg.c_str());
+            Widgets::draw_text(cx + 4 * kColW, y, f,
+                               Font::Size::Body, Font::Weight::Regular, Theme::Token::FgSecondary);
+
+            std::snprintf(f, sizeof(f), "%s: %s",
+                          Lang::t("mtp.eta").c_str(), m_disp_eta.c_str());
+            Widgets::draw_text(cx + 5 * kColW, y, f,
                                Font::Size::Body, Font::Weight::Regular, Theme::Token::FgSecondary);
         }
         y += 44;

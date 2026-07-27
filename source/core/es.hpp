@@ -48,4 +48,29 @@ bool get_ticket_and_cert(const uint8_t rights_id[0x10],
                          std::vector<uint8_t>& ticket,
                          std::vector<uint8_t>& cert);
 
+// ── Enumerating the console's common tickets ─────────────────────────────────
+
+struct TicketRef {
+    std::array<uint8_t, 0x10> rights_id{};
+    // Bytes 0-7 of a rights ID are the title id, big-endian. That layout is
+    // standard, but this codebase derives key generation from the NCA header
+    // rather than the rights ID, so only the title id is claimed here — guessing
+    // at the rest would be inventing a fact the code cannot check.
+    //
+    // The derivation is SELF-VALIDATING in the UI: a correct title id resolves to
+    // an installed title's name, and one that does not resolve is displayed as a
+    // raw rights ID rather than as a confidently wrong name.
+    uint64_t title_id = 0;
+};
+
+/// Every common ticket installed on this console.
+///
+/// Uses the same ES calls the NSP dump path already relies on
+/// (CountCommonTicket / ListCommonTicket), so this adds no new IPC — it exposes
+/// enumeration that was previously private to the titlekey lookup.
+///
+/// Returns empty if ES is unavailable or the console has no common tickets;
+/// neither is an error worth surfacing.
+std::vector<TicketRef> list_common_tickets();
+
 } // namespace Core::Es

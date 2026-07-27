@@ -1,6 +1,7 @@
 // source/screens/mtp_screen.cpp
 
 #include "screens/mtp_screen.hpp"
+#include "ui/stats_format.hpp"
 #include "core/fs.hpp"
 #include "lang/localization.hpp"
 #include "ui/renderer.hpp"
@@ -13,22 +14,6 @@
 #include <algorithm>
 #include <cstdio>
 
-namespace {
-// Format a duration in seconds as a compact ETA: "12s", "3m 05s", "1h 02m".
-// Caps at a sane ceiling so a near-zero rate does not print an absurd number.
-std::string format_eta(double seconds) {
-    if (seconds < 0 || seconds > 359999) return "—";   // >~100h => not meaningful
-    const int total = (int)(seconds + 0.5);
-    const int h = total / 3600;
-    const int m = (total % 3600) / 60;
-    const int s = total % 60;
-    char buf[32];
-    if (h > 0)      std::snprintf(buf, sizeof(buf), "%dh %02dm", h, m);
-    else if (m > 0) std::snprintf(buf, sizeof(buf), "%dm %02ds", m, s);
-    else            std::snprintf(buf, sizeof(buf), "%ds", s);
-    return buf;
-}
-} // namespace
 
 void MTPScreen::start_server() {
     m_server = std::make_unique<Services::MtpServer>();
@@ -91,7 +76,7 @@ void MTPScreen::refresh_latched_stats() {
     const uint64_t wire_recv = m_server->current_wire_recv();
     if (wire_size > 0 && wire_recv <= wire_size && cur > 1.0) {
         const double remaining = (double)(wire_size - wire_recv);
-        m_disp_eta = format_eta(remaining / cur);
+        m_disp_eta = UI::format_eta(remaining / cur);
     } else {
         m_disp_eta = "—";
     }

@@ -16,6 +16,7 @@
 
 #include "services/service_manager.hpp"
 #include "install/stream_installer.hpp"
+#include "core/nsp_stream.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -116,6 +117,10 @@ private:
     // never needs a multi-GB buffer.
     bool send_file_data(uint16_t code, uint32_t tid, const std::string& vfs_path, uint64_t size, uint64_t offset = 0);
 
+    // Same wire behaviour as send_file_data, but pulls bytes from a generated
+    // stream (a virtual NSP) instead of a file on disk.
+    bool send_stream_data(uint16_t code, uint32_t tid, Core::NspStream::Source& src);
+
     // Host -> device data phase. read_data_container is for small datasets that
     // fit one transfer (ObjectInfo); recv_file_data streams a file to disk.
     bool read_data_container(std::vector<uint8_t>& out);
@@ -124,6 +129,13 @@ private:
     // SendObjectInfo names the file and SendObject then supplies its bytes, so
     // the destination has to survive between the two commands.
     std::string m_pending_path;
+    /// For a Save Data write, the SYNTHETIC key of the pending object
+    /// ("savedata:/<User>/<Title>/<leaf>"); empty otherwise. SendObjectInfo and
+    /// SendObject are separate commands, and a client may browse a different
+    /// title in between — which remounts the single save slot and would leave
+    /// m_pending_path aimed inside the WRONG save. Keeping the synthetic key lets
+    /// SendObject re-resolve and re-establish the title this object actually names.
+    std::string m_pending_save_synth;
     uint64_t    m_pending_size  = 0;
     bool        m_pending_valid = false;
     /// False when m_pending_size came from SendObjectInfo and was saturated at

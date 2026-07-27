@@ -28,7 +28,7 @@ static const char* name(WritePolicy p) {
     return "?";
 }
 
-static void expect(const std::string& path, const Config::MTP& cfg,
+static void expect(const std::string& path, const Config::Surfaces& cfg,
                    WritePolicy want, const std::string& why) {
     const WritePolicy got = classify_write(path, cfg);
     check(got == want,
@@ -39,7 +39,7 @@ int main() {
     std::printf("write_guard_test\n");
 
     // Defaults: SD read-write, album on, NAND user on, NAND system OFF.
-    Config::MTP def;
+    Config::Surfaces def;
 
     // ── Freely writable surfaces: no prompt ───────────────────────────────────
     expect("sdmc:/game.nsp",           def, WritePolicy::Allow,
@@ -68,7 +68,7 @@ int main() {
            "NAND system disabled by default is denied outright");
 
     // ...and when explicitly enabled it becomes confirm-required, never free.
-    Config::MTP sys_on = def;
+    Config::Surfaces sys_on = def;
     sys_on.nand_system = true;
     expect("bis_system:/Contents/x",   sys_on, WritePolicy::NeedsConfirm,
            "NAND system enabled still requires confirmation");
@@ -76,15 +76,33 @@ int main() {
           "NAND system is NEVER freely writable");
 
     // ── Disabling a surface removes write access too ──────────────────────────
-    Config::MTP user_off = def;
+    Config::Surfaces user_off = def;
     user_off.nand_user = false;
     expect("bis_user:/save/x.bin",     user_off, WritePolicy::Deny,
            "disabled NAND user cannot be written even by guessing the path");
 
-    Config::MTP album_off = def;
+    Config::Surfaces album_off = def;
     album_off.album = false;
     expect("album:/2024/pic.jpg",      album_off, WritePolicy::Deny,
            "disabled album cannot be written");
+
+    // ── A surface disabled for THIS TRANSPORT denies with no prompt ───────────
+    // Newly reachable in a confusing way since surfaces went per-transport: the
+    // same save write can be confirmable over MTP and silently denied over FTP,
+    // with nothing on screen to explain the difference. Four distinct reasons all
+    // present as "it failed and no dialog appeared", which is why the guard now
+    // writes its reason to logs/write_guard.log.
+    Config::Surfaces saves_off = def;
+    saves_off.saves = false;
+    expect("save:/slot.dat",           saves_off, WritePolicy::Deny,
+           "saves disabled for this transport denies with no prompt");
+    expect("save:/slot.dat",           def, WritePolicy::NeedsConfirm,
+           "and the very same path asks when it is enabled");
+
+    // A SYNTHETIC save path is claimed by no surface — which is exactly why every
+    // transport resolves to the mounted path BEFORE it guards.
+    expect("savedata:/Rob/G [01]/s.dat", def, WritePolicy::Deny,
+           "synthetic save path denies: resolve first, then guard");
 
     // ── Unknown / malformed paths: default-deny ───────────────────────────────
     expect("",                         def, WritePolicy::Deny, "empty path denied");
@@ -97,7 +115,7 @@ int main() {
     // ── The safety invariant, stated directly ─────────────────────────────────
     // No configuration makes a NAND surface freely writable without confirmation.
     {
-        Config::MTP all_on;
+        Config::Surfaces all_on;
         all_on.nand_user = true;
         all_on.nand_system = true;
         for (const char* p : {"bis_user:/a", "bis_system:/b"}) {

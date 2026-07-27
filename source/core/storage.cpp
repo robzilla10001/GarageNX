@@ -43,6 +43,20 @@ SpaceInfo nand_user() {
     return info;
 }
 
+SpaceInfo nand_system() {
+    // Identical to nand_user() but for the System partition — same open/query/
+    // close shape, deliberately copied rather than reinvented. Open-and-close per
+    // call is what nand_user() has always done and it is a cheap query; do NOT
+    // hold the handle open, since this is polled from the status bar.
+    FsFileSystem nand;
+    SpaceInfo info;
+    if (R_SUCCEEDED(fsOpenBisFileSystem(&nand, FsBisPartitionId_System, ""))) {
+        info = query_fs(&nand);
+        fsFsClose(&nand);
+    }
+    return info;
+}
+
 #else  // PC stub
 
 static SpaceInfo query_path(const char* path) {
@@ -62,6 +76,15 @@ SpaceInfo nand_user() {
     SpaceInfo info;
     info.total_bytes = 32ULL * 1024 * 1024 * 1024;
     info.free_bytes  = 3ULL  * 1024 * 1024 * 1024;
+    info.valid = true;
+    return info;
+}
+SpaceInfo nand_system() {
+    // Fabricate a small, nearly-full system partition — the realistic shape, and
+    // the one that would expose a layout bug at the tight end.
+    SpaceInfo info;
+    info.total_bytes = 5ULL * 1024 * 1024 * 1024;
+    info.free_bytes  = 512ULL * 1024 * 1024;
     info.valid = true;
     return info;
 }

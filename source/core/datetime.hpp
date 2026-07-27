@@ -41,4 +41,13 @@ std::string clock_string_now();
 std::string log_stamp(std::time_t t);
 std::string log_stamp_now();
 
+// Filename stamp that ALWAYS sorts chronologically: "20260712-143005".
+// Fixed year-month-day regardless of the user's date order, because these names
+// are sorted by a machine, not read as dates. log_stamp() honours the user's
+// order, which for a DMY user means "12-07-2026" sorting before "05-08-2026" —
+// fine for a log the user opens by name, wrong for a backup list where "newest"
+// has to be obvious at a glance.
+std::string sortable_stamp(std::time_t t);
+std::string sortable_stamp_now();
+
 } // namespace Core::DateTime

@@ -12,10 +12,13 @@ namespace Core::Ncm {
 
 // Signals that the installed-title set has changed since the list was last
 // built (set after a delete/move), so a cached TitleList rebuilds on re-entry.
-static bool s_titles_dirty = false;
-void mark_titles_dirty()  { s_titles_dirty = true; }
+static bool     s_titles_dirty = false;
+static uint64_t s_titles_gen    = 1;   // starts at 1 so 0 means "never observed"
+
+void mark_titles_dirty()  { s_titles_dirty = true; ++s_titles_gen; }
 bool titles_dirty()       { return s_titles_dirty; }
 void clear_titles_dirty() { s_titles_dirty = false; }
+uint64_t titles_generation() { return s_titles_gen; }
 
 #ifdef PLATFORM_SWITCH
 
@@ -65,11 +68,40 @@ static void list_storage(NcmStorageId storage_id, Storage tag,
             t.type       = map_meta_type(k.type);
             t.storage    = tag;
 
-            // Total content size (best-effort).
-            if (have_cs) {
-                u64 sz = 0;
-                if (R_SUCCEEDED(ncmContentMetaDatabaseGetSize(&db, &sz, &k)))
-                    t.size_bytes = sz;
+            // Total content size: the sum of this meta's NCAs.
+            //
+            // NOT ncmContentMetaDatabaseGetSize() — that returns the size of the
+            // META RECORD (the CNMT row), which is ~100 bytes for every title.
+            // Using it made every title display as "100 B" on the console and made
+            // an FTP dump report a 100-byte transfer.
+            //
+            // These are metadata queries only (no decryption) and they reuse the
+            // db/cs sessions already open for this storage, so there is no session
+            // churn — the pattern that has caused trouble elsewhere in this file.
+            {
+                uint64_t total_sz = 0;
+                s32 coff = 0;
+                for (;;) {
+                    NcmContentInfo infos[16];
+                    s32 cwritten = 0;
+                    if (R_FAILED(ncmContentMetaDatabaseListContentInfo(
+                            &db, &cwritten, infos,
+                            (s32)(sizeof(infos) / sizeof(infos[0])), &k, coff)))
+                        break;
+                    if (cwritten <= 0) break;
+                    for (s32 ci = 0; ci < cwritten; ++ci) {
+                        // The size is ALREADY in the ContentInfo record. Calling
+                        // ncmContentStorageGetSizeFromContentId() per NCA instead
+                        // made enumeration ~10x slower (2s -> 20s for 126 titles)
+                        // because it does real filesystem work per content; this
+                        // needs no extra IPC at all.
+                        u64 csz = 0;
+                        ncmContentInfoSizeToU64(&infos[ci], &csz);
+                        total_sz += (uint64_t)csz;
+                    }
+                    coff += cwritten;
+                }
+                t.size_bytes = total_sz;
             }
 
             out.push_back(std::move(t));

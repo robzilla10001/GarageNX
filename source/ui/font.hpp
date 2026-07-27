@@ -5,6 +5,7 @@
 
 #include <SDL2/SDL_ttf.h>
 #include <string>
+#include <vector>
 
 namespace Font {
 
@@ -48,6 +49,25 @@ TTF_Font* get(Size size, Weight weight = Weight::Regular,
 /// Caller owns the returned SDL_Surface (SDL_FreeSurface when done).
 SDL_Surface* render(const std::string& text, Size size, Weight weight,
                     SDL_Color color, Family family = Family::Sans);
+
+/// Pixel width of `text` as it would render. 0 for empty text or on failure.
+int measure_width(const std::string& text, Size size, Weight weight = Weight::Regular,
+                  Family family = Family::Sans);
+
+/// Break `text` into lines that each fit within `max_width` pixels.
+///
+/// Handles the three cases that matter here:
+///   - explicit '\n' always starts a new line;
+///   - normal text wraps at spaces;
+///   - a SINGLE TOKEN wider than max_width is broken mid-token. That case is not
+///     hypothetical: the write-confirmation modal shows file paths, which contain
+///     no spaces and can easily exceed the modal width. Without a hard break they
+///     render straight off the edge of the screen.
+///
+/// Breaks land on UTF-8 code-point boundaries, never inside a multi-byte glyph.
+std::vector<std::string> wrap(const std::string& text, int max_width, Size size,
+                              Weight weight = Weight::Regular,
+                              Family family = Family::Sans);
 
 /// Advance width of a single glyph in the mono font at a given size, in pixels.
 /// Used to lay out fixed-width columns (hex view). Cached per size.

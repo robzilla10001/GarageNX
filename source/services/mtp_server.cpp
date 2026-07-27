@@ -3,6 +3,9 @@
 #include "services/mtp_server.hpp"
 #include "services/storage_catalog.hpp"
 #include "services/write_guard.hpp"
+#include "services/title_surface.hpp"
+#include "services/save_surface.hpp"
+#include "services/save_write.hpp"
 #include "install/stream_driver.hpp"
 #include "services/mtp_data.hpp"
 #include "services/overlap_buffer.hpp"
@@ -39,6 +42,18 @@ constexpr uint32_t kStorageNandInstall = 0x00030001;
 constexpr uint32_t kStorageAlbum       = 0x00040001;
 constexpr uint32_t kStorageNandUser    = 0x00050001;
 constexpr uint32_t kStorageNandSystem  = 0x00060001;
+constexpr uint32_t kStorageTitles      = 0x00070001;
+constexpr uint32_t kStorageSaves       = 0x00080001;
+// Gamecard was missing from this list for the whole project — harmless while
+// nothing mounted the surface, and immediately visible as "FTP/HTTP show the card,
+// MTP does not" the moment it did. FTP and HTTP iterate the catalog generically and
+// so gained the surface for free; MTP maps wire ids by hand and had to be told.
+constexpr uint32_t kStorageGamecard    = 0x00090001;
+
+// Virtual NSPs have no file on disk, so they are interned under a synthetic path
+// prefix. That lets them flow through the SAME handle machinery as real files
+// (intern/path_for) instead of needing a parallel handle table.
+constexpr const char* kTitlesPrefix = "titles:/";
 
 bool is_install_storage(uint32_t id) {
     return id == kStorageSdInstall || id == kStorageNandInstall;
@@ -48,12 +63,15 @@ bool is_install_storage(uint32_t id) {
 // the shared StorageCatalog surface it represents.
 bool mtp_id_to_surface(uint32_t wire_id, StorageSurface::Id& out) {
     switch (wire_id) {
+        case kStorageGamecard:    out = StorageSurface::Id::Gamecard;    return true;
         case kStorageSd:          out = StorageSurface::Id::SdCard;      return true;
         case kStorageSdInstall:   out = StorageSurface::Id::SdInstall;   return true;
         case kStorageNandInstall: out = StorageSurface::Id::NandInstall; return true;
         case kStorageAlbum:       out = StorageSurface::Id::Album;       return true;
         case kStorageNandUser:    out = StorageSurface::Id::NandUser;    return true;
         case kStorageNandSystem:  out = StorageSurface::Id::NandSystem;  return true;
+        case kStorageTitles:      out = StorageSurface::Id::InstalledTitles; return true;
+        case kStorageSaves:       out = StorageSurface::Id::Saves;       return true;
         default: return false;
     }
 }
@@ -68,6 +86,9 @@ uint32_t surface_to_mtp_id(StorageSurface::Id sid) {
         case StorageSurface::Id::Album:       return kStorageAlbum;
         case StorageSurface::Id::NandUser:    return kStorageNandUser;
         case StorageSurface::Id::NandSystem:  return kStorageNandSystem;
+        case StorageSurface::Id::InstalledTitles: return kStorageTitles;
+        case StorageSurface::Id::Saves:       return kStorageSaves;
+        case StorageSurface::Id::Gamecard:    return kStorageGamecard;
         default: return 0;
     }
 }
@@ -78,6 +99,13 @@ uint32_t surface_to_mtp_id(StorageSurface::Id sid) {
 // storage table: an object's storage is a function of its path. Falls back to the
 // SD storage id if no prefix matches (shouldn't happen for interned paths).
 uint32_t mtp_storage_for_path(const std::string& vfs_path) {
+    if (vfs_path.compare(0, 8, kTitlesPrefix) == 0) return kStorageTitles;
+    // Save objects are interned under their own synthetic prefix, and must be
+    // matched BEFORE the catalog loop: they belong to the Saves surface even
+    // though they are not "save:/..." paths. (The prefix cannot collide with the
+    // "save:" mount root — see save_surface.hpp — but checking first keeps the
+    // intent explicit rather than relying on that.)
+    if (Services::save_is_synthetic(vfs_path)) return kStorageSaves;
     for (const auto& s : Services::StorageCatalog::all()) {
         if (s.kind != Services::StorageKind::Filesystem) continue;
         const std::string root = s.vfs_root;             // e.g. "sdmc:", "album:"
@@ -87,6 +115,18 @@ uint32_t mtp_storage_for_path(const std::string& vfs_path) {
         }
     }
     return kStorageSd;
+}
+
+// Resolve an interned path to the concrete path a READ should use. Real paths
+// pass through unchanged; a synthetic save path mounts its (user, title) through
+// the shared choke point first. Returns "" when the object cannot be read as a
+// file — an unresolvable save, or one of the synthesized folder levels.
+std::string readable_path(const std::string& interned) {
+    if (!Services::save_is_synthetic(interned)) return interned;
+    if (Services::save_synth_is_synthesized_dir(interned)) return std::string();
+    const std::string real = Services::save_resolve_synth(interned);
+    if (real.empty() || Fs::is_directory(real)) return std::string();
+    return real;
 }
 
 // usb:ds transfers must come from page-aligned memory. 1 MiB keeps future file
@@ -100,7 +140,15 @@ bool MtpServer::storage_enabled(uint32_t id) const {
     // The wire id -> surface mapping preserves MTP's stable storage ids.
     StorageSurface::Id sid;
     if (!mtp_id_to_surface(id, sid)) return false;
-    return StorageCatalog::enabled(sid, Config::get().mtp);
+    if (!StorageCatalog::enabled(sid, Config::get().mtp.surfaces)) return false;
+
+    // Enabled is not the same as MOUNTED. MTP used to stop at the config check,
+    // so a surface whose device was missing got advertised in GetStorageIDs and
+    // then failed enumeration — the host reports "could not get object handles"
+    // and the user has a storage they cannot open. FTP always probed and simply
+    // hid it. Same catalog, same config, two behaviours; now one.
+    const StorageSurface* s = StorageCatalog::find(sid);
+    return s && StorageCatalog::mount_available(*s);
 }
 
 // ─── Datasets ────────────────────────────────────────────────────────────────
@@ -185,14 +233,77 @@ std::vector<uint8_t> MtpServer::build_storage_info(uint32_t storage_id) const {
         return w.data();
     }
 
+    if (storage_id == kStorageTitles) {
+        // Synthesized read-only surface. Capacity figures are meaningless here, so
+        // report the SD card's (the titles are read FROM the console, not stored
+        // in a filesystem the host can measure).
+        const Core::Storage::SpaceInfo sp = Core::Storage::sd_card();
+        const StorageSurface* s = StorageCatalog::find(StorageSurface::Id::InstalledTitles);
+        w.u16(0x0003);                    // StorageType: FixedRAM
+        w.u16(0x0002);                    // FilesystemType: GenericHierarchical
+        w.u16(0x0001);                    // AccessCapability: READ-ONLY
+        w.u64(sp.total_bytes);
+        w.u64(0);                         // no free space: nothing can be written here
+        w.u32(0xFFFFFFFF);
+        w.str(s ? s->display : "Installed Titles");
+        w.str("TITLES");
+        return w.data();
+    }
+
+    if (storage_id == kStorageSaves) {
+        // Three-level synthesized surface: the top two levels are accounts and
+        // titles, and only a title folder has a real filesystem behind it — and
+        // then only while it is the one mounted slot.
+        //
+        // FREE SPACE MUST BE REAL, and this is the one field that cannot be
+        // copied from Installed Titles. A host checks FreeSpaceInBytes BEFORE it
+        // opens a transfer, and refuses client-side if the file does not fit —
+        // "there is not enough space on the destination" for a 553-byte save,
+        // with no request ever reaching us and nothing to see in a wire log.
+        // Advertising 0 is only truthful for a surface that can NEVER be written;
+        // Save Data can be, once the on-device confirmation is satisfied.
+        //
+        // NAND (User) is the pattern to copy here, not Installed Titles: it is
+        // the other surface that is read-only by POLICY yet writable per
+        // operation after a confirmation, and its writes are hardware-verified.
+        // So: same AccessCapability (read-only is a hint to the host; the actual
+        // gate is the write guard plus the modal) and the same real capacity
+        // figures. Saves live in the NAND user partition, so those figures are
+        // the honest ones.
+        //
+        // CAVEAT worth knowing: a Switch save has its own per-title quota, far
+        // smaller than the partition. One number in StorageInfo cannot express
+        // that, so an oversized write still fails mid-transfer rather than being
+        // refused up front. Better than refusing everything.
+        const Core::Storage::SpaceInfo sp = Core::Storage::nand_user();
+        const StorageSurface* s = StorageCatalog::find(StorageSurface::Id::Saves);
+        w.u16(0x0003);                    // StorageType: FixedRAM
+        w.u16(0x0002);                    // FilesystemType: GenericHierarchical
+        w.u16(0x0001);                    // AccessCapability: read-only BY POLICY,
+                                          //   exactly as NAND (User) reports it
+        w.u64(sp.total_bytes);
+        w.u64(sp.free_bytes);             // real, or a host refuses every write
+        w.u32(0xFFFFFFFF);
+        w.str(s ? s->display : "Save Data");
+        w.str("SAVEDATA");
+        return w.data();
+    }
+
     if (storage_id == kStorageNandUser || storage_id == kStorageNandSystem) {
         const bool is_user = (storage_id == kStorageNandUser);
         const StorageSurface::Id sid = is_user ? StorageSurface::Id::NandUser
                                                : StorageSurface::Id::NandSystem;
         const StorageSurface* s = StorageCatalog::find(sid);
-        // User capacity is queryable; System we report as unknown capacity.
+        // BOTH partitions report real capacity. System used to report a default
+        // SpaceInfo{} — zero total, zero free — described as "unknown capacity",
+        // but zero free is not read by a host as "unknown": it is read as FULL.
+        // A host checks FreeSpaceInBytes BEFORE opening a transfer and refuses
+        // client-side, so every confirmed write to NAND System would have failed
+        // with a misleading "not enough space" and nothing reaching the device.
+        // That is the same bug that broke Save Data writes; it was latent here
+        // only because NAND System is config-OFF by default.
         const Core::Storage::SpaceInfo sp = is_user ? Core::Storage::nand_user()
-                                                    : Core::Storage::SpaceInfo{};
+                                                    : Core::Storage::nand_system();
         w.u16(0x0003);                    // StorageType: FixedRAM (internal NAND)
         w.u16(0x0002);                    // FilesystemType: GenericHierarchical
         w.u16(0x0001);                    // AccessCapability: READ-ONLY (policy)
@@ -204,14 +315,49 @@ std::vector<uint8_t> MtpServer::build_storage_info(uint32_t storage_id) const {
         return w.data();
     }
 
+    if (storage_id == kStorageGamecard) {
+        // A game card is REMOVABLE and physically READ-ONLY.
+        //
+        // Capacity is reported as 0/0 deliberately. There is no statvfs for the
+        // gamecard mount, and the alternative — borrowing the SD card's figures,
+        // which is what the fallback below used to do — would be a lie a host
+        // acts on. Zero FREE space is exactly right here: it is what stops a host
+        // from opening a write it cannot complete. (Contrast NAND System, where
+        // zero free was a BUG precisely because that surface is writable through
+        // the confirmation broker.)
+        const StorageSurface* s = StorageCatalog::find(StorageSurface::Id::Gamecard);
+        w.u16(0x0004);                    // StorageType: RemovableRAM
+        w.u16(0x0002);                    // FilesystemType: GenericHierarchical
+        w.u16(0x0001);                    // AccessCapability: READ-ONLY
+        w.u64(0);                         // MaxCapacity: unknown
+        w.u64(0);                         // FreeSpaceInBytes: none — it is read-only
+        w.u32(0xFFFFFFFF);
+        w.str(s ? s->display : "Game Card");
+        w.str("GAMECARD");
+        return w.data();
+    }
+
+    // Anything not handled above. This USED to be an unconditional "SD Card"
+    // block, which meant a storage with no case of its own silently described
+    // itself as the SD card: the game card appeared in hosts as a second
+    // "SD Card", disambiguated only by its numeric id. A fallback that
+    // impersonates a real storage is worse than one that refuses.
+    //
+    // So: only the actual SD id gets the SD description, and every other id is
+    // rejected as invalid rather than described as something it is not. Adding a
+    // surface therefore FAILS LOUDLY here instead of masquerading.
+    if (storage_id != kStorageSd)
+        return {};                    // empty -> caller answers InvalidStorageId
+
     const Core::Storage::SpaceInfo sd = Core::Storage::sd_card();
+    const StorageSurface* sds = StorageCatalog::find(StorageSurface::Id::SdCard);
     w.u16(0x0004);                    // StorageType: RemovableRAM
     w.u16(0x0002);                    // FilesystemType: GenericHierarchical
     w.u16(0x0000);                    // AccessCapability: read-write
     w.u64(sd.total_bytes);            // MaxCapacity
     w.u64(sd.free_bytes);             // FreeSpaceInBytes
     w.u32(0xFFFFFFFF);                // FreeSpaceInObjects: not tracked
-    w.str("SD Card");                 // StorageDescription
+    w.str(sds ? sds->display : "SD Card");   // from the catalog, like every other
     w.str("SDCARD");                  // VolumeIdentifier
     return w.data();
 }
@@ -236,6 +382,10 @@ const std::string* MtpServer::path_for(uint32_t handle) const {
 void MtpServer::reset_objects() {
     m_paths.clear();
     m_by_path.clear();
+    // Handles are the only thing that referred to a mounted save, so dropping
+    // them means nothing should stay mounted. Leaving a save mounted past the
+    // end of a session would hold a limited system resource for no reader.
+    Services::save_surface_release();
 }
 
 // ─── ObjectInfo ──────────────────────────────────────────────────────────────
@@ -245,8 +395,33 @@ std::vector<uint8_t> MtpServer::build_object_info(uint32_t handle) const {
     const std::string* p = path_for(handle);
     if (!p) return w.data();
 
-    const bool is_dir = Fs::is_directory(*p);
-    const uint64_t size = is_dir ? 0 : Fs::file_size(*p);
+    // Virtual NSPs have no file on disk: their size comes from the cached exact
+    // NSP computation, not from stat().
+    const bool is_virtual = (p->compare(0, 8, kTitlesPrefix) == 0);
+    const bool is_save    = Services::save_is_synthetic(*p);
+
+    bool     is_dir = false;
+    uint64_t size   = 0;
+    if (is_virtual) {
+        size = Services::installed_titles_exact_size(p->substr(8));
+    } else if (is_save) {
+        // A user folder or a title folder is a directory BY CONSTRUCTION, so it
+        // is answered without mounting anything. That matters: a host asks for an
+        // ObjectInfo for every object it lists, and mounting to answer would
+        // mount and unmount every save on the console just to browse one folder —
+        // the bulk-churn pattern the single-slot design exists to avoid.
+        if (Services::save_synth_is_synthesized_dir(*p)) {
+            is_dir = true;
+        } else {
+            const std::string real = Services::save_resolve_synth(*p);
+            if (real.empty()) return w.data();   // caller answers InvalidObjectHandle
+            is_dir = Fs::is_directory(real);
+            size   = is_dir ? 0 : Fs::file_size(real);
+        }
+    } else {
+        is_dir = Fs::is_directory(*p);
+        size   = is_dir ? 0 : Fs::file_size(*p);
+    }
 
     // Parent: the interned handle of the containing directory, or the root
     // sentinel when this object sits directly in a storage root. A storage root is
@@ -254,7 +429,11 @@ std::vector<uint8_t> MtpServer::build_object_info(uint32_t handle) const {
     // so browse works across all Filesystem surfaces, not just SD.
     const std::string parent_path = Fs::parent(*p);
     uint32_t parent_handle = Mtp::kRootParent;
-    bool parent_is_storage_root = parent_path.empty();
+    // The synthetic save root ("savedata:/") is a storage root too: a user folder
+    // sits directly in the Save Data storage and must report kRootParent, not a
+    // handle we never interned.
+    bool parent_is_storage_root = parent_path.empty() ||
+                                  parent_path == Services::save_synth_prefix();
     for (const auto& s : Services::StorageCatalog::all()) {
         if (s.kind != Services::StorageKind::Filesystem) continue;
         const std::string root = s.vfs_root;                  // "sdmc:"
@@ -298,6 +477,56 @@ std::vector<uint8_t> MtpServer::build_object_info(uint32_t handle) const {
 // declares the total length up front, then the payload follows across as many
 // bulk transfers as it takes — so reading a 4 GiB file never needs a 4 GiB
 // buffer.
+bool MtpServer::send_stream_data(uint16_t code, uint32_t tid,
+                                 Core::NspStream::Source& src) {
+#ifdef PLATFORM_SWITCH
+    const uint64_t size  = src.total_size();
+    const uint64_t total = Mtp::kHeaderSize + size;
+
+    Writer hdr;
+    hdr.u32(total > 0xFFFFFFFFULL ? 0xFFFFFFFFu : (uint32_t)total);
+    hdr.u16(Mtp::Type::Data);
+    hdr.u16(code);
+    hdr.u32(tid);
+    std::memcpy(m_buf, hdr.data().data(), Mtp::kHeaderSize);
+
+    // First transfer carries the header plus as much payload as fits.
+    size_t want = m_buf_size - Mtp::kHeaderSize;
+    if (want > size) want = (size_t)size;
+    size_t filled = 0;
+    while (filled < want) {
+        const int64_t got = src.read(m_buf + Mtp::kHeaderSize + filled, want - filled);
+        if (got < 0) return false;
+        if (got == 0) break;
+        filled += (size_t)got;
+    }
+    if (!ep_write(m_buf, Mtp::kHeaderSize + filled, 10000000000ULL)) return false;
+    m_bytes_sent.fetch_add(Mtp::kHeaderSize + filled);
+
+    uint64_t remaining = size - filled;
+    while (remaining > 0 && !should_stop()) {
+        const size_t chunk = (m_buf_size < remaining) ? m_buf_size : (size_t)remaining;
+        size_t n = 0;
+        while (n < chunk) {
+            const int64_t got = src.read(m_buf + n, chunk - n);
+            if (got < 0) return false;
+            if (got == 0) break;
+            n += (size_t)got;
+        }
+        if (n == 0) break;                    // stream ended early
+        if (!ep_write(m_buf, n, 10000000000ULL)) return false;
+        m_bytes_sent.fetch_add(n);
+        remaining -= n;
+    }
+    // Only a COMPLETE NSP is usable, so a short stream is a failure, not a
+    // truncated success.
+    return remaining == 0;
+#else
+    (void)code; (void)tid; (void)src;
+    return false;
+#endif
+}
+
 bool MtpServer::send_file_data(uint16_t code, uint32_t tid,
                                const std::string& vfs_path, uint64_t size,
                                uint64_t offset) {
@@ -433,9 +662,13 @@ bool MtpServer::recv_file_data(const std::string& vfs_path, uint64_t expected) {
     // branch, but the same class of bug if one is ever added.
     ov.quiesce();
     std::fclose(f);
+    // NO-COMMIT: deliberate. On a save, the partial write and this removal are
+    // BOTH uncommitted, so the journal discards them together at unmount and the
+    // save returns to its last committed state. Not committing IS the rollback;
+    // adding a commit here would make a failed transfer durable.
     if (!sink_ok) { std::remove(vfs_path.c_str()); return false; }
 
-    if (written != payload) { std::remove(vfs_path.c_str()); return false; }
+    if (written != payload) { std::remove(vfs_path.c_str()); return false; }  // NO-COMMIT: as above
     return true;
 #else
     (void)vfs_path; (void)expected; return false;
@@ -447,7 +680,7 @@ bool MtpServer::recv_file_data(const std::string& vfs_path, uint64_t expected) {
 // back through, so the file is the only forensic record of why it failed.
 void MtpServer::save_install_log(const std::string& filename, bool ok) {
     const std::string dir = Config::get().paths.log_folder;
-    if (!dir.empty() && !Fs::exists(dir)) Fs::make_directory(dir);
+    if (!dir.empty() && !Fs::exists(dir)) Fs::make_directory(dir);  // NO-COMMIT: log folder on SD, never a save
     const std::string path = (dir.empty() ? std::string("sdmc:/switch/GarageNX/logs") : dir)
                            + "/" + Core::DateTime::log_stamp_now() + "_mtp.log";
     FILE* f = std::fopen(path.c_str(), "wb");
@@ -481,6 +714,8 @@ void MtpServer::reject_install(const std::string& filename, const std::string& r
 void MtpServer::arm_incoming_object(uint32_t storage, uint32_t parent, uint16_t fmt,
                                     const std::string& filename, uint64_t size,
                                     bool size_exact, uint32_t tid) {
+    m_pending_save_synth.clear();   // set below only for a Save Data destination
+
     // Refuse anything that could escape the storage root.
     if (filename.find('/') != std::string::npos ||
         filename.find('\\') != std::string::npos ||
@@ -566,8 +801,43 @@ void MtpServer::arm_incoming_object(uint32_t storage, uint32_t parent, uint16_t 
         return;
     }
 
+    // ── Save Data ────────────────────────────────────────────────────────────
+    // Mirrors FTP exactly. A write INSIDE a title's save resolves to the mounted
+    // "save:/..." path and then goes through the guard, which raises the on-device
+    // confirmation (Saves is ReadOnly + Confirm::OnDevice) and performs the write
+    // if the user allows it. A write at the storage root, or inside one of the
+    // synthesized levels, has no title behind it and is refused outright with NO
+    // prompt — which is also what FTP does: to_vfs() returns "" for those levels
+    // and the command answers 550 without asking anyone anything.
+    //
+    // RESOLVING BEFORE GUARDING IS THE WHOLE POINT. save_resolve() mounts the
+    // title named in the synthetic path, so the guard classifies — and the user
+    // confirms — the save the write will actually land in. Guarding the synthetic
+    // path instead would default-deny (no surface claims that prefix), and
+    // guarding a bare "save:/" derived from the storage root would confirm against
+    // whichever save happened to be mounted from the last browse.
+    std::string save_parent_synth;   // non-empty => this is a Save Data write
+    {
+        const std::string* sparent = (parent != Mtp::kRootParent && parent != 0)
+                                     ? path_for(parent) : nullptr;
+        if (sparent && Services::save_is_synthetic(*sparent))
+            save_parent_synth = *sparent;      // copy: path_for points into m_paths
+
+        // Storage root of Save Data: the level above any user, so there is no
+        // (user, title) to resolve and nothing a prompt could truthfully name.
+        if (storage == kStorageSaves && save_parent_synth.empty()) {
+            send_response(Rc::AccessDenied, tid);
+            return;
+        }
+    }
+
     std::string dir;
-    if (parent == Mtp::kRootParent || parent == 0) {
+    if (!save_parent_synth.empty()) {
+        // Mounts the named title, then hands back its concrete path. Empty means
+        // the parent was a user folder or an unknown title — refuse, no prompt.
+        dir = Services::save_resolve_synth(save_parent_synth);
+        if (dir.empty()) { send_response(Rc::AccessDenied, tid); return; }
+    } else if (parent == Mtp::kRootParent || parent == 0) {
         // Root of the TARGET storage — not always the SD card. Hardcoding "sdmc:/"
         // meant a write aimed at another storage's root silently landed on SD.
         dir = "sdmc:/";
@@ -584,11 +854,22 @@ void MtpServer::arm_incoming_object(uint32_t storage, uint32_t parent, uint16_t 
     }
     const std::string dest = Fs::join(dir, filename);
 
-    // Write guard: protected storages (NAND) need on-device confirmation, and this
+    // The HANDLE must stay synthetic for a save object, even though the
+    // filesystem work uses the concrete path: a handle keyed on "save:/slot1.dat"
+    // would mean a different file as soon as another title is mounted, which is
+    // the whole reason save objects are interned under "savedata:/" in the first
+    // place. m_pending_path, by contrast, is what SendObject writes to, so it
+    // must be the real path.
+    const std::string handle_key = save_parent_synth.empty()
+                                 ? dest
+                                 : Fs::join(save_parent_synth, filename);
+
+    // Write guard: protected storages (NAND, Save Data) need on-device
+    // confirmation, and this
     // runs on the MTP worker thread so blocking here is correct. One check covers
     // both the folder branch below and the file transfer it arms. (The install
     // storages returned earlier and are not affected.)
-    if (Services::guard_write("USB-MTP", "write", dest, Config::get().mtp)
+    if (Services::guard_write("USB-MTP", "write", dest, Config::get().mtp.surfaces)
             != Services::WriteDecision::Allow) {
         send_response(Rc::AccessDenied, tid);
         return;
@@ -598,20 +879,24 @@ void MtpServer::arm_incoming_object(uint32_t storage, uint32_t parent, uint16_t 
 
     if (fmt == Mtp::Fmt::Association) {
         // A folder is complete at SendObjectInfo time; no SendObject follows.
-        if (!Fs::make_directory(dest)) { send_response(Rc::GeneralError, tid); return; }
+        if (!Services::SaveWrite::make_directory(dest)) { send_response(Rc::GeneralError, tid); return; }
+        if (!Services::save_commit_if_save_path(dest)) {
+            send_response(Rc::GeneralError, tid); return;
+        }
         m_pending_valid = false;
-        const uint32_t h = intern(dest);
+        const uint32_t h = intern(handle_key);
         const uint32_t rp[3] = {storage, parent, h};
         send_response(Rc::Ok, tid, rp, 3);
         return;
     }
 
-    m_pending_path       = dest;
+    m_pending_path       = dest;      // real path: SendObject writes here
+    m_pending_save_synth = save_parent_synth.empty() ? std::string() : handle_key;
     m_pending_size       = size;
     m_pending_size_exact = size_exact;
     m_pending_valid      = true;
 
-    const uint32_t h = intern(dest);
+    const uint32_t h = intern(handle_key);
     const uint32_t rp[3] = {storage, parent, h};
     send_response(Rc::Ok, tid, rp, 3);
     return;
@@ -812,13 +1097,23 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             break;
 
         case Op::GetStorageIDs: {
+            // Iterate the CATALOG, not a hand-written list. This was eight
+            // hardcoded lines, and adding Gamecard meant touching FOUR separate
+            // places: the id constant, mtp_id_to_surface(), surface_to_mtp_id()
+            // and this. I updated three and missed this one, which is why the card
+            // showed on FTP and HTTP and not here — the same class of miss as the
+            // round before, in a list I had just written a lesson about.
+            //
+            // Deriving the list removes the fourth place permanently: a surface
+            // that has a wire id and is enabled now appears here automatically,
+            // exactly as it does on the transports that never had this problem.
+            // Order follows catalog order, which is not semantically meaningful to
+            // MTP (hosts key off the ids) and is the canonical order elsewhere.
             std::vector<uint32_t> ids;
-            if (storage_enabled(kStorageSd))          ids.push_back(kStorageSd);
-            if (storage_enabled(kStorageSdInstall))   ids.push_back(kStorageSdInstall);
-            if (storage_enabled(kStorageNandInstall)) ids.push_back(kStorageNandInstall);
-            if (storage_enabled(kStorageAlbum))       ids.push_back(kStorageAlbum);
-            if (storage_enabled(kStorageNandUser))    ids.push_back(kStorageNandUser);
-            if (storage_enabled(kStorageNandSystem))  ids.push_back(kStorageNandSystem);
+            for (const auto& s : Services::StorageCatalog::all()) {
+                const uint32_t id = surface_to_mtp_id(s.id);
+                if (id && storage_enabled(id)) ids.push_back(id);
+            }
             Writer w;
             w.au32(ids);
             if (send_data(Op::GetStorageIDs, tid, w.data()))
@@ -857,13 +1152,89 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             std::string storage_root;
             if (c.param[0] == 0xFFFFFFFF) {
                 storage_root = "sdmc:/";   // "any" defaults to SD's tree
+            } else if (c.param[0] == kStorageTitles) {
+                // Synthesized: one virtual NSP per installed title, interned under
+                // the titles: prefix so each gets a normal object handle.
+                if (!storage_enabled(kStorageTitles)) {
+                    send_response(Rc::InvalidStorageId, tid); break;
+                }
+                const uint32_t parent_t = (c.nparams >= 3) ? c.param[2] : Mtp::kRootParent;
+                std::vector<uint32_t> handles;
+                if (parent_t == Mtp::kRootParent || parent_t == 0) {
+                    for (const auto& e : Services::installed_titles_list())
+                        handles.push_back(intern(std::string(kTitlesPrefix) + e.name));
+                }
+                if (c.hdr.code == Op::GetNumObjects) {
+                    const uint32_t n = (uint32_t)handles.size();
+                    send_response(Rc::Ok, tid, &n, 1);
+                } else {
+                    Writer w; w.au32(handles);
+                    if (send_data(Op::GetObjectHandles, tid, w.data()))
+                        send_response(Rc::Ok, tid);
+                }
+                break;
+            } else if (c.param[0] == kStorageSaves) {
+                // Three levels: users, that user's titles, then the real save.
+                // Only the third has a filesystem behind it, and reaching it
+                // mounts that (user, title) — see save_surface.hpp. Every entry
+                // is interned under the "savedata:/" prefix so a handle names a
+                // specific title's file and cannot be confused with the same
+                // leaf name in another title's save.
+                if (!storage_enabled(kStorageSaves)) {
+                    send_response(Rc::InvalidStorageId, tid); break;
+                }
+                const uint32_t parent_s = (c.nparams >= 3) ? c.param[2] : Mtp::kRootParent;
+                std::vector<uint32_t> handles;
+
+                if (parent_s == Mtp::kRootParent || parent_s == 0) {
+                    for (const auto& name : Services::save_user_names())
+                        handles.push_back(intern(Services::save_synth_path(name)));
+                } else {
+                    const std::string* ps = path_for(parent_s);
+                    if (!ps || !Services::save_is_synthetic(*ps)) {
+                        send_response(Rc::InvalidParentObject, tid); break;
+                    }
+                    const std::string rel = Services::save_synth_rel(*ps);
+                    if (rel.empty()) {   // no handle is ever interned for the root
+                        send_response(Rc::InvalidParentObject, tid); break;
+                    }
+                    const auto sp = Services::sp_split_save(rel);
+                    if (sp.level == Services::SavePath::Level::Titles) {
+                        for (const auto& label : Services::save_title_labels(sp.user))
+                            handles.push_back(intern(
+                                Services::save_synth_path(rel + "/" + label)));
+                    } else {
+                        // Inside a title: mount it and list the real filesystem.
+                        // Every child belongs to the SAME title, so the single
+                        // mount slot stays put for the whole listing.
+                        const std::string dir = Services::save_resolve(sp);
+                        if (dir.empty()) {
+                            send_response(Rc::InvalidParentObject, tid); break;
+                        }
+                        bool sok = false;
+                        for (const auto& e : Fs::list(dir, &sok))
+                            handles.push_back(intern(
+                                Services::save_synth_path(rel + "/" + e.name)));
+                        if (!sok) { send_response(Rc::InvalidParentObject, tid); break; }
+                    }
+                }
+
+                if (c.hdr.code == Op::GetNumObjects) {
+                    const uint32_t n = (uint32_t)handles.size();
+                    send_response(Rc::Ok, tid, &n, 1);
+                } else {
+                    Writer w; w.au32(handles);
+                    if (send_data(Op::GetObjectHandles, tid, w.data()))
+                        send_response(Rc::Ok, tid);
+                }
+                break;
             } else {
                 StorageSurface::Id sid;
                 const StorageSurface* surf = nullptr;
                 if (mtp_id_to_surface(c.param[0], sid))
                     surf = StorageCatalog::find(sid);
                 if (!surf || surf->kind != StorageKind::Filesystem ||
-                    !StorageCatalog::enabled(sid, Config::get().mtp)) {
+                    !StorageCatalog::enabled(sid, Config::get().mtp.surfaces)) {
                     send_response(Rc::InvalidStorageId, tid); break;
                 }
                 storage_root = std::string(surf->vfs_root) + "/";
@@ -915,7 +1286,29 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             if (!p) { send_response(Rc::InvalidObjectHandle, tid); break; }
             if (Fs::is_directory(*p)) { send_response(Rc::InvalidObjectHandle, tid); break; }
             const std::string path = *p;   // path_for points into m_paths; copy before streaming
-            if (send_file_data(Op::GetObject, tid, path, Fs::file_size(path)))
+
+            // Virtual NSP: build and stream it rather than reading a file.
+            if (path.compare(0, 8, kTitlesPrefix) == 0) {
+                const std::string leaf = path.substr(8);
+                Core::Ncm::Title t;
+                if (!Services::installed_titles_find(leaf, t)) {
+                    send_response(Rc::InvalidObjectHandle, tid); break;
+                }
+                auto src = Core::NspStream::open(t, Core::Keys::get(), nullptr);
+                if (!src) { send_response(Rc::GeneralError, tid); break; }
+                if (send_stream_data(Op::GetObject, tid, *src))
+                    send_response(Rc::Ok, tid);
+                else
+                    send_response(Rc::IncompleteTransfer, tid);
+                break;
+            }
+
+            // Save objects name a file inside a specific title's save; resolving
+            // mounts that title. A synthesized folder level is not readable.
+            const std::string rpath = readable_path(path);
+            if (rpath.empty()) { send_response(Rc::InvalidObjectHandle, tid); break; }
+
+            if (send_file_data(Op::GetObject, tid, rpath, Fs::file_size(rpath)))
                 send_response(Rc::Ok, tid);
             else
                 send_response(Rc::IncompleteTransfer, tid);
@@ -932,7 +1325,8 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             const std::string* p = path_for(c.param[0]);
             if (!p) { send_response(Rc::InvalidObjectHandle, tid); break; }
             if (Fs::is_directory(*p)) { send_response(Rc::InvalidObjectHandle, tid); break; }
-            const std::string path = *p;
+            const std::string path = readable_path(*p);
+            if (path.empty()) { send_response(Rc::InvalidObjectHandle, tid); break; }
             const uint64_t fsize  = Fs::file_size(path);
             const uint64_t offset = c.param[1];
             uint64_t count        = c.param[2];
@@ -956,7 +1350,8 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             const std::string* p = path_for(c.param[0]);
             if (!p) { send_response(Rc::InvalidObjectHandle, tid); break; }
             if (Fs::is_directory(*p)) { send_response(Rc::InvalidObjectHandle, tid); break; }
-            const std::string path = *p;
+            const std::string path = readable_path(*p);
+            if (path.empty()) { send_response(Rc::InvalidObjectHandle, tid); break; }
             const uint64_t fsize  = Fs::file_size(path);
             const uint64_t offset = (uint64_t)c.param[1] | ((uint64_t)c.param[2] << 32);
             uint64_t count        = c.param[3];
@@ -1074,7 +1469,22 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             const std::string* pv = path_for(c.param[0]);
             if (!pv) { send_response(Rc::InvalidObjectHandle, tid); break; }
 
-            const bool pv_is_dir = Fs::is_directory(*pv);
+            // Resolve save objects the same way build_object_info does, and for
+            // the same reason: the synthesized levels answer without mounting,
+            // the real ones resolve through the shared choke point. Getting this
+            // wrong here (not in GetObjectInfo) is what made every file render
+            // blank the last time — gvfs reads size through THIS path.
+            const bool pv_is_save = Services::save_is_synthetic(*pv);
+            const bool pv_save_synth = pv_is_save &&
+                                       Services::save_synth_is_synthesized_dir(*pv);
+            std::string pv_real;
+            if (pv_is_save && !pv_save_synth) {
+                pv_real = Services::save_resolve_synth(*pv);
+                if (pv_real.empty()) { send_response(Rc::InvalidObjectHandle, tid); break; }
+            }
+            const bool pv_is_dir = pv_save_synth ? true
+                                 : pv_is_save    ? Fs::is_directory(pv_real)
+                                                 : Fs::is_directory(*pv);
             const uint16_t pv_prop = (uint16_t)c.param[1];
             Writer pw;
             bool pv_ok = true;
@@ -1086,13 +1496,21 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             } else if (pv_prop == Mtp::ObjProp::ProtectionStatus) {
                 pw.u16(0);
             } else if (pv_prop == Mtp::ObjProp::ObjectSize) {
-                pw.u64(pv_is_dir ? 0 : Fs::file_size(*pv));   // the crucial one
+                if (pv->compare(0, 8, kTitlesPrefix) == 0)
+                    pw.u64(Services::installed_titles_exact_size(pv->substr(8)));
+                else if (pv_is_dir)
+                    pw.u64(0);
+                else if (pv_is_save)
+                    pw.u64(Fs::file_size(pv_real));
+                else
+                    pw.u64(Fs::file_size(*pv));   // the crucial one
             } else if (pv_prop == Mtp::ObjProp::ObjectFileName) {
                 pw.str(Fs::basename(*pv));
             } else if (pv_prop == Mtp::ObjProp::ParentObject) {
                 const std::string parent_path = Fs::parent(*pv);
                 uint32_t parent_handle = Mtp::kRootParent;
-                bool is_root = parent_path.empty();
+                bool is_root = parent_path.empty() ||
+                               parent_path == Services::save_synth_prefix();
                 for (const auto& s : Services::StorageCatalog::all()) {
                     if (s.kind != Services::StorageKind::Filesystem) continue;
                     const std::string root = s.vfs_root;
@@ -1146,18 +1564,37 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
                     sp_name.find('\\') != std::string::npos) {
                     send_response(Rc::InvalidParameter, tid); break;
                 }
-                const std::string sp_new = Fs::join(Fs::parent(sp_old), sp_name);
+                // For a save object the guard and the rename both work on the
+                // MOUNTED path, while the HANDLE keeps its synthetic key — the
+                // handle must keep naming (user, title, leaf), not a bare
+                // "save:/..." that means something else once another title mounts.
+                const bool sp_is_save = Services::save_is_synthetic(sp_old);
+                std::string sp_real_old = sp_old;
+                if (sp_is_save) {
+                    sp_real_old = Services::save_resolve_synth(sp_old);
+                    // A synthesized level (a user folder) has no file behind it.
+                    if (sp_real_old.empty()) { send_response(Rc::AccessDenied, tid); break; }
+                }
+                const std::string sp_real_new = Fs::join(Fs::parent(sp_real_old), sp_name);
 
                 // Rename mutates BOTH names, so it goes through the move guard:
-                // renaming inside NAND (or out of it) needs on-device confirmation.
-                if (Services::guard_move("USB-MTP", "rename", sp_old, sp_new,
-                                         Config::get().mtp)
+                // renaming inside NAND or a save (or out of one) needs on-device
+                // confirmation, asked as ONE prompt.
+                if (Services::save_is_mount_root(sp_real_old)) {
+                    send_response(Rc::AccessDenied, tid); break;
+                }
+                if (Services::guard_move("USB-MTP", "rename", sp_real_old, sp_real_new,
+                                         Config::get().mtp.surfaces)
                         != Services::WriteDecision::Allow) {
                     send_response(Rc::AccessDenied, tid); break;
                 }
-                if (!Fs::rename(sp_old, sp_new)) {
+                if (!Services::SaveWrite::rename(sp_real_old, sp_real_new)) {
                     send_response(Rc::GeneralError, tid); break;
                 }
+                if (!Services::save_commit_if_save_path(sp_real_new)) {
+                    send_response(Rc::GeneralError, tid); break;
+                }
+                const std::string sp_new = Fs::join(Fs::parent(sp_old), sp_name);
                 // Keep the handle valid and pointing at the new path, so the host
                 // can keep using it without a full re-enumeration.
                 if (sp_handle >= 1 && sp_handle <= m_paths.size()) {
@@ -1207,16 +1644,38 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             // same m_pending_* state; they differ only in whether the declared
             // size can be trusted at or above 4 GiB.
             if (!m_pending_valid) { send_response(Rc::GeneralError, tid); break; }
-            const std::string dest    = m_pending_path;
+            std::string       dest    = m_pending_path;
             const uint64_t    size    = m_pending_size;
             const uint32_t    storage = m_pending_storage;
             const bool        exact   = m_pending_size_exact;
+            const std::string save_synth = m_pending_save_synth;
             m_pending_valid = false;   // one SendObject per declaration
+            m_pending_save_synth.clear();
+
+            // A Save Data destination is re-resolved here, because this is a
+            // SEPARATE command from the SendObjectInfo that armed it. A client is
+            // free to browse another title in between, which remounts the single
+            // save slot and would leave `dest` — a bare "save:/..." path — aimed
+            // inside a different game's save. Re-resolving from the synthetic key
+            // re-establishes the (user, title) this object names.
+            //
+            // No second confirmation: the synthetic key pins user, title and leaf,
+            // so re-resolving cannot reach a destination the user did not already
+            // approve. It can only fail, and failing is a refusal.
+            if (!save_synth.empty()) {
+                dest = Services::save_resolve_synth(save_synth);
+                if (dest.empty()) { send_response(Rc::AccessDenied, tid); break; }
+            }
 
             if (is_install_storage(storage)) {
                 send_response(recv_install(storage, dest, size, exact) ? Rc::Ok : Rc::GeneralError, tid);
             } else {
-                send_response(recv_file_data(dest, size) ? Rc::Ok : Rc::IncompleteTransfer, tid);
+                bool ok = recv_file_data(dest, size);
+                // Commit BEFORE answering: the client treats our Ok as durable,
+                // and an uncommitted save write is discarded at unmount. Reporting
+                // success for bytes that will vanish is the worst available answer.
+                if (ok && !Services::save_commit_if_save_path(dest)) ok = false;
+                send_response(ok ? Rc::Ok : Rc::IncompleteTransfer, tid);
             }
             break;
         }
@@ -1226,13 +1685,55 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             const std::string* p = path_for(c.param[0]);
             if (!p) { send_response(Rc::InvalidObjectHandle, tid); break; }
             const std::string path = *p;   // copy: path_for points into m_paths
-            if (Services::guard_write("USB-MTP", "delete", path, Config::get().mtp)
+
+            // A save object is guarded by its MOUNTED path, not its handle key —
+            // resolving first mounts the title the handle names, so the guard
+            // classifies and the user confirms the file that will actually be
+            // deleted. Same order as FTP's DELE (to_vfs, then guard_write). An
+            // unresolvable path is a synthesized level with no file behind it:
+            // refuse without asking, exactly as FTP answers 550 there.
+            std::string target = path;
+            if (Services::save_is_synthetic(path)) {
+                target = Services::save_resolve_synth(path);
+                if (target.empty()) {
+                    Services::guard_log_note("USB-MTP", "delete", "REJECT",
+                                             "save-unresolved", path);
+                    send_response(Rc::AccessDenied, tid); break;
+                }
+            }
+
+            // The save mount root is the filesystem, not an object in it. A host
+            // deleting a title folder clears its contents and then removes the
+            // folder; prompting for that and failing anyway teaches the user that
+            // approving these dialogs does nothing.
+            // Deleting the save "folder" over MTP means wiping the save: the
+            // title folder is the synthesized mount point, not an rmdir target.
+            // Guarded, because wiping a save is destructive and unrecoverable.
+            if (Services::save_is_mount_root(target)) {
+                if (Services::guard_write("USB-MTP", "wipe save", target,
+                                          Config::get().mtp.surfaces)
+                        != Services::WriteDecision::Allow) {
+                    send_response(Rc::AccessDenied, tid); break;
+                }
+                const bool wiped = Services::save_wipe(target);
+                if (!wiped) Services::guard_log_note("USB-MTP", "wipe save", "FAILED",
+                                                     "wipe-failed", target);
+                send_response(wiped ? Rc::Ok : Rc::GeneralError, tid);
+                break;
+            }
+            if (Services::guard_write("USB-MTP", "delete", target, Config::get().mtp.surfaces)
                     != Services::WriteDecision::Allow) {
                 send_response(Rc::AccessDenied, tid);
                 break;
             }
-            const bool ok = Fs::is_directory(path) ? Fs::remove_directory_recursive(path)
-                                                   : Fs::remove_file(path);
+            bool ok = Fs::is_directory(target)
+                          ? Services::SaveWrite::remove_directory_recursive(target)
+                          : Services::SaveWrite::remove_file(target);
+            if (!ok) Services::guard_log_note("USB-MTP", "delete", "FAILED",
+                                              "fs-remove-failed", target);
+            // A journalled save discards uncommitted changes at unmount, so a
+            // delete that is not committed comes back. No-op for other surfaces.
+            if (ok && !Services::save_commit_if_save_path(target)) ok = false;
             send_response(ok ? Rc::Ok : Rc::AccessDenied, tid);
             break;
         }

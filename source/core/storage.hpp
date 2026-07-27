@@ -26,6 +26,16 @@ SpaceInfo sd_card();
 // NAND user partition capacity. On PC stub returns a plausible value.
 SpaceInfo nand_user();
 
+// NAND SYSTEM partition capacity. On PC stub returns a plausible value.
+//
+// Needed because MTP's StorageInfo must report real capacity for any surface a
+// host may write to: hosts check FreeSpaceInBytes BEFORE opening a transfer and
+// refuse client-side if it does not fit. Reporting zero makes every write fail
+// with a misleading "not enough space", which is exactly what happened to Save
+// Data. NAND System is confirm-gated rather than read-only, so it needs a real
+// figure for the same reason.
+SpaceInfo nand_system();
+
 } // namespace Core::Storage
 
 

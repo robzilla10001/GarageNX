@@ -1,6 +1,7 @@
 // source/ui/font.cpp
 
 #include "ui/font.hpp"
+#include "ui/text_wrap.hpp"
 #include <SDL2/SDL.h>
 #include <map>
 #include <string>
@@ -90,6 +91,26 @@ SDL_Surface* render(const std::string& text, Size size, Weight weight,
     TTF_Font* font = get(size, weight, family);
     if (!font) return nullptr;
     return TTF_RenderUTF8_Blended(font, text.c_str(), color);
+}
+
+int measure_width(const std::string& text, Size size, Weight weight, Family family) {
+    if (text.empty()) return 0;
+    TTF_Font* f = get(size, weight, family);
+    if (!f) return 0;
+    int w = 0, h = 0;
+    if (TTF_SizeUTF8(f, text.c_str(), &w, &h) != 0) return 0;
+    return w;
+}
+
+std::vector<std::string> wrap(const std::string& text, int max_width, Size size,
+                              Weight weight, Family family) {
+    // Thin adapter: the algorithm lives in ui/text_wrap.hpp so it can be
+    // host-tested with an exact synthetic metric. Keep it that way — a second
+    // copy here would be the one that gets fixed and the one that does not.
+    return TextWrap::wrap(text, max_width,
+                          [&](const std::string& t) {
+                              return measure_width(t, size, weight, family);
+                          });
 }
 
 int mono_advance(Size size) {
