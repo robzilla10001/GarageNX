@@ -114,6 +114,23 @@ static void list_storage(NcmStorageId storage_id, Storage tag,
 
 #endif // PLATFORM_SWITCH
 
+std::vector<Title> list_gamecard(bool* ok) {
+    std::vector<Title> out;
+#ifdef PLATFORM_SWITCH
+    // Same enumeration as any other storage — a game card registers its titles in
+    // NCM under NcmStorageId_GameCard exactly like SD or built-in. Nothing about
+    // reading it is special; it was simply never asked for.
+    //
+    // No card inserted is not an error: ncmOpenContentMetaDatabase fails,
+    // list_storage logs and adds nothing, and an empty list is the right answer.
+    list_storage(NcmStorageId_GameCard, Storage::GameCard, out);
+    if (ok) *ok = true;
+#else
+    if (ok) *ok = false;
+#endif
+    return out;
+}
+
 std::vector<Title> list_all(bool* ok) {
     std::vector<Title> out;
 #ifdef PLATFORM_SWITCH
@@ -188,8 +205,7 @@ Core::Nca::ControlData resolve_control(const Title& title,
 #else
     Core::Nca::ControlData result;
 
-    NcmStorageId storage_id = (title.storage == Storage::SdCard)
-        ? NcmStorageId_SdCard : NcmStorageId_BuiltInUser;
+    NcmStorageId storage_id = to_ncm_storage_id(title.storage);
 
     NcmContentMetaDatabase db;
     if (R_FAILED(ncmOpenContentMetaDatabase(&db, storage_id))) return result;

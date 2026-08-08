@@ -40,12 +40,13 @@ std::string content_id_hex(const NcmContentId& id) {
 
 // True (and fills rights_id) if this NCA uses titlekey crypto. Requires decrypting
 // the NCA header, so it is done once per content at open() time — never per read.
-bool nca_rights_id(NcmContentStorage* cs, const NcmContentId* id,
-                   const Keys::Keyset& keys, uint8_t rights_id[0x10]) {
+// Parse a rights id out of an ALREADY-READ encrypted NCA header. Split from the
+// read so both storage paths share it: gamecard content cannot be read through
+// NCM (2002-2964), so its header arrives from the mounted secure partition
+// instead, but the decryption and the offset of the rights id are identical.
+bool nca_rights_id_from_header(const uint8_t* enc, const Keys::Keyset& keys,
+                               uint8_t rights_id[0x10]) {
     if (!keys.has_header_key) return false;
-    uint8_t enc[NCA_HEADER_SIZE];
-    if (R_FAILED(ncmContentStorageReadContentIdFile(cs, enc, NCA_HEADER_SIZE, id, 0)))
-        return false;
     uint8_t dec[NCA_HEADER_SIZE];
     Aes128XtsContext xts;
     aes128XtsContextCreate(&xts, keys.header_key.data(), keys.header_key.data() + 0x10, false);
@@ -69,14 +70,69 @@ struct Content {
 class SourceImpl : public Source {
 public:
     ~SourceImpl() override {
+        if (m_gc_file) ::fclose(m_gc_file);
         if (m_cs_open) ncmContentStorageClose(&m_cs);
         if (m_db_open) ncmContentMetaDatabaseClose(&m_db);
     }
 
+    // Read `n` bytes of one content at `off`.
+    //
+    // GAME CARD CONTENT CANNOT BE READ THROUGH NCM. ncmContentStorageReadContentIdFile
+    // fails on NcmStorageId_GameCard with 2002-2964 (FS, unsupported operation) —
+    // and it fails while ncmContentStorageGetSizeFromContentId on the SAME storage
+    // and the SAME content id SUCCEEDS. That asymmetry is the tell: the storage
+    // handle is fine and the content id is real; that one accessor is simply not
+    // implemented for cartridges.
+    //
+    // The content is readable as an ordinary FILE on the card's mounted secure
+    // partition, which GarageNX already mounts as "gamecard:". So for gamecard
+    // titles we open <content_id>.nca there and read it directly. Every other
+    // storage keeps the NCM path unchanged.
+    //
+    // The handle is cached because a dump reads one content in many chunks;
+    // reopening per chunk would be pointless syscalls.
+    bool read_content(void* out, size_t n, const NcmContentId& id, uint64_t off) {
+        if (m_storage_id != NcmStorageId_GameCard)
+            return R_SUCCEEDED(ncmContentStorageReadContentIdFile(
+                       &m_cs, out, n, &id, (s64)off));
+
+        char idhex[33];
+        for (int i = 0; i < 16; ++i)
+            std::snprintf(idhex + i * 2, 3, "%02x", id.c[i]);
+
+        if (m_gc_file_id != std::string(idhex)) {
+            if (m_gc_file) { ::fclose(m_gc_file); m_gc_file = nullptr; }
+            // Meta contents carry a .cnmt.nca suffix; everything else is .nca.
+            // Try the plain name first because it is the common case.
+            const std::string base = std::string("gamecard:/") + idhex;
+            m_gc_file = ::fopen((base + ".nca").c_str(), "rb");
+            if (!m_gc_file) m_gc_file = ::fopen((base + ".cnmt.nca").c_str(), "rb");
+            if (!m_gc_file) {
+                if (!m_read_fail_logged) {
+                    m_read_fail_logged = true;
+                    SDL_Log("nsp_stream: gamecard NCA not found on secure partition: %s",
+                            idhex);
+                }
+                return false;
+            }
+            m_gc_file_id = idhex;
+        }
+        if (::fseek(m_gc_file, (long)off, SEEK_SET) != 0) return false;
+        return ::fread(out, 1, n, m_gc_file) == n;
+    }
+
+    bool rights_id_for(const NcmContentId& id, const Keys::Keyset& keys,
+                       uint8_t rights_id[0x10]) {
+        if (!keys.has_header_key) return false;
+        uint8_t enc[NCA_HEADER_SIZE];
+        if (!read_content(enc, NCA_HEADER_SIZE, id, 0)) return false;
+        return nca_rights_id_from_header(enc, keys, rights_id);
+    }
+
     bool init(const Ncm::Title& title, const Keys::Keyset& keys, std::string* error) {
         // Mirrors dump.cpp exactly: a title lives in either SD or built-in storage.
-        const NcmStorageId storage_id = (title.storage == Ncm::Storage::SdCard)
-            ? NcmStorageId_SdCard : NcmStorageId_BuiltInUser;
+        const NcmStorageId storage_id = Ncm::to_ncm_storage_id(title.storage);
+        m_storage_id = storage_id;   // kept for diagnostics on a failed read
 
         if (R_FAILED(ncmOpenContentMetaDatabase(&m_db, storage_id))) {
             if (error) *error = "cannot open content meta database";
@@ -88,6 +144,18 @@ public:
             return false;
         }
         m_cs_open = true;
+
+        // One line per stream open, so a failed dump has context even if the
+        // read never happens. Cheap: opens are per-dump, not per-chunk.
+        {
+            FILE* f = ::fopen("sdmc:/switch/GarageNX/logs/nsp_stream.log", "a");
+            if (f) {
+                std::fprintf(f, "open storage=%d meta_id=%016llX ver=%u type=%d\n",
+                             (int)storage_id, (unsigned long long)title.meta_id,
+                             (unsigned)title.version, (int)title.type);
+                ::fclose(f);
+            }
+        }
 
         NcmContentMetaKey key;
         std::memset(&key, 0, sizeof(key));
@@ -116,6 +184,10 @@ public:
             for (s32 i = 0; i < written; ++i) {
                 const NcmContentInfo& ci = infos[i];
                 s64 sz = 0;
+                // Log the FIRST size failure too. If sizes fail, the read was
+                // never going to work and the cause is the storage/handle, not
+                // the read call — that distinction is the whole point of logging
+                // both.
                 if (R_FAILED(ncmContentStorageGetSizeFromContentId(&m_cs, &sz, &ci.content_id)))
                     continue;
 
@@ -132,7 +204,7 @@ public:
                 files.push_back(std::move(f));
 
                 if (!have_rights)
-                    have_rights = nca_rights_id(&m_cs, &ci.content_id, keys, rights_id);
+                    have_rights = rights_id_for(ci.content_id, keys, rights_id);
             }
             offset += written;
         }
@@ -220,9 +292,39 @@ public:
 
                 if (c.is_inline) {
                     std::memcpy(out, c.inline_data.data() + rel, n);
-                } else if (R_FAILED(ncmContentStorageReadContentIdFile(
-                               &m_cs, out, n, &c.id, (s64)rel))) {
-                    return -1;
+                } else {
+                    const ::Result rc = read_content(out, n, c.id, rel) ? 0 : 1;
+                    if (R_FAILED(rc)) {
+                        // The caller only ever saw "NCA read failed" with no
+                        // Result, which is unusable for diagnosis — a gamecard
+                        // dump failing on its FIRST read could be the storage,
+                        // the content id, the offset, or the length, and the rc
+                        // distinguishes them immediately. Logged ONCE per stream
+                        // so a long read that starts failing does not fill the SD
+                        // card with the same line.
+                        if (!m_read_fail_logged) {
+                            m_read_fail_logged = true;
+                            char idhex[33];
+                            for (int i = 0; i < 16; ++i)
+                                std::snprintf(idhex + i * 2, 3, "%02X", c.id.c[i]);
+                            FILE* f = ::fopen(
+                                "sdmc:/switch/GarageNX/logs/nsp_stream.log", "a");
+                            if (f) {
+                                std::fprintf(f,
+                                    "ReadContentIdFile rc=0x%08X storage=%d "
+                                    "content=%s off=%llu len=%zu size=%llu\n",
+                                    rc, (int)m_storage_id, idhex,
+                                    (unsigned long long)rel, n,
+                                    (unsigned long long)c.size);
+                                ::fclose(f);
+                            }
+                            SDL_Log("nsp_stream: ReadContentIdFile rc=0x%08X "
+                                    "storage=%d off=%llu len=%zu",
+                                    rc, (int)m_storage_id,
+                                    (unsigned long long)rel, n);
+                        }
+                        return -1;
+                    }
                 }
                 m_pos += n;
                 return (int64_t)n;
@@ -237,6 +339,10 @@ private:
     NcmContentStorage      m_cs{};
     bool                   m_db_open = false;
     bool                   m_cs_open = false;
+    NcmStorageId           m_storage_id{};        // also selects the read path
+    FILE*                  m_gc_file = nullptr;   // cached gamecard NCA handle
+    std::string            m_gc_file_id;          // content id m_gc_file is open on
+    bool                   m_read_fail_logged = false;
 
     std::vector<Content>     m_contents;
     std::vector<std::string> m_names;     // parallel to m_contents, for progress

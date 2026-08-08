@@ -325,8 +325,7 @@ bool install(std::vector<ContentEntry> contents,
     if (!contents_preregistered) progress.reset();
     progress.running = true;
 
-    NcmStorageId storage_id = (storage == Core::Ncm::Storage::SdCard)
-        ? NcmStorageId_SdCard : NcmStorageId_BuiltInUser;
+    NcmStorageId storage_id = Core::Ncm::to_ncm_storage_id(storage);
 
     // ── 1. Collect all CNMT entries ─────────────────────────────────────────
     progress.push_log(std::string("Install target: ") +

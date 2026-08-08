@@ -121,8 +121,7 @@ bool StreamInstaller::begin(const std::string& filename, uint64_t total_size) {
     }
 
 #ifdef PLATFORM_SWITCH
-    const NcmStorageId sid = (m_storage == Core::Ncm::Storage::SdCard)
-                           ? NcmStorageId_SdCard : NcmStorageId_BuiltInUser;
+    const NcmStorageId sid = Core::Ncm::to_ncm_storage_id(m_storage);
     if (R_FAILED(ncmOpenContentStorage(&m_cs, sid)))
         return fail("Could not open destination content storage");
     m_have_cs = true;

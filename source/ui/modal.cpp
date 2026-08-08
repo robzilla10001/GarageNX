@@ -35,6 +35,14 @@ static uint32_t s_hold_start = 0;   // SDL_GetTicks when the A-hold began (0=idl
 static float    s_hold_frac  = 0.f;
 static constexpr float MODAL_HOLD_SECONDS = 1.5f;
 
+// A modal must never react to the button press that OPENED it. Input::poll()
+// runs once per frame and pressed() is edge state that reads do NOT consume, so
+// the A that selected an item in a screen's update() is still "pressed" when
+// update_and_draw() runs later in the SAME frame — instantly confirming an Info
+// modal (symptom: the dialog flashes and vanishes). show() sets this; the first
+// update_and_draw() draws the modal but swallows that one frame of input.
+static bool s_suppress_input = false;
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 static Theme::Token accent_for_kind(Kind kind) {
@@ -105,6 +113,7 @@ void show(const Options& opts) {
     s_result = Result::Pending;
     s_hold_start = 0;
     s_hold_frac  = 0.f;
+    s_suppress_input = true;   // ignore the frame that opened us (see the flag decl)
 }
 
 bool is_active() { return s_active; }
@@ -116,6 +125,12 @@ void dismiss() {
 
 Result update_and_draw() {
     if (!s_active) return Result::Pending;
+
+    // Swallow exactly one frame of input: the press that opened this modal is
+    // still live this frame (see s_suppress_input). We still DRAW below; we just
+    // don't let that stale press dismiss the dialog.
+    const bool eat_input = s_suppress_input;
+    s_suppress_input = false;
 
     SDL_Renderer* r = Renderer::get();
 
@@ -201,18 +216,19 @@ Result update_and_draw() {
         }
 
         // Navigation + cancel are the same for all kinds.
-        if (Input::pressed(Input::Button::DLeft) || Input::pressed(Input::Button::DRight)) {
+        if (!eat_input &&
+            (Input::pressed(Input::Button::DLeft) || Input::pressed(Input::Button::DRight))) {
             s_focus = 1 - s_focus;
             s_hold_start = 0; s_hold_frac = 0.f;   // reset hold if focus moves
         }
-        if (Input::pressed(Input::Button::B)) {
+        if (!eat_input && Input::pressed(Input::Button::B)) {
             s_active = false;
             return Result::Cancelled;
         }
 
         if (is_danger && s_focus == 0) {
             // HOLD A to confirm a destructive action.
-            if (Input::held(Input::Button::A)) {
+            if (!eat_input && Input::held(Input::Button::A)) {
                 uint32_t now = SDL_GetTicks();
                 if (s_hold_start == 0) s_hold_start = now;
                 s_hold_frac = (now - s_hold_start) / 1000.0f / MODAL_HOLD_SECONDS;
@@ -225,7 +241,7 @@ Result update_and_draw() {
             }
         } else {
             // Non-danger (or cancel focused): single press.
-            if (Input::pressed(Input::Button::A)) {
+            if (!eat_input && Input::pressed(Input::Button::A)) {
                 s_active = false;
                 return s_focus == 0 ? Result::Confirmed : Result::Cancelled;
             }
@@ -236,7 +252,8 @@ Result update_and_draw() {
         int btn_x = Layout::MODAL_X + (Layout::MODAL_W - btn_w) / 2;
         draw_button(btn_x, btn_y, btn_w, 40, s_opts.confirm_label, true, accent);
 
-        if (Input::pressed(Input::Button::A) || Input::pressed(Input::Button::B)) {
+        if (!eat_input &&
+            (Input::pressed(Input::Button::A) || Input::pressed(Input::Button::B))) {
             s_active = false;
             return Result::Confirmed;
         }

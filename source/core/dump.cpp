@@ -17,6 +17,8 @@
 //   u32 rsvd} | string table (NUL-terminated) padded to 0x10 | file data.
 
 #include "core/dump.hpp"
+
+#include <cerrno>
 #include "core/nsp_stream.hpp"
 #include "core/fs.hpp"
 #include "core/es.hpp"
@@ -73,7 +75,46 @@ bool dump_title_to_nsp(const Core::Ncm::Title& title,
     snprintf(idbuf, sizeof(idbuf), "%016llX", (unsigned long long)title.program_id);
     out_path = dir + "/" + idbuf + "_v" + std::to_string(title.version) + ".nsp";
 
-    FILE* out = fopen(out_path.c_str(), "wb");
+    // ── SPLIT OUTPUT ────────────────────────────────────────────────────────
+    // A Switch SD card is FAT32 unless the owner deliberately reformatted it, and
+    // FAT32 cannot hold a file of 4 GiB or more. Cartridge dumps routinely exceed
+    // that, so a single-file NSP fails partway through a large title with a short
+    // fwrite — which this code used to report as "Write failed (SD full?)", a
+    // guess that sent the user looking at free space. It was reported against a
+    // card with 120 GB free.
+    //
+    // So the output is written as a SPLIT archive when it grows past the limit:
+    // a DIRECTORY named <name>.nsp containing 00, 01, 02 ... parts. That is the
+    // layout DBI and Tinfoil produce and consume, and the Switch treats such a
+    // directory as one archive, so nothing downstream needs to know.
+    //
+    // The split is decided by SIZE, not by filesystem probing: a dump that stays
+    // under the limit is written as an ordinary single file, which is what a user
+    // with an exFAT card expects and what other tools produce.
+    constexpr uint64_t kSplitPart = 0xFFFF0000ULL;   // just under 4 GiB per part
+
+    const bool will_split = src->total_size() >= kSplitPart;
+    std::string split_dir;
+    if (will_split) {
+        split_dir = out_path;                 // "<...>.nsp" becomes a directory
+        Fs::make_directory(split_dir);        // NO-COMMIT: dump output on SD
+        if (!Fs::is_directory(split_dir)) {
+            progress.message = "Cannot create split output folder";
+            progress.done = true; progress.running = false;
+            return false;
+        }
+    }
+
+    auto open_part = [&](int idx) -> FILE* {
+        if (!will_split) return fopen(out_path.c_str(), "wb");
+        char pn[8];
+        snprintf(pn, sizeof(pn), "%02d", idx);
+        return fopen((split_dir + "/" + pn).c_str(), "wb");
+    };
+
+    int      part      = 0;
+    uint64_t part_used = 0;
+    FILE* out = open_part(part);
     if (!out) {
         progress.message = "Cannot create output file";
         progress.done    = true;
@@ -90,15 +131,46 @@ bool dump_title_to_nsp(const Core::Ncm::Title& title,
         if (got < 0) { ok = false; progress.message = "NCA read failed"; break; }
         if (got == 0) break;
 
-        if (fwrite(buf.data(), 1, (size_t)got, out) != (size_t)got) {
-            ok = false; progress.message = "Write failed (SD full?)"; break;
+        // Write across the part boundary rather than assuming a chunk fits.
+        size_t off = 0;
+        while (off < (size_t)got) {
+            if (will_split && part_used >= kSplitPart) {
+                fclose(out);
+                out = open_part(++part);
+                if (!out) { ok = false; progress.message = "Cannot create next part"; break; }
+                part_used = 0;
+            }
+            size_t n = (size_t)got - off;
+            if (will_split && n > (size_t)(kSplitPart - part_used))
+                n = (size_t)(kSplitPart - part_used);
+
+            if (fwrite(buf.data() + off, 1, n, out) != n) {
+                ok = false;
+                // Report the REAL reason. "SD full?" was a guess, and it was the
+                // wrong one — errno distinguishes a genuinely full card (ENOSPC)
+                // from the FAT32 size limit (EFBIG) from anything else.
+                const int e = errno;
+                if (e == ENOSPC)      progress.message = "SD card is full";
+                else if (e == EFBIG)  progress.message = "File too large for this SD card";
+                else {
+                    char m[96];
+                    snprintf(m, sizeof(m), "Write failed (errno %d)", e);
+                    progress.message = m;
+                }
+                break;
+            }
+            off       += n;
+            part_used += n;
         }
+        if (!ok) break;
+
         progress.bytes_done = src->position();
         progress.ncas_done  = (int)src->current_index();
         progress.current_file = src->current_name();
     }
 
-    fclose(out);
+    // May be null if opening a later part failed and we broke out of the loop.
+    if (out) fclose(out);
 
     // A partial NSP is worse than none — it looks installable and is not.
     if (ok && src->position() != src->total_size()) {

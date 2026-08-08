@@ -229,6 +229,15 @@ static void test_every_field_round_trips() {
 
     w.http.server_port = 9090; w.http.allow_upload = false;
     w.network.github_token = "ghp_x";
+    // Two saved network connections, exercising every NetShare field and both
+    // protocols. NO password is set or expected — the model is prompt-per-session
+    // (see Config::NetShare), so config.json must never carry one.
+    w.network.shares.clear();
+    { Config::NetShare s; s.name = "NAS"; s.protocol = "smb"; s.host = "192.168.1.10";
+      s.share = "media"; s.path = "movies/4k"; s.port = 1445; s.username = "rob"; s.domain = "WORKGROUP";
+      w.network.shares.push_back(s); }
+    { Config::NetShare s; s.name = "Exports"; s.protocol = "nfs"; s.host = "nas.local";
+      s.share = "/volume1/pub"; s.port = 0; w.network.shares.push_back(s); }
 
     CHECK(Config::save(), "save succeeds");
     Config::get_mutable() = Config::All{};        // wipe: prove it came from disk
@@ -269,6 +278,19 @@ static void test_every_field_round_trips() {
 
     CHECK(c.http.server_port == 9090 && !c.http.allow_upload, "HTTP round trips");
     CHECK(c.network.github_token == "ghp_x", "Network round trips");
+
+    CHECK(c.network.shares.size() == 2, "both network connections survive");
+    const auto& s0 = c.network.shares[0];
+    CHECK(s0.name == "NAS" && s0.protocol == "smb" && s0.host == "192.168.1.10",
+          "NetShare name/protocol/host round trip");
+    CHECK(s0.share == "media" && s0.port == 1445, "NetShare share/port round trip");
+    CHECK(s0.path == "movies/4k", "NetShare start path round trips");
+    CHECK(s0.username == "rob" && s0.domain == "WORKGROUP",
+          "NetShare username/domain round trip");
+    const auto& s1 = c.network.shares[1];
+    CHECK(s1.protocol == "nfs" && s1.share == "/volume1/pub" && s1.port == 0,
+          "the NFS connection round trips, port 0 preserved");
+    CHECK(s1.username.empty(), "an unset username stays empty (no password field exists)");
     std::printf("  ok: every config field survives save/load\n");
 }
 

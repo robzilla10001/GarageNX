@@ -533,9 +533,17 @@ errors.*        — error messages
 | SDL2_image | PNG/JPG loading (icons) | zlib |
 | nlohmann/json | JSON config + lang parsing | MIT |
 | zstd | NSZ decompression | BSD/GPL dual |
+| libusbhsfs | USB mass-storage (FAT/exFAT/NTFS/ext) | GPLv2+ (GPL build) |
 | Inter font | UI typeface | SIL OFL 1.1 |
 
-GarageNX is licensed under AGPLv3; all bundled/linked components above are license-compatible with AGPLv3 distribution. The FTP and HTTP network services are clean-room implementations on libnx BSD sockets and add no server-library dependency; the MTP responder uses libnx USB comms.
+GarageNX is licensed under AGPLv3; all bundled/linked components above are
+license-compatible with AGPLv3 distribution. **libusbhsfs is built with
+`BUILD_TYPE=GPL`**, which adds NTFS (NTFS-3G) and ext (lwext4) support and places
+the library under GPLv2+. That is compatible — GPLv2-or-later may be taken as
+GPLv3, and AGPLv3 permits linking with GPLv3 — but it does mean two further GPL
+components ship in the binary, and the source-disclosure obligation already met
+via `APP_SOURCE_URL` now covers them too. An `ISC` build of the same library would
+give FAT32/exFAT only with no GPL entanglement, if that trade is ever preferred. The FTP and HTTP network services are clean-room implementations on libnx BSD sockets and add no server-library dependency; the MTP responder uses libnx USB comms.
 
 ---
 
@@ -2838,3 +2846,269 @@ deriving it from the catalog. The other two cannot be derived — MTP needs stab
 numeric ids, and capacity/type/access genuinely differ per surface — but they can
 be made to fail loudly rather than silently omit or silently impersonate. When a
 list cannot be eliminated, make its failure mode obvious.
+
+
+## A ternary has no default branch
+
+`Core::Ncm::Storage` was `{ BuiltIn, SdCard }`, and six files converted it to an
+NCM storage id with the same expression:
+`storage == SdCard ? NcmStorageId_SdCard : NcmStorageId_BuiltInUser`.
+
+Adding `GameCard` to that enum would have compiled everywhere and been wrong
+everywhere: a cartridge would silently resolve to built-in storage, in the code
+that chooses which content database to open. No warning, no error — a ternary's
+"else" swallows every value you did not think of, which is precisely what makes it
+the wrong shape for a mapping that can grow.
+
+`Ncm::to_ncm_storage_id()` is now the single definition, and it is a `switch` with
+an explicit default. One edit adds a storage; every caller follows.
+
+This had to land *before* dump and install were built on top of it. Six
+silently-wrong mappings would have produced failures that pointed anywhere except
+the cause — and diagnosing that from a console, with no host repro, is exactly the
+kind of multi-round hunt this project has already paid for more than once.
+
+
+## Adding an enum value can break code that never changed
+
+`Core::Ncm::Storage` gained a third value, `GameCard`. Two things broke that were
+nowhere near the edit.
+
+Six files converted `Storage` to an NCM id with a **ternary**, whose else-branch
+silently swallowed the new value and mapped cartridges to built-in storage. That
+was fixed by deriving the mapping once, in a `switch` with a default.
+
+`title_ops::move_title()` chose its destination the same way —
+`storage == SdCard ? BuiltInUser : SdCard` — which now *accepts* a GameCard source
+and picks SD. Plausible, until the delete half of the move tries to remove content
+from a physical read-only cartridge. The path did not exist while the enum had two
+values; adding a third made it reachable. It now refuses a GameCard source.
+
+Neither file was touched by the feature work. **Widening a type widens the input
+domain of every function that consumes it**, and the dangerous ones are those that
+handled the old domain exhaustively by accident — a two-value enum makes an
+if/else exhaustive, and a third value makes it a silent default.
+
+Grep for every `?:` and every `if/else` over the type, not just the switches. A
+`switch` at least warns; a ternary never will.
+
+
+## Gamecard content is not readable through NCM
+
+`ncmContentStorageReadContentIdFile()` fails on `NcmStorageId_GameCard` with
+2002-2964 (FS, unsupported operation). `NspStream` therefore reads cartridge NCAs
+as files from the mounted secure partition — `gamecard:/<content_id>.nca`, or
+`.cnmt.nca` for meta contents — and keeps the NCM path unchanged for every other
+storage.
+
+The diagnosis is worth remembering more than the fix. The failing Result alone
+would have left several candidates open. What settled it was an **asymmetry**: on
+the same storage handle and the same content id,
+`ncmContentStorageGetSizeFromContentId` succeeded while the read failed. A bad
+handle or a bogus id fails *both*. One accessor working and another failing can
+only mean that accessor is unimplemented for that storage.
+
+That asymmetry also disproved the standing suspicion that the once-a-second
+game-card presence poll was disturbing the card handle. It was plausible enough to
+have been "fixed" on a guess — which would have cost a round and left the real
+cause untouched.
+
+**When one call fails, check whether a neighbouring call on the same handle
+succeeds.** It converts "something is wrong" into "this specific operation is
+unsupported" in a single observation.
+
+### A fixed bug with a second call site is a half-fixed bug
+
+The rights-id probe read NCA headers through the same unsupported call. Left
+alone, every cartridge dump would have silently reported "no rights id" and
+produced an NSP that looked complete and would not install — a worse failure than
+the original, because it fails later and quieter. `nca_rights_id()` was split into
+a storage-aware read and a shared parse.
+
+
+## Two long-operation shapes, and picking the wrong one freezes the console
+
+GarageNX has two patterns for work that takes minutes, and they are not
+interchangeable:
+
+* **Callback-driven, synchronous.** The save-backup sweep blocks the main thread
+  and calls back per unit so the caller can paint a frame. Correct when the API
+  offers a progress callback.
+* **Worker thread, polled.** The NSP dump publishes into an atomic `Progress`
+  struct and runs on a libnx thread; the UI polls it each frame. Correct when the
+  API offers no callback — and an atomic progress struct is the tell that this is
+  the intended shape.
+
+`GamecardScreen` first used the wrong one: it called `dump_title_to_nsp()`
+synchronously under a comment asserting it "draws its own frames". It has no
+callback with which to do that, so the console froze for the whole dump. **Read
+what the API offers before describing what it does** — the comment was confident
+and wrong, which is worse than absent.
+
+### Copy the caller, but audit its cleanup
+
+`TitleDetailScreen` was the correct model for the threading and an incomplete one
+for teardown: its destructor freed an icon texture and never waited for the dump
+thread. Backing out mid-dump is blocked by the UI, but **app exit is not** —
+`main.cpp` clears the screen stack, and the worker would write into freed members.
+That is the same cross-thread use-after-free that crashed MTP and FTP on cancel.
+
+Both destructors now cancel *and* wait. The cancel shortens the wait; it does not
+replace it. And the wider point: copying a proven pattern means copying what it
+does right, not inheriting what it forgot.
+
+
+## Split NSP output, and not guessing at errors
+
+Dumps larger than ~4 GiB are written as a **directory** named `<name>.nsp`
+containing numbered parts (`00`, `01`, ...). That is the layout DBI and Tinfoil
+produce and consume, and the Switch treats such a directory as a single archive.
+Smaller dumps stay ordinary single files.
+
+This is not optional polish. A Switch SD card is FAT32 unless its owner
+deliberately reformatted it, and FAT32 cannot hold a file of 4 GiB or more — which
+most cartridge dumps exceed. Without splitting, large dumps fail partway through
+with a short write.
+
+The bug that exposed it is the more useful part. The code reported
+`Write failed (SD full?)` — with a question mark — whenever `fwrite` came up short,
+without consulting `errno`. It shipped one plausible cause as if it were the
+finding, and sent someone to check free space on a card with 120 GB free.
+
+**A message with a question mark in it is a hypothesis.** Where the real cause is
+knowable — `errno` was available at the point of failure — the message should
+report it: `ENOSPC` really is a full card, `EFBIG` is the size limit, anything else
+gets its number printed. Speculation in an error string costs a user their time
+before it costs them anything else, and it is *more* expensive than no message,
+because it actively misdirects.
+
+The failure's shape was also evidence in itself: it failed **partway**, not
+immediately. A full card fails when it fills; a fixed size limit fails at the same
+boundary regardless of capacity.
+
+
+## Split archives: output and input are one feature
+
+Dumps over 4 GiB are written as a directory of numbered parts. That change is only
+half a feature on its own — and the missing half was shipped, so a dump completed
+and then could not be installed.
+
+`NspReader` now treats a directory of parts as one contiguous stream (`pread_at`
+spans part boundaries; the concatenation *is* the PFS0, with no per-part header),
+and the file browser recognises a split archive as a directory whose name ends in
+an installable extension **and** that contains a part `00`. Both conditions are
+needed: the name alone would offer Install on any folder someone called
+`backup.nsp`, and the part alone gives no reason to look for it.
+
+The general lesson, which this project has now paid for twice: **when a change
+alters what a system produces, find everything that consumes it.** The rights-id
+probe was the same shape — one call site fixed, a second left reading through an
+unsupported path — and both failures share the property that makes them expensive:
+the operation *reports success* and the damage surfaces later, somewhere else,
+looking like a different bug.
+
+
+## The game card is just another byte source
+
+Installing from a cartridge has no cartridge-specific install path. `NspStream`
+presents a gamecard title as a sequential NSP byte stream, `Install::drive()`
+consumes any byte source, and `StreamInstaller` does the rest — the same machinery
+MTP, FTP and HTTP use. The adapter is about thirty lines.
+
+That is the return on extracting the driver in 4c. Each new install surface has
+cost an adapter rather than a re-derivation: FTP, then MTP, then HTTP, now a
+physical cartridge. The only thing that made the card special was that `NspStream`
+could not read its content — and once that single accessor was routed through the
+mounted secure partition, the card stopped being special at all.
+
+Worth noting what this means for "Install from Cartridge" as a menu item: it is
+now redundant rather than missing. The Game Card screen lists what is on the card
+and installs it, which is one route to one operation instead of two.
+
+### A second worker means revisiting teardown
+
+`GamecardScreen` now owns two worker threads (dump and install). Its destructor
+cancels and waits for **both**. Adding a thread to a screen is a change to that
+screen's destruction requirements, not just to its update loop — the same lesson
+as `~HttpServer()`, and one that has now been applied proactively three times
+rather than after a crash.
+
+
+## The guard is the only check most of this codebase gets
+
+The host suite compiles the pure modules. Screens, transports and most of `core`
+are not in it, so a passing `ctest` says nothing about them — for those files the
+syntax guard is the entire mechanical safety net.
+
+It was covering 24 files. An audit found 52 more that compile cleanly and simply
+were not listed, including several edited in the same session. Coverage is now 78:
+every compilable source file in the project.
+
+Two lessons came out of closing the last two gaps.
+
+**A stub must carry what the file needs from the header, and nothing more.** The
+first `zstd.h` stub defined `ZSTD_FRAME_MAGIC`; `ncz.cpp` declares its own
+`constexpr` of that name, and the macro expanded inside the declaration and
+mangled it. Extra declarations in a stub are not free — each one is a chance to
+break code that was fine.
+
+**A stub that silently fails to declare is worse than an absent one.** The
+`switch.h` stub never defined libnx's `u8`/`u32`/`u64`. Structs added to it
+referenced those aliases, never parsed, and every one of *our* structs containing
+such a member then reported "has no member named ..." — an error in our namespace
+whose real cause was three files away. It hid because undefined-type errors are
+filtered as expected noise.
+
+### Verify a widening by reintroducing a real bug
+
+The own-type field check listed `Services|Config|Install|UI|...` and **not
+`Core::`**, where most of this project's types live. It had shipped two rounds
+earlier and was half-blind the entire time. That was found by planting a bad field
+on `Core::Ncm::Title` and observing that the guard passed.
+
+Every widening here gets tested that way, because a filter that matches nothing is
+indistinguishable from a codebase that is clean — and the second reading is the
+comfortable one.
+
+
+## A stub you wrote cannot verify that an API exists
+
+`core/usb_mount.cpp` called `ueventWait()`. libnx has no such function — events
+are waited on through `waiterForUEvent()` plus `waitMulti`/`waitSingle`. The
+syntax guard passed the file anyway, because the same hands that wrote the call
+had written `Result ueventWait(...)` into `tools/stubs/switch.h`.
+
+That is the sharpest limitation of this whole approach. A stub confirms that the
+code agrees with **your belief about the API**, and nothing more. Elsewhere in this
+project §5.4 caveats mark calls taken on knowledge because no header was
+obtainable; those at least announce themselves. Inventing the declaration is worse,
+because it converts an unverified call into an apparently-verified one.
+
+Two rules follow, and both are now written at the stub:
+
+* **Copy stub declarations from something authoritative** — a real header, or
+  working example code from the library itself. If you cannot, say so at the
+  declaration rather than letting it look checked.
+* **Prefer the form you can see working over the one you believe in.** The fix uses
+  `waitMulti` with a single waiter because libusbhsfs's own `example_event` does,
+  and it avoids `waitSingle` — which is almost certainly real, but appears nowhere
+  in anything readable from here. `waitSingle` is deliberately left undeclared in
+  the stub too: declaring the unverified is exactly how this started.
+
+
+## An unasserted edit is indistinguishable from a successful one
+
+Browse USB detected drives correctly, showed and hid its menu entry correctly, and
+did nothing when pressed. The dispatch case had never been added: the edit intended
+to replace the "unimplemented" case group used a plain string replacement with no
+assertion that the pattern matched, and the group had since gained another case. It
+silently did nothing.
+
+The result was the most confusing shape a bug can take — a feature that looks
+half-wired because half of it genuinely is. Detection worked, visibility worked,
+the file compiled, tests passed.
+
+The discipline that catches this costs one line: **assert the match count before
+writing.** Nearly every edit in this project does, so a stale pattern fails loudly
+at the moment of editing rather than presenting as a runtime mystery days later.
+The one edit that skipped it is the one that cost a hardware round.

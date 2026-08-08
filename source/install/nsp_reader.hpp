@@ -63,8 +63,18 @@ public:
     // for small files (tik, cert, cnmt). Returns false if the entry exceeds 1 MB.
     bool read_all(size_t idx, std::vector<uint8_t>& out);
 
+    /// True when the source was a SPLIT archive (a directory of numbered parts)
+    /// rather than a single file. Informational; reads behave identically.
+    bool is_split() const { return m_parts.size() > 1; }
+
 private:
-    FILE*                m_fp    = nullptr;
+    // Concatenated source: one entry for a plain file, N for a split archive.
+    std::vector<FILE*>    m_parts;
+    std::vector<uint64_t> m_part_start;   // absolute start offset of each part
+    uint64_t              m_total = 0;
+
+    bool   open_source(const std::string& path);
+    size_t pread_at(void* buf, size_t len, uint64_t off);
     bool                 m_valid = false;
     std::string          m_error;
     std::vector<PfsEntry> m_entries;

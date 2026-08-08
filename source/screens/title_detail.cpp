@@ -22,6 +22,24 @@ TitleDetailScreen::TitleDetailScreen(Core::Ncm::TitleGroup group, std::string na
     : m_group(std::move(group)), m_name(std::move(name)) {}
 
 TitleDetailScreen::~TitleDetailScreen() {
+    // LATENT USE-AFTER-FREE, fixed here rather than left for someone to hit: the
+    // dump worker writes into m_dump and m_dump_out_path, and this destructor
+    // used to run without waiting for it. Backing out of the screen cannot happen
+    // mid-dump (the UI blocks it), but APP EXIT can — main.cpp clears the whole
+    // screen stack, and the worker would then be writing into freed members.
+    //
+    // Same failure MTP and FTP hit on transfer cancel (Data Abort @ 0x0) until
+    // each got a join in its destructor. Found while writing the equivalent for
+    // GamecardScreen; copying this caller's threading without copying its
+    // omission seemed the wrong lesson to take.
+#ifdef PLATFORM_SWITCH
+    if (m_dump_thread_active) {
+        m_dump.cancel.store(true);
+        threadWaitForExit(&m_dump_thread);
+        threadClose(&m_dump_thread);
+        m_dump_thread_active = false;
+    }
+#endif
     if (m_icon) SDL_DestroyTexture(m_icon);
 }
 

@@ -51,6 +51,24 @@ enum {
 static bool is_installable(const std::string& ext) {
     return ext == "nsp" || ext == "xci" || ext == "nsz" || ext == "xcz";
 }
+
+// A SPLIT archive is a DIRECTORY whose name ends in an installable extension and
+// which contains a part named "00". Both halves of that test matter: the name
+// alone would offer Install on any folder someone happened to call "backup.nsp",
+// and the part alone cannot be checked without a name to justify looking.
+//
+// This exists because the dumper now writes split output for titles over 4 GiB
+// (FAT32 cannot hold a single file that large). Without it, a dump completed and
+// then could not be installed — the browser saw a folder and opened it.
+static bool is_split_archive_dir(const std::string& full_path,
+                                 const std::string& name) {
+    const size_t dot = name.find_last_of('.');
+    if (dot == std::string::npos) return false;
+    std::string ext = name.substr(dot + 1);
+    for (char& c : ext) c = (char)std::tolower((unsigned char)c);
+    if (!is_installable(ext)) return false;
+    return Fs::exists(Fs::join(full_path, "00"));
+}
 static bool is_nro(const std::string& ext) { return ext == "nro"; }
 
 // Default-to-text extensions; everything else defaults to hex when opened raw.
@@ -107,7 +125,8 @@ FileBrowserScreen::FileBrowserScreen(std::string root, std::string title)
 
 void FileBrowserScreen::on_enter() {
     m_left.reload();
-    m_right.reload();
+    if (m_split) m_right.reload();   // the right pane isn't shown unless split; don't
+                                     // re-list it (a wasted network round-trip) otherwise
 }
 
 void FileBrowserScreen::on_modal_result(int result) {
@@ -255,6 +274,13 @@ std::unique_ptr<Screen> FileBrowserScreen::update(bool& pop) {
         if (e) {
             if (e->is_dir()) {
                 pane.cursor_stack.push_back(pane.list.cursor());  // remember where we were
+                // A split archive is a folder, but the user means the archive.
+                // Descending into it would show them "00", "01" — technically
+                // the truth and useless.
+                if (is_split_archive_dir(Fs::join(pane.path, e->name), e->name)) {
+                    open_install_menu();
+                    return nullptr;
+                }
                 pane.path = Fs::join(pane.path, e->name);
                 pane.reload(true);   // opening a folder → cursor at the top
             } else {
@@ -315,7 +341,9 @@ void FileBrowserScreen::open_context_menu() {
             add("file_browser.context_open_text", ACT_OPEN_TEXT);
             add("file_browser.context_open_hex",  ACT_OPEN_HEX);
 
-            if (is_installable(ext)) {
+            if (is_installable(ext) ||
+                is_split_archive_dir(Fs::join(active_pane().path, cur->name),
+                                     cur->name)) {
                 add("file_browser.context_peek",         ACT_PEEK);
                 add("file_browser.context_install_sd",   ACT_INSTALL_SD);
                 add("file_browser.context_install_nand", ACT_INSTALL_NAND);

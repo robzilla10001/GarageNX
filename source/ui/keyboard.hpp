@@ -13,10 +13,12 @@ namespace Keyboard {
 
 struct Options {
     std::string header;          // prompt/title shown above the keyboard
+    std::string guide;           // greyed placeholder shown INSIDE the entry field
     std::string initial_text;    // pre-filled text (e.g. current filename for rename)
     std::string ok_text = "OK";  // confirm button label
     int         max_length = 255;
     bool        allow_empty = false;
+    bool        password    = false;  // mask the entry (SMB passwords); swkbd hidden mode
 };
 
 /// Show the keyboard for a line of text. Returns true if the user confirmed;

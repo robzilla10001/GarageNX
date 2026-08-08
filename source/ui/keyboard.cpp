@@ -24,6 +24,12 @@ bool get_text(const Options& opts, std::string& out) {
 
     if (!opts.header.empty())
         swkbdConfigSetHeaderText(&kbd, opts.header.c_str());
+    // Guide text is the greyed placeholder shown inside the entry field itself —
+    // the most visible "what am I typing?" hint on the swkbd overlay, which is why
+    // a bare header alone can look like an unlabelled box. libnx: swkbdConfigSetGuideText
+    // (verify against your installed swkbd.h, like the password flag below).
+    if (!opts.guide.empty())
+        swkbdConfigSetGuideText(&kbd, opts.guide.c_str());
     if (!opts.ok_text.empty())
         swkbdConfigSetOkButtonText(&kbd, opts.ok_text.c_str());
     if (!opts.initial_text.empty())
@@ -33,6 +39,14 @@ bool get_text(const Options& opts, std::string& out) {
     // Disable the OK button when the field is empty, unless explicitly allowed.
     if (!opts.allow_empty)
         swkbdConfigSetStringLenMin(&kbd, 1);
+
+    // Mask the entry for secrets (SMB passwords). libnx: swkbdConfigSetPasswordFlag
+    // takes 1 = hidden, 0 = shown. This is the single libnx call in this change not
+    // cross-checked against a fetched header — confirm it against the installed
+    // swkbd.h on first build (it has existed in libnx for years, but verify per the
+    // project's API rule rather than trust memory).
+    if (opts.password)
+        swkbdConfigSetPasswordFlag(&kbd, 1);
 
     // Buffer for the result
     char buffer[FS_MAX_PATH];   // generous; swkbd caps at max_length anyway

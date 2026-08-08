@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace Config {
 
@@ -110,8 +111,25 @@ struct HTTP {
     bool        allow_upload  = true;
 };
 
+// One saved network connection for Browse Network. The password is deliberately
+// ABSENT: the chosen model is prompt-per-session, so a credential never lands in
+// config.json. NFS is host/UID-based and needs none; an SMB connection with a
+// username prompts at connect time and the answer lives only in memory
+// (Services::net_credentials()). See services/net_surface.hpp.
+struct NetShare {
+    std::string name;       // display label shown under /Network (identifies it)
+    std::string protocol;   // "smb" | "nfs"
+    std::string host;       // hostname or IP
+    std::string share;      // SMB share name, or NFS export path
+    std::string path;       // optional start folder WITHIN the share/export (e.g. "media/movies")
+    uint16_t    port = 0;   // 0 => protocol default (SMB 445, NFS 2049)
+    std::string username;   // SMB only; empty = guest/anonymous. NEVER a password.
+    std::string domain;     // SMB workgroup/domain; optional
+};
+
 struct Network {
     std::string github_token;
+    std::vector<NetShare> shares;   // saved Browse Network connections
 };
 
 struct All {

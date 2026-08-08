@@ -131,8 +131,27 @@ Result move_title(const Core::Ncm::Title& title, MoveProgress& progress) {
     progress.running = true;
 
 #ifdef PLATFORM_SWITCH
-    NcmStorageId src_id = (title.storage == Core::Ncm::Storage::SdCard)
-        ? NcmStorageId_SdCard : NcmStorageId_BuiltInUser;
+    // A game card cannot be a MOVE source. Moving means copy-then-delete, and
+    // the delete half would target read-only cartridge content — the ternary
+    // below would happily accept GameCard and pick SD as the destination, which
+    // looks reasonable right up to the point where it tries to remove content
+    // from a physical card. Copying FROM a card is "install", a different
+    // operation with a different destination story.
+    //
+    // This hazard did not exist until Storage gained a third value: the old
+    // two-value enum made it unreachable. Adding a value to an enum can create
+    // reachable-but-wrong paths in code that never changed.
+    if (title.storage == Core::Ncm::Storage::GameCard) {
+        progress.running = false;
+        progress.done    = true;
+        progress.success = false;
+        progress.message = "Cannot move a title off a game card";
+        r.ok      = false;
+        r.message = progress.message;
+        return r;
+    }
+
+    NcmStorageId src_id = Core::Ncm::to_ncm_storage_id(title.storage);
     NcmStorageId dst_id = (title.storage == Core::Ncm::Storage::SdCard)
         ? NcmStorageId_BuiltInUser : NcmStorageId_SdCard;
 

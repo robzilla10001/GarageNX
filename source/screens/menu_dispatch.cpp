@@ -6,8 +6,11 @@
 #include "screens/save_manager.hpp"
 #include "screens/save_backup_screen.hpp"
 #include "screens/file_browser.hpp"
+#include "screens/network_browser.hpp"
 #include "screens/activity_log.hpp"
+#include "screens/gamecard.hpp"
 #include "core/fs.hpp"
+#include "core/usb_mount.hpp"
 #include "screens/screen.hpp"
 #include "lang/localization.hpp"
 #include "config/config.hpp"
@@ -48,10 +51,16 @@ const std::vector<MenuEntry>& menu_browse_items() {
         { MenuItem::BrowseSD,              "main_menu.browse_sd"               },
         { MenuItem::BrowseSystemPartition, "main_menu.browse_system_partition" },
         { MenuItem::BrowseUserPartition,   "main_menu.browse_user_partition"   },
+        { MenuItem::Gamecard,              "main_menu.gamecard"                },
+        { MenuItem::BrowseUSB,             "main_menu.browse_usb"              },
+        { MenuItem::BrowseNetwork,         "main_menu.browse_network"          },
         { MenuItem::BrowseGamecard,        "main_menu.browse_gamecard"         },
         { MenuItem::Homebrew,              "main_menu.homebrew"                },
         { MenuItem::Saves,                 "main_menu.saves"                   },
-        // Withheld: BrowseUSB, BrowseNetwork (no backing service).
+        // BrowseUSB is listed above now that libusbhsfs backs it; BrowseNetwork is
+        // listed now that it opens a real chooser (services/net_surface). With no
+        // connections configured the chooser shows a "how to add one" message
+        // rather than nothing, so it is not a dead button.
         // REMOVED DELIBERATELY: Tickets. Listing tickets invites deleting them,
         // deleting one can make an installed title unlaunchable, and almost no
         // homebrew uses titlekey crypto — so the feature carried real risk for
@@ -138,7 +147,11 @@ bool menu_item_visible(MenuItem id) {
                    && Fs::is_directory("gamecard:/");
         case MenuItem::BrowseSystemPartition: return vis.browse_system_partition;
         case MenuItem::BrowseUserPartition:   return vis.browse_user_partition;
-        case MenuItem::BrowseUSB:             return vis.browse_usb;
+        // Shown only when a drive is actually attached AND the user has the item
+        // enabled — the same both-conditions rule the game card uses. An entry that
+        // is always visible and opens nothing is the dead-button problem.
+        case MenuItem::BrowseUSB:
+            return vis.browse_usb && !Core::UsbMount::volumes().empty();
         case MenuItem::BrowseNetwork:         return vis.browse_network;
         case MenuItem::InstallCartridge:      return vis.install_from_cartridge;
         case MenuItem::InstalledTitles:       return vis.view_installed_games;
@@ -229,6 +242,9 @@ std::unique_ptr<Screen> menu_activate(MenuItem id, bool& pop) {
             return std::unique_ptr<Screen>(
                 new FileBrowserScreen("bis_user:/", Lang::t("main_menu.browse_user_partition")));
 
+        case MenuItem::Gamecard:
+            return std::unique_ptr<Screen>(new GamecardScreen());
+
         case MenuItem::BrowseGamecard:
             // Same mount check the partitions use: the surface can be enabled while
             // no card is inserted, and opening a browser on an absent device gives
@@ -254,9 +270,27 @@ std::unique_ptr<Screen> menu_activate(MenuItem id, bool& pop) {
         case MenuItem::ActivityLog:
             return std::unique_ptr<Screen>(new ActivityLogScreen());
 
-        case MenuItem::InstallCartridge:
-        case MenuItem::BrowseUSB:
+        case MenuItem::BrowseUSB: {
+            // Open the attached USB volume. Reached only when one is present —
+            // menu_item_visible() gates the entry on volumes() being non-empty —
+            // but re-checked here because visibility is evaluated a frame earlier
+            // and a drive can be pulled in between.
+            const auto& vols = Core::UsbMount::volumes();
+            if (vols.empty()) return nullptr;
+            // One volume is the common case; open it directly rather than make the
+            // user pick from a list of one. A chooser for multi-volume drives is
+            // the noted follow-up.
+            return std::unique_ptr<Screen>(new FileBrowserScreen(
+                vols[0].mount + "/", vols[0].label));
+        }
+
         case MenuItem::BrowseNetwork:
+            // Opens the connection chooser. Reached whenever the item is visible;
+            // the chooser handles the empty-connections case itself, so unlike USB
+            // there is no device-present precondition to re-check here.
+            return std::unique_ptr<Screen>(new NetworkBrowserScreen());
+
+        case MenuItem::InstallCartridge:
         case MenuItem::Tickets:
             return nullptr;
 

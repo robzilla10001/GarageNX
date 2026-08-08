@@ -81,6 +81,48 @@ static Surfaces surfaces_from_json(const J& o, const J& legacy) {
     return s;
 }
 
+// Network connections <-> a JSON array. NO password field is ever emitted (the
+// model is prompt-per-session; see Config::NetShare). merge_patch on save treats
+// an array as an atomic value and REPLACES it, which is exactly right here: the
+// shares list is fully modelled, so a removed connection is genuinely removed.
+static json shares_to_json(const std::vector<NetShare>& v) {
+    json arr = json::array();
+    for (const auto& s : v) {
+        arr.push_back(json{
+            {"name",     s.name},
+            {"protocol", s.protocol},
+            {"host",     s.host},
+            {"share",    s.share},
+            {"path",     s.path},
+            {"port",     s.port},
+            {"username", s.username},
+            {"domain",   s.domain},
+        });
+    }
+    return arr;
+}
+
+static std::vector<NetShare> shares_from_json(const json& arr) {
+    std::vector<NetShare> out;
+    if (!arr.is_array()) return out;
+    for (const auto& e : arr) {
+        if (!e.is_object()) continue;
+        NetShare s;
+        s.name     = jget<std::string>(e, "name",     std::string());
+        s.protocol = jget<std::string>(e, "protocol", std::string());
+        s.host     = jget<std::string>(e, "host",     std::string());
+        s.share    = jget<std::string>(e, "share",    std::string());
+        s.path     = jget<std::string>(e, "path",     std::string());
+        s.port     = static_cast<uint16_t>(jget<int>(e, "port", 0));
+        s.username = jget<std::string>(e, "username", std::string());
+        s.domain   = jget<std::string>(e, "domain",   std::string());
+        // A connection with no name or no host cannot be shown or dialled; drop
+        // it rather than surface a blank, unselectable row in the chooser.
+        if (!s.name.empty() && !s.host.empty()) out.push_back(std::move(s));
+    }
+    return out;
+}
+
 static json to_json(const All& c) {
     return {
         {"app", {
@@ -147,6 +189,7 @@ static json to_json(const All& c) {
         }},
         {"network", {
             {"github_token", c.network.github_token},
+            {"shares",       shares_to_json(c.network.shares)},
         }},
     };
 }
@@ -239,6 +282,7 @@ static void from_json(const json& j, All& c) {
 
     auto net = j.value("network", json::object());
     c.network.github_token = jget<std::string>(net, "github_token", Defaults::GITHUB_TOKEN);
+    c.network.shares       = shares_from_json(net.value("shares", json::array()));
 }
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────

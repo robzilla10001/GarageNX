@@ -30,6 +30,7 @@
 #include "core/album_mount.hpp"
 #include "core/nand_mount.hpp"
 #include "core/gamecard_mount.hpp"
+#include "core/usb_mount.hpp"
 #include "core/save_mount.hpp"
 #include "core/keys.hpp"
 #include "services/title_surface.hpp"
@@ -194,6 +195,13 @@ static bool startup() {
     //
     // Keep any future config-gated mount below this line.
     Core::mount_nand();    // expose bis_user:/bis_system: (config-gated, read-only)
+
+    // USB mass storage. Initialised unconditionally rather than config-gated:
+    // unlike a NAND mount this exposes nothing by itself — it only makes attached
+    // drives discoverable — and failing to init is worth knowing about at startup
+    // (the usual cause is the deprecated fsp-usb sysmodule, which libusbhsfs will
+    // not coexist with) rather than at the moment a user plugs a drive in.
+    Core::UsbMount::init();
 #endif
 
     // ── Theme ─────────────────────────────────────────────────────────────────
@@ -272,6 +280,7 @@ static void shutdown_services() {
     nsExit();
     // Never leave a save filesystem mounted after we exit.
     Core::SaveMount::release();
+    Core::UsbMount::exit();
     Core::gamecard_unmount();
     Core::unmount_nand();
     Core::unmount_album();
@@ -336,6 +345,10 @@ int main(int argc, char* argv[]) {
             // show up, and everybody notices a folder that errors on entry
             // because the card left.
             Core::gamecard_refresh();
+
+            // Attached USB volumes. Event-polled, so this is nearly free when
+            // nothing has changed.
+            Core::UsbMount::refresh();
 
             last_status_refresh = now;
         }

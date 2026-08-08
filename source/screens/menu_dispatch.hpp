@@ -34,6 +34,7 @@ enum class MenuItem {
     BrowseUserPartition,
     BrowseUSB,
     BrowseGamecard,
+    Gamecard,
     BrowseNetwork,
     Homebrew,
     Tickets,

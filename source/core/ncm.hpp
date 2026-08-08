@@ -11,9 +11,32 @@
 #include <vector>
 #include <cstdint>
 
+#ifdef PLATFORM_SWITCH
+#include <switch.h>          // NcmStorageId, for to_ncm_storage_id() below
+#endif
+
 namespace Core::Ncm {
 
-enum class Storage { BuiltIn, SdCard };   // NAND vs SD
+enum class Storage { BuiltIn, SdCard, GameCard };   // NAND / SD / inserted cartridge
+
+#ifdef PLATFORM_SWITCH
+/// The ONE mapping from our Storage to NCM's storage id.
+///
+/// This was a two-way ternary repeated in six files
+/// (`storage == SdCard ? NcmStorageId_SdCard : NcmStorageId_BuiltInUser`). Adding
+/// a third value to the enum would have left all six silently mapping GameCard to
+/// BuiltInUser — a wrong answer with no error, in the code that decides which
+/// content database to open. Derived once instead, so a new storage is one edit
+/// and every caller follows.
+inline NcmStorageId to_ncm_storage_id(Storage s) {
+    switch (s) {
+        case Storage::SdCard:   return NcmStorageId_SdCard;
+        case Storage::GameCard: return NcmStorageId_GameCard;
+        case Storage::BuiltIn:
+        default:                return NcmStorageId_BuiltInUser;
+    }
+}
+#endif
 
 enum class TitleType { Application, Patch, AddOnContent, Other };
 
@@ -56,6 +79,16 @@ struct TitleGroup {
 // List all installed titles across both storages. Applications, patches, and
 // add-on content are all included, tagged by `type`.
 std::vector<Title> list_all(bool* ok = nullptr);
+
+/// Titles on the INSERTED GAME CARD, if any. Empty when no card is present.
+///
+/// Deliberately SEPARATE from list_all() rather than a third storage folded into
+/// it. list_all() feeds the "Installed Titles" surface on every transport, and a
+/// cartridge title is not installed — folding it in would put a game you can only
+/// play with the card in the slot into a list whose whole meaning is "this console
+/// holds these". Dump and install want cartridge titles; the browse surfaces do
+/// not, and conflating them would be a lie told in four places at once.
+std::vector<Title> list_gamecard(bool* ok = nullptr);
 
 // Group enumerated titles: returns one TitleGroup per user application, with its
 // updates and DLC attached. System titles (below the user-game id range) are
