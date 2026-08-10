@@ -27,6 +27,8 @@
 #include "core/keys.hpp"
 #include <cstring>
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
 
 #ifdef PLATFORM_SWITCH
 #include <switch.h>
@@ -178,6 +180,7 @@ std::string NczDecompressor::decompress(
     WriteCallback write_cb)
 {
     (void)keys; // header is written verbatim; no key material needed for the body.
+    const auto wall_start = std::chrono::steady_clock::now();
 
     // ── 1. Read NCA header (0x4000 bytes) and write it VERBATIM ───────────────
     // The header is part of the SHA-256 that defines content_id. Patching any
@@ -269,6 +272,14 @@ std::string NczDecompressor::decompress(
         const uint32_t block_sz = 1u << blk_hdr.block_size_exponent;
         uint64_t block_read_off = compressed_start;
 
+        // Per-stage timing: read (network) vs decompress vs re-encrypt vs SD write.
+        using Clock = std::chrono::steady_clock;
+        int64_t ns_read = 0, ns_dec = 0, ns_enc = 0, ns_write = 0;
+        uint64_t bytes_out = 0;
+        auto since = [](Clock::time_point a) {
+            return std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - a).count();
+        };
+
         for (uint32_t b = 0; b < blk_hdr.total_blocks; ++b) {
             const uint32_t cmp_size = block_sizes[b];
 
@@ -280,11 +291,14 @@ std::string NczDecompressor::decompress(
             }
 
             std::vector<uint8_t> cmp(cmp_size);
-            if (!safe_read(read_fn, block_read_off, cmp.data(), cmp_size))
-                return "NCZ: failed to read compressed block";
+            auto t0 = Clock::now();
+            bool rok = safe_read(read_fn, block_read_off, cmp.data(), cmp_size);
+            ns_read += since(t0);
+            if (!rok) return "NCZ: failed to read compressed block";
             block_read_off += cmp_size;
 
             std::vector<uint8_t> dec(dec_size);
+            auto td = Clock::now();
             if (cmp_size < dec_size) {
                 const size_t res = ZSTD_decompress(dec.data(), dec_size, cmp.data(), cmp_size);
                 if (ZSTD_isError(res) || res != dec_size)
@@ -293,12 +307,30 @@ std::string NczDecompressor::decompress(
                 // Stored uncompressed (incompressible block).
                 std::memcpy(dec.data(), cmp.data(), dec_size);
             }
+            ns_dec += since(td);
 
             const uint64_t out_off = recryptor.offset();
-            if (!recryptor.process(dec.data(), dec_size))
-                return "NCZ: no section covers block offset";
-            if (!write_cb(out_off, dec.data(), dec_size))
-                return "NCZ: write callback failed (block)";
+            auto te = Clock::now();
+            bool eok = recryptor.process(dec.data(), dec_size);
+            ns_enc += since(te);
+            if (!eok) return "NCZ: no section covers block offset";
+
+            auto tw = Clock::now();
+            bool wok = write_cb(out_off, dec.data(), dec_size);
+            ns_write += since(tw);
+            if (!wok) return "NCZ: write callback failed (block)";
+            bytes_out += dec_size;
+        }
+
+        if (FILE* tf = std::fopen("sdmc:/switch/GarageNX/logs/install_timing.log", "a")) {
+            std::fprintf(tf, "NCZ block %.0f MB out, %u blocks: read=%.1fs decompress=%.1fs "
+                             "reencrypt=%.1fs write=%.1fs\n",
+                         bytes_out / (1024.0 * 1024.0), blk_hdr.total_blocks,
+                         ns_read / 1e9, ns_dec / 1e9, ns_enc / 1e9, ns_write / 1e9);
+            std::fprintf(tf, "  WALL=%.1fs\n",
+                         std::chrono::duration_cast<std::chrono::nanoseconds>(
+                             std::chrono::steady_clock::now() - wall_start).count() / 1e9);
+            std::fclose(tf);
         }
     } else {
         // Stream-compressed: a single zstd stream covering the whole body.
@@ -314,17 +346,27 @@ std::string NczDecompressor::decompress(
         bool frame_done = false;
         uint64_t src_off = compressed_start;
 
+        // Per-stage timing so we can see where install time actually goes: network
+        // read vs zstd decompress vs AES-CTR re-encrypt vs SD placeholder write.
+        using Clock = std::chrono::steady_clock;
+        int64_t ns_read = 0, ns_dec = 0, ns_enc = 0, ns_write = 0;
+        uint64_t bytes_out = 0;
+
         while (!frame_done && error.empty()) {
             if (src_off >= nca_size) break;
             size_t to_read = (size_t)std::min<uint64_t>(READ_CHUNK, nca_size - src_off);
+            auto t0 = Clock::now();
             size_t got = read_fn(src_off, in_buf.data(), to_read);
+            ns_read += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t0).count();
             if (got == 0) { error = "NCZ: read returned 0 at stream"; break; }
             src_off += got;
 
             ZSTD_inBuffer in_s = { in_buf.data(), got, 0 };
             while (in_s.pos < in_s.size && error.empty()) {
                 ZSTD_outBuffer out_s = { out_buf.data(), OUT_CHUNK, 0 };
+                auto td = Clock::now();
                 const size_t ret = ZSTD_decompressStream(dctx, &out_s, &in_s);
+                ns_dec += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - td).count();
                 if (ZSTD_isError(ret)) {
                     error = std::string("NCZ: zstd stream error: ") + ZSTD_getErrorName(ret);
                     break;
@@ -332,14 +374,21 @@ std::string NczDecompressor::decompress(
 
                 if (out_s.pos > 0) {
                     const uint64_t out_off = recryptor.offset();
-                    if (!recryptor.process(out_buf.data(), out_s.pos)) {
+                    auto te = Clock::now();
+                    bool ok = recryptor.process(out_buf.data(), out_s.pos);
+                    ns_enc += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - te).count();
+                    if (!ok) {
                         error = "NCZ: no section covers stream offset";
                         break;
                     }
-                    if (!write_cb(out_off, out_buf.data(), out_s.pos)) {
+                    auto tw = Clock::now();
+                    bool wok = write_cb(out_off, out_buf.data(), out_s.pos);
+                    ns_write += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - tw).count();
+                    if (!wok) {
                         error = "NCZ: write callback failed (stream)";
                         break;
                     }
+                    bytes_out += out_s.pos;
                 }
 
                 if (ret == 0) { frame_done = true; break; }  // frame complete
@@ -347,6 +396,16 @@ std::string NczDecompressor::decompress(
         }
 
         ZSTD_freeDCtx(dctx);
+        if (FILE* tf = std::fopen("sdmc:/switch/GarageNX/logs/install_timing.log", "a")) {
+            std::fprintf(tf, "NCZ stream %.0f MB out: read=%.1fs decompress=%.1fs "
+                             "reencrypt=%.1fs write=%.1fs\n",
+                         bytes_out / (1024.0 * 1024.0),
+                         ns_read / 1e9, ns_dec / 1e9, ns_enc / 1e9, ns_write / 1e9);
+            std::fprintf(tf, "  WALL=%.1fs\n",
+                         std::chrono::duration_cast<std::chrono::nanoseconds>(
+                             std::chrono::steady_clock::now() - wall_start).count() / 1e9);
+            std::fclose(tf);
+        }
         if (!error.empty()) return error;
     }
 

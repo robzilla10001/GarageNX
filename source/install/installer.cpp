@@ -22,6 +22,8 @@
 
 #include "install/installer.hpp"
 #include "install/ncz.hpp"
+#include "install/prefetch_reader.hpp"
+#include <chrono>
 #include "core/nca.hpp"
 #include "core/keys.hpp"
 #include <SDL2/SDL.h>
@@ -481,11 +483,21 @@ bool install(std::vector<ContentEntry> contents,
 
         bool nca_ok = true;
 
+        // Prefetch the source for this entry: a background thread reads ahead while
+        // this thread decompresses/re-encrypts/writes, overlapping network I/O with
+        // CPU+SD work. Only the prefetch worker touches e.read (the net: source),
+        // so the connection stays single-threaded. Header reads above used e.read
+        // directly; from here the access is (mostly) sequential.
+        PrefetchReader prefetch(e.read, e.size);
+        ReadFn e_read = [&prefetch](uint64_t off, void* buf, size_t len) {
+            return prefetch.read(off, buf, len);
+        };
+
         if (is_ncz_entry) {
             // ── NCZ/NSZ: decompress + re-encrypt, then write in chunks ────────
             uint64_t write_off = 0;
             std::string ncz_err = NczDecompressor::decompress(
-                e.read, e.size, keys,
+                e_read, e.size, keys,
                 [&](uint64_t nca_offset, const uint8_t* data, size_t len) -> bool {
                     if (progress.cancel.load()) return false;
                     if (R_FAILED(ncmContentStorageWritePlaceHolder(
@@ -505,20 +517,35 @@ bool install(std::vector<ContentEntry> contents,
         } else {
             // ── Plain NCA: stream directly into placeholder ───────────────────
             uint64_t off = 0;
+            using Clock = std::chrono::steady_clock;
+            int64_t ns_read = 0, ns_write = 0;
+            auto since = [](Clock::time_point a) {
+                return std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - a).count();
+            };
             while (off < e.size) {
                 if (progress.cancel.load()) { nca_ok = false; break; }
                 size_t chunk = (size_t)std::min<uint64_t>(e.size - off, CHUNK);
-                size_t got = e.read(off, buf.data(), chunk);
+                auto tr = Clock::now();
+                size_t got = e_read(off, buf.data(), chunk);
+                ns_read += since(tr);
                 if (got == 0) {
                     progress.message = "Read error in " + e.name;
                     nca_ok = false; break;
                 }
-                if (R_FAILED(ncmContentStorageWritePlaceHolder(&dst_cs, &ph, off, buf.data(), got))) {
+                auto tw = Clock::now();
+                Result wr = ncmContentStorageWritePlaceHolder(&dst_cs, &ph, off, buf.data(), got);
+                ns_write += since(tw);
+                if (R_FAILED(wr)) {
                     progress.message = "WritePlaceHolder failed for " + e.name;
                     nca_ok = false; break;
                 }
                 off += got;
                 progress.bytes_done.fetch_add(got);
+            }
+            if (FILE* tf = std::fopen("sdmc:/switch/GarageNX/logs/install_timing.log", "a")) {
+                std::fprintf(tf, "NSP plain %.0f MB: read(wait)=%.1fs write=%.1fs\n",
+                             off / (1024.0 * 1024.0), ns_read / 1e9, ns_write / 1e9);
+                std::fclose(tf);
             }
         }
 

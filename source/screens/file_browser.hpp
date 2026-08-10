@@ -101,8 +101,11 @@ private:
     bool                     m_install_log_saved  = false; // persisted-to-disk guard
 #ifdef PLATFORM_SWITCH
     Thread                   m_install_thread{};
+    Thread                   m_paste_thread{};
 #endif
     bool                     m_install_thread_active = false;
+    bool                     m_paste_thread_active   = false;
+    static void              paste_thread_fn(void* arg_raw);
 
     void start_install(const std::string& path, Core::Ncm::Storage storage);
     void poll_install();

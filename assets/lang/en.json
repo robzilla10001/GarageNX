@@ -512,7 +512,8 @@
     "toggle_hex": "Hex/Text",
     "confirm": "Confirm",
     "cancel": "Cancel",
-    "toggle": "Toggle"
+    "toggle": "Toggle",
+    "cancel_b": "B: Cancel"
   },
   "errors": {
     "file_not_found": "File not found.",

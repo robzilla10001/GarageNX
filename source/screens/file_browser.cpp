@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cstring>
 #include <cstdio>
+#include <sys/stat.h>
 
 // Number of log lines shown at once in the install overlay's log box.
 static constexpr int kInstallLogVisibleRows = 6;
@@ -202,9 +203,17 @@ std::unique_ptr<Screen> FileBrowserScreen::update(bool& pop) {
         return nullptr;
     }
 
-    // If an op is running, poll it; block other input until done.
+    // If an op is running, poll it; block other input until done. B requests cancel.
     if (m_op_active) {
+        if (Input::pressed(Input::Button::B)) m_progress.request_cancel();
         if (m_progress.done.load()) {
+#ifdef PLATFORM_SWITCH
+            if (m_paste_thread_active) {
+                threadWaitForExit(&m_paste_thread);
+                threadClose(&m_paste_thread);
+                m_paste_thread_active = false;
+            }
+#endif
             m_op_active = false;
             active_pane().reload();
             if (m_split) { m_left.reload(); m_right.reload(); }
@@ -232,7 +241,12 @@ std::unique_ptr<Screen> FileBrowserScreen::update(bool& pop) {
     if (Input::pressed(Input::Button::Minus)) {
         m_split = !m_split;
         if (m_split) {
-            m_right.path = m_left.path;
+            // Open the second pane on the SD card when the first pane is on a
+            // different device (e.g. a network share), so cross-device copies
+            // (net: -> SD) work without a way to navigate above a device root.
+            // If already on the SD card, mirror the current path (copy within SD).
+            m_right.path = (m_left.path.rfind("sdmc:", 0) == 0) ? m_left.path
+                                                                : std::string("sdmc:/");
             m_right.cursor_stack.clear();
             m_right.reload(true);
         }
@@ -449,41 +463,72 @@ void FileBrowserScreen::handle_context_action(int action_id) {
 
 // ─── Operations ───────────────────────────────────────────────────────────────
 
+// Arg for the paste worker thread. The clipboard is copied in by value so the UI
+// thread may clear it immediately after spawning.
+struct PasteThreadArg {
+    std::vector<std::string> items;
+    std::string              dest_dir;
+    bool                     cut;
+    Fs::Progress*            progress;
+};
+
+void FileBrowserScreen::paste_thread_fn(void* arg_raw) {
+    auto* a = static_cast<PasteThreadArg*>(arg_raw);
+    a->progress->running = true;
+
+    // Best-effort total for the progress bar: sum regular-file sizes (directory
+    // trees are approximate, but bytes_done still advances the bar).
+    uint64_t total = 0;
+    for (const auto& src : a->items) {
+        struct stat st{};
+        if (::stat(src.c_str(), &st) == 0 && S_ISREG(st.st_mode))
+            total += static_cast<uint64_t>(st.st_size);
+    }
+    a->progress->bytes_total = total;
+
+    auto resolver = [](const std::string& dest) -> Fs::Conflict {
+        (void)dest; return Fs::Conflict::Rename;   // auto-rename (no UI from a worker)
+    };
+
+    for (auto& src : a->items) {
+        if (a->progress->cancelled.load()) break;
+        if (a->cut) Fs::move(src, a->dest_dir, *a->progress, resolver);
+        else        Fs::copy(src, a->dest_dir, *a->progress, resolver);
+    }
+
+    // Commit journalling once for the whole paste (source side too, for a move).
+    Services::SaveWrite::after_write(a->dest_dir);
+    if (a->cut && !a->items.empty())
+        Services::SaveWrite::after_write(a->items.front());
+
+    a->progress->success = !a->progress->cancelled.load();
+    a->progress->done    = true;
+    delete a;
+}
+
 void FileBrowserScreen::do_paste(bool cut) {
     if (m_clipboard.empty()) return;
 
-    // Paste always targets the currently-active pane's directory. In split mode
-    // the user selects the destination pane (L/R) before pasting; in single-pane
-    // mode it's simply the current directory. This matches the intuitive model:
-    // "wherever I'm looking is where it lands."
+    // Paste always targets the currently-active pane's directory (split mode: the
+    // user picks the pane with L/R first). "Wherever I'm looking is where it lands."
     std::string dest_dir = active_pane().path;
 
-    // Conflict resolver: for Milestone 2 we default to a synchronous three-way
-    // decision via a simple heuristic (auto-rename). A modal-driven resolver is
-    // wired in when the threading harness lands; auto-rename keeps data safe now.
-    auto resolver = [](const std::string& dest) -> Fs::Conflict {
-        (void)dest;
-        return Fs::Conflict::Rename;
-    };
-
-    // Run synchronously (SD copies are fast enough for M2; threaded in M6).
     m_progress.reset();
     m_op_active = true;
     m_op_label  = cut ? Lang::t("file_browser.op_moving")
                       : Lang::t("file_browser.op_copying");
 
-    for (auto& src : m_clipboard) {
-        if (cut) Fs::move(src, dest_dir, m_progress, resolver);
-        else     Fs::copy(src, dest_dir, m_progress, resolver);
-    }
-    // Commit once for the whole paste, and for a MOVE also commit the SOURCE
-    // side: moving a file out of a save deletes it there, and that deletion is
-    // journalled just like any other. Fs::copy/move stream through their own
-    // handles, so this is the after_write form.
-    Services::SaveWrite::after_write(dest_dir);
-    if (cut && !m_clipboard.empty())
-        Services::SaveWrite::after_write(m_clipboard.front());
-    m_progress.done = true;
+    // Run the copy/move on a worker thread so the UI keeps drawing the progress
+    // overlay instead of freezing — essential now that a source can be a slow
+    // network share, not just the SD card. Mirrors the install worker.
+    auto* arg = new PasteThreadArg{ m_clipboard, dest_dir, cut, &m_progress };
+#ifdef PLATFORM_SWITCH
+    threadCreate(&m_paste_thread, paste_thread_fn, arg, nullptr, 512 * 1024, 0x2C, -2);
+    threadStart(&m_paste_thread);
+    m_paste_thread_active = true;
+#else
+    paste_thread_fn(arg);   // PC/tests: synchronous
+#endif
 
     if (cut) { m_clipboard.clear(); m_clip_mode = ClipMode::None; }
 }
@@ -616,6 +661,9 @@ void FileBrowserScreen::draw() {
                            Font::Size::Medium, Font::Weight::Bold,
                            Theme::Token::FgPrimary);
         Widgets::draw_progress(bx + 20, by + 70, 440, 16, m_progress.fraction());
+        Widgets::draw_text(bx + 20, by + 94, Lang::t("hints.cancel_b"),
+                           Font::Size::Small, Font::Weight::Regular,
+                           Theme::Token::FgSecondary);
     }
 }
 

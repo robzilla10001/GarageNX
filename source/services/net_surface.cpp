@@ -60,9 +60,6 @@
 #include <limits.h>
 #include <new>
 #include <cstring>
-#include <cstdio>
-#include <cstdarg>
-#include <ctime>
 #endif
 
 namespace Services {
@@ -97,19 +94,6 @@ std::string          g_mounted;   // connection name currently connected, "" if 
 // sdmc:/switch/GarageNX/logs/net.log. Same pattern as save.log / nsp_stream.log.
 // Defined early so the connect/reconnect helpers below can use it (SDL_Log is not
 // visible without nxlink).
-static void net_log(const char* fmt, ...) {
-    ::mkdir("sdmc:/switch", 0777);
-    ::mkdir("sdmc:/switch/GarageNX", 0777);
-    ::mkdir("sdmc:/switch/GarageNX/logs", 0777);
-    FILE* f = ::fopen("sdmc:/switch/GarageNX/logs/net.log", "a");
-    if (!f) return;
-    ::fprintf(f, "[%lld] ", static_cast<long long>(::time(nullptr)));   // wall-clock s, for timing
-    va_list ap; va_start(ap, fmt);
-    vfprintf(f, fmt, ap);
-    va_end(ap);
-    fputc('\n', f);
-    fclose(f);
-}
 
 // Connect + mount an NFS export. The export path is the connection's `share`
 // field (e.g. "/volume1/pub"). Auto-reconnect is disabled so an unreachable or
@@ -185,9 +169,8 @@ static bool smb_reconnect() {
     for (int i = 0; i < 5; ++i) {
         if (g_smb2) { smb2_destroy_context(g_smb2); g_smb2 = nullptr; }
         if (i > 0) svcSleepThread(2'000'000'000ULL);   // 2 s between attempts
-        if (connect_smb(*s)) { net_log("  smb_reconnect OK (attempt %d)", i); return true; }
-        net_log("  smb_reconnect attempt %d failed: %s", i,
-                g_smb2 ? smb2_get_error(g_smb2) : "no ctx");
+        if (connect_smb(*s)) { return true; }
+        
     }
     return false;
 }
@@ -230,7 +213,6 @@ struct NetFile {
     uint32_t             ra_size  = kReadAhead;  // per-file read-ahead size (SMB: negotiated max)
 };
 
-
 struct NetDirState {
     struct nfsdir*  nfs = nullptr;
     struct smb2dir* smb = nullptr;
@@ -266,7 +248,7 @@ static int net_dev_open(struct _reent* r, void* fileStruct, const char* path, in
         if (nfs_open(g_nfs, dev_relpath(path), flags, &f->nfs) != 0 || !f->nfs) { r->_errno = EIO; return -1; }
         struct nfs_stat_64 s{};
         if (nfs_fstat64(g_nfs, f->nfs, &s) == 0) f->size = s.nfs_size;
-        net_log("open NFS '%s' size=%llu", path, (unsigned long long)f->size);
+        
         return 0;
     }
     if (g_smb2) {
@@ -284,8 +266,7 @@ static int net_dev_open(struct _reent* r, void* fileStruct, const char* path, in
         if (m < kReadAhead)      m = kReadAhead;
         if (m > (8u << 20))      m = 8u << 20;
         f->ra_size = m;
-        net_log("open SMB '%s' size=%llu max_read=%u ra=%u", path,
-                (unsigned long long)f->size, smb2_get_max_read_size(g_smb2), f->ra_size);
+        
         return 0;
     }
     r->_errno = ENODEV; return -1;
@@ -308,8 +289,7 @@ static int raw_pread(NetFile* f, uint8_t* dst, uint32_t count, uint64_t offset, 
     if (f->nfs) {
         // libnfs order is (nfs, fh, offset, count, buf) — NOT (buf, count, offset).
         int n = nfs_pread(g_nfs, f->nfs, offset, count, dst);
-        if (n < 0) { net_log("read NFS ERR pos=%llu len=%u: %s",
-                             (unsigned long long)offset, count, nfs_get_error(g_nfs)); r->_errno = EIO; return -1; }
+        if (n < 0) { r->_errno = EIO; return -1; }
         return n;
     }
     if (f->smb) {
@@ -318,20 +298,18 @@ static int raw_pread(NetFile* f, uint8_t* dst, uint32_t count, uint64_t offset, 
             if (n >= 0) return n;
             // Connection likely dropped mid-transfer. Reconnect, reopen at the same
             // offset (pread is offset-explicit), and retry a bounded number of times.
-            net_log("read SMB ERR pos=%llu len=%u attempt=%d: %s",
-                    (unsigned long long)offset, count, attempt, smb2_get_error(g_smb2));
+            
             if (attempt >= 4) { r->_errno = EIO; return -1; }
             if (!smb_reconnect()) {
-                net_log("  reconnect FAILED: %s", g_smb2 ? smb2_get_error(g_smb2) : "no ctx");
+                
                 r->_errno = EIO; return -1;
             }
             f->smb = smb2_open(g_smb2, f->rel.c_str(), f->flags);
             if (!f->smb) {
-                net_log("  reopen '%s' FAILED: %s", f->rel.c_str(), smb2_get_error(g_smb2));
+                
                 r->_errno = EIO; return -1;
             }
-            net_log("  reconnected + reopened '%s', retrying at pos=%llu",
-                    f->rel.c_str(), (unsigned long long)offset);
+            
         }
     }
     r->_errno = EBADF; return -1;
@@ -340,7 +318,6 @@ static int raw_pread(NetFile* f, uint8_t* dst, uint32_t count, uint64_t offset, 
 static ssize_t net_dev_read(struct _reent* r, void* fd, char* ptr, size_t len) {
     NetFile* f = static_cast<NetFile*>(fd);
     if (len == 0) return 0;
-    const uint64_t before = f->pos;
     size_t total = 0;
     while (len > 0) {
         // Serve from the read-ahead buffer whenever the position falls inside it.
@@ -358,11 +335,10 @@ static ssize_t net_dev_read(struct _reent* r, void* fd, char* ptr, size_t len) {
         if (f->rbuf.size() < f->ra_size) f->rbuf.resize(f->ra_size);
         int n = raw_pread(f, f->rbuf.data(), f->ra_size, f->pos, r);
         if (n < 0)  return total > 0 ? static_cast<ssize_t>(total) : -1;
-        if (n == 0) { if (total == 0) net_log("read EOF/0 at pos=%llu", (unsigned long long)f->pos); break; }
+        if (n == 0) break;   // EOF
         f->rbuf_off = f->pos;
         f->rbuf_len = static_cast<size_t>(n);
     }
-    if ((before >> 28) != (f->pos >> 28)) net_log("read pos=%llu", (unsigned long long)f->pos);
     return static_cast<ssize_t>(total);
 }
 
@@ -400,7 +376,7 @@ static int net_dev_stat(struct _reent* r, const char* path, struct stat* st) {
     if (g_nfs) {
         struct nfs_stat_64 s{};
         int rc = nfs_stat64(g_nfs, dev_relpath(path), &s);
-        net_log("stat NFS path='%s' rc=%d", path, rc);
+        
         if (rc != 0) { r->_errno = ENOENT; return -1; }
         fill_stat(st, S_ISDIR(s.nfs_mode), s.nfs_size, s.nfs_mtime);
         return 0;
@@ -409,8 +385,7 @@ static int net_dev_stat(struct _reent* r, const char* path, struct stat* st) {
         std::string rel = smb_relpath(path);
         struct smb2_stat_64 s{};
         int rc = smb2_stat(g_smb2, rel.c_str(), &s);
-        net_log("stat SMB path='%s' rel='%s' rc=%d type=%u", path, rel.c_str(), rc,
-                rc == 0 ? (unsigned)s.smb2_type : 0u);
+        
         if (rc != 0) { r->_errno = ENOENT; return -1; }
         fill_stat(st, s.smb2_type == SMB2_TYPE_DIRECTORY, s.smb2_size, s.smb2_mtime);
         return 0;
@@ -423,18 +398,18 @@ static DIR_ITER* net_dev_diropen(struct _reent* r, DIR_ITER* dirState, const cha
     if (g_nfs) {
         const char* rel = dev_relpath(path);
         int rc = nfs_opendir(g_nfs, rel, &d->nfs);
-        net_log("diropen NFS path='%s' rel='%s' rc=%d dir=%p", path, rel, rc, (void*)d->nfs);
-        if (rc != 0 || !d->nfs) { net_log("  nfs_opendir FAILED: %s", nfs_get_error(g_nfs)); r->_errno = ENOENT; return nullptr; }
+        
+        if (rc != 0 || !d->nfs) { r->_errno = ENOENT; return nullptr; }
         return dirState;
     }
     if (g_smb2) {
         std::string rel = smb_relpath(path);
         d->smb = smb2_opendir(g_smb2, rel.c_str());
-        net_log("diropen SMB path='%s' rel='%s' dir=%p", path, rel.c_str(), (void*)d->smb);
-        if (!d->smb) { net_log("  smb2_opendir FAILED: %s", smb2_get_error(g_smb2)); r->_errno = ENOENT; return nullptr; }
+        
+        if (!d->smb) { r->_errno = ENOENT; return nullptr; }
         return dirState;
     }
-    net_log("diropen path='%s' but no context mounted", path);
+    
     r->_errno = ENODEV; return nullptr;
 }
 
@@ -448,10 +423,10 @@ static int net_dev_dirnext(struct _reent* r, DIR_ITER* dirState, char* filename,
             // NF3DIR == 2 in the NFSv3 ftype3 enum (libnfs-raw-nfs.h). Avoid pulling
             // that header in just for the constant.
             fill_stat(filestat, e->type == 2u, e->size, static_cast<uint64_t>(e->mtime.tv_sec));
-            net_log("  dirent NFS '%s' type=%u", e->name, e->type);
+            
             return 0;
         }
-        net_log("dirnext NFS EOD");
+        
         r->_errno = ENOENT; return -1;   // end of stream
     }
     if (d->smb) {
@@ -460,10 +435,10 @@ static int net_dev_dirnext(struct _reent* r, DIR_ITER* dirState, char* filename,
             if (std::strcmp(e->name, ".") == 0 || std::strcmp(e->name, "..") == 0) continue;
             std::strncpy(filename, e->name, NAME_MAX); filename[NAME_MAX] = '\0';
             fill_stat(filestat, e->st.smb2_type == SMB2_TYPE_DIRECTORY, e->st.smb2_size, e->st.smb2_mtime);
-            net_log("  dirent SMB '%s' type=%u", e->name, (unsigned)e->st.smb2_type);
+            
             return 0;
         }
-        net_log("dirnext SMB EOD");
+        
         r->_errno = ENOENT; return -1;
     }
     r->_errno = ENODEV; return -1;
@@ -508,7 +483,7 @@ static void register_net_device() {
     g_net_devoptab.dirnext_r    = net_dev_dirnext;
     g_net_devoptab.dirclose_r   = net_dev_dirclose;
     int rc = AddDevice(&g_net_devoptab);
-    net_log("register net: AddDevice rc=%d", rc);
+    
     if (rc >= 0) g_net_dev_added = true;
     else SDL_Log("net: AddDevice(\"net\") failed");
 }
@@ -533,7 +508,7 @@ std::string net_resolve(const NetPath& np) {
     }
 
     const Config::NetShare* s = find_live(np.connection);
-    if (!s) {                        // unknown connection — refuse, nothing mounted
+    if (!s) { // unknown connection — refuse, nothing mounted
         g_last_error = "Unknown connection.";
         net_surface_release();
         return {};
@@ -559,9 +534,7 @@ std::string net_resolve(const NetPath& np) {
     // (changed host/share/path, same name) actually takes effect instead of reusing
     // the previous mount.
     net_surface_release();
-    net_log("resolve '%s' -> connect host=%s share=%s path=%s rest=%s",
-            s->name.c_str(), s->host.c_str(), s->share.c_str(),
-            s->path.c_str(), np.rest.c_str());
+    
     {
         const NetProtocol proto = net_protocol_parse(s->protocol);
         bool ok = false;
