@@ -133,11 +133,8 @@ static json to_json(const All& c) {
         }},
         {"behavior", {
             {"action_logging",          c.behavior.action_logging},
-            {"highlight_update_files",  c.behavior.highlight_update_files},
-            {"rotate_screen",           c.behavior.rotate_screen},
-            {"use_overclocking",        c.behavior.use_overclocking},
-            {"show_cache_warming",      c.behavior.show_cache_warming},
             {"screen_dim_seconds",      c.behavior.screen_dim_seconds},
+            {"screen_dim_seconds_net",  c.behavior.screen_dim_seconds_net},
             {"button_repeat_on_hold",   c.behavior.button_repeat_on_hold},
             {"show_clock",              c.behavior.show_clock},
             {"show_seconds",            c.behavior.show_seconds},
@@ -213,11 +210,8 @@ static void from_json(const json& j, All& c) {
 
     auto beh = j.value("behavior", json::object());
     c.behavior.action_logging         = jget<bool>(beh, "action_logging",         Defaults::ACTION_LOGGING);
-    c.behavior.highlight_update_files = jget<bool>(beh, "highlight_update_files", Defaults::HIGHLIGHT_UPDATE_FILES);
-    c.behavior.rotate_screen          = jget<bool>(beh, "rotate_screen",          Defaults::ROTATE_SCREEN);
-    c.behavior.use_overclocking       = jget<bool>(beh, "use_overclocking",       Defaults::USE_OVERCLOCKING);
-    c.behavior.show_cache_warming     = jget<bool>(beh, "show_cache_warming",     Defaults::SHOW_CACHE_WARMING);
     c.behavior.screen_dim_seconds     = jget<int> (beh, "screen_dim_seconds",     Defaults::SCREEN_DIM_SECONDS);
+    c.behavior.screen_dim_seconds_net = jget<int> (beh, "screen_dim_seconds_net", Defaults::SCREEN_DIM_SECONDS_NET);
     c.behavior.button_repeat_on_hold  = jget<bool>(beh, "button_repeat_on_hold",  Defaults::BUTTON_REPEAT);
     c.behavior.show_clock             = jget<bool>(beh, "show_clock",             Defaults::SHOW_CLOCK);
     c.behavior.show_seconds           = jget<bool>(beh, "show_seconds",           Defaults::SHOW_SECONDS);

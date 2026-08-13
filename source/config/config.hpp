@@ -21,11 +21,8 @@ struct App {
 
 struct Behavior {
     bool action_logging         = true;
-    bool highlight_update_files = true;
-    bool rotate_screen          = false;
-    bool use_overclocking       = false;
-    bool show_cache_warming     = false;
-    int  screen_dim_seconds     = 30;
+    int  screen_dim_seconds     = 30;   // menus/browsers: dim after N s idle (0 = never)
+    int  screen_dim_seconds_net = 0;    // FTP/HTTP/MTP sessions: dim after N s (0 = never)
     bool button_repeat_on_hold  = true;
     bool show_clock             = true;
     bool show_seconds           = true;

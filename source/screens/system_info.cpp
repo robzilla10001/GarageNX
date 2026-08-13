@@ -91,14 +91,7 @@ void SystemInfoScreen::rebuild() {
     add_row("system_info.fw_version_hash",      fw.version_hash.or_na());
     add_row("system_info.fw_displayed_version", fw.displayed_version.or_na());
     add_row("system_info.fw_display_name",      fw.display_name.or_na());
-    add_row("system_info.fw_dram_id",           fw.dram_id.or_na(), true);
-    add_row("system_info.fw_fuses_burned",      fw.fuses_burned.or_na());
     add_row("system_info.fw_soc_type",          fw.soc_type.or_na());
-    add_row("system_info.fw_equipment_type",    fw.equipment_type.or_na());
-    add_row("system_info.fw_purpose",           fw.purpose.or_na());
-    add_row("system_info.fw_device_id",         fw.device_id.or_na(), true);
-    add_row("system_info.fw_hiz_charging",      fw.hiz_charging.or_na());
-    add_row("system_info.fw_kiosk_mode",        fw.kiosk_mode.or_na());
     add_row("system_info.fw_serial_reported",   fw.serial_reported.or_na(), true);
     add_row("system_info.fw_serial_true",       fw.serial_true.or_na(), true);
     add_row("system_info.fw_prodinfo_blanked",  fw.prodinfo_blanked.or_na());
@@ -111,34 +104,26 @@ void SystemInfoScreen::rebuild() {
     if (ams.detected) {
         add_row("system_info.atm_version",        astr(ams.version));
         add_row("system_info.atm_key_generation", astr(ams.key_generation));
-        add_row("system_info.atm_target_fw",      astr(ams.target_firmware));
         add_row("system_info.atm_git_hash",       astr(ams.git_hash));
         add_row("system_info.atm_has_rcm_fix",    astr(ams.has_rcm_bug));
         add_row("system_info.atm_clears_cal0",    astr(ams.exosphere_clears_cal0));
         add_row("system_info.atm_emummc_enabled", astr(ams.emummc_enabled));
         add_row("system_info.atm_force_usb3",     astr(ams.force_usb3));
-        add_row("system_info.atm_supported_hos",  astr(ams.supported_hos));
     } else {
         add_row("system_info.atm_version", "Not detected (stock)");
     }
 
     add_header("system_info.section_sd");
     {
-        auto sd = Core::Storage::sd_card();
-        if (sd.valid) {
-            char cap[64];
-            snprintf(cap, sizeof(cap), "%.1f GB free / %.0f GB",
-                     sd.gb_free(), sd.gb_total());
-            add_row("system_info.sd_product_name", cap);
-        } else {
-            add_row("system_info.sd_product_name", "N/A");
-        }
-        add_row("system_info.sd_cid",               "N/A", true);
-        add_row("system_info.sd_manufacturer",      "N/A");
-        add_row("system_info.sd_oem_id",            "N/A");
-        add_row("system_info.sd_product_revision",  "N/A");
-        add_row("system_info.sd_serial",            "N/A", true);
-        add_row("system_info.sd_manufacturing_date","N/A");
+        // Matches Hekate's CID readout: model, manufacturer(id), OEM id, HW.FW
+        // revision, serial, month/year. (Capacity lives in the status bar.)
+        auto cid = Core::Storage::sd_cid();
+        add_row("system_info.sd_product_name",      cid.valid ? cid.product_name : "N/A");
+        add_row("system_info.sd_manufacturer",      cid.valid ? cid.manufacturer : "N/A");
+        add_row("system_info.sd_oem_id",            cid.valid ? cid.oem_id       : "N/A");
+        add_row("system_info.sd_product_revision",  cid.valid ? cid.revision     : "N/A");
+        add_row("system_info.sd_serial",            cid.valid ? cid.serial       : "N/A");
+        add_row("system_info.sd_manufacturing_date",cid.valid ? cid.mfg_date     : "N/A");
     }
 
     add_header("system_info.section_power");
@@ -146,7 +131,8 @@ void SystemInfoScreen::rebuild() {
         auto p = Core::Battery::power();
         add_row("system_info.pwr_battery_pct",
                 p.valid ? (std::to_string(p.charge_percent) + "%") : "N/A");
-        add_row("system_info.pwr_source_type", p.connected ? "Connected" : "Battery");
+        add_row("system_info.pwr_source_type",
+                p.valid ? (p.charger_type.empty() ? "No charger" : p.charger_type) : "N/A");
         add_row("system_info.pwr_sufficient", p.valid ? "Yes" : "N/A");
     }
 
@@ -188,28 +174,13 @@ void SystemInfoScreen::rebuild() {
         add_row("system_info.max_avg_temperature",  vstr(m.avg_temperature_c));
     }
 
-    add_header("system_info.section_battery_params");
-    {
-        auto pr = Core::Battery::controller_params();
-        add_row("system_info.bp_rcomp0",      vstr(pr.rcomp0));
-        add_row("system_info.bp_tempc0",      vstr(pr.tempc0));
-        add_row("system_info.bp_fullcap",     vstr(pr.full_cap));
-        add_row("system_info.bp_fullcapnom",  vstr(pr.full_cap_nom));
-        add_row("system_info.bp_iavg_empty",  vstr(pr.iavg_empty));
-        add_row("system_info.bp_qr_table_00", vstr(pr.qr_table_00));
-        add_row("system_info.bp_qr_table_10", vstr(pr.qr_table_10));
-        add_row("system_info.bp_qr_table_20", vstr(pr.qr_table_20));
-        add_row("system_info.bp_qr_table_30", vstr(pr.qr_table_30));
-        add_row("system_info.bp_sum",         vstr(pr.sum_charge_discharge_pct));
-    }
-
     add_header("system_info.section_hardware");
     add_row("system_info.hw_bt_mac",     hw.bluetooth_mac.or_na(), true);
     add_row("system_info.hw_wifi_mac",   hw.wifi_mac.or_na(), true);
     add_row("system_info.hw_config_id1", hw.config_id1.or_na(), true);
     add_row("system_info.hw_serial",     hw.serial.or_na(), true);
     add_row("system_info.hw_battery_lot",hw.battery_lot.or_na());
-    add_row("system_info.hw_screen_id",  hw.screen_id.or_na(), true);
+    add_row("system_info.hw_screen_id",  hw.screen_id.or_na());
 
     add_header("system_info.section_activity");
     {

@@ -254,10 +254,10 @@ std::unique_ptr<Screen> FileBrowserScreen::update(bool& pop) {
         return nullptr;
     }
 
-    // In split mode, L/R switches active pane
+    // In split mode, ZL/ZR switch the active pane (L/R now page the list).
     if (m_split) {
-        if (Input::pressed(Input::Button::L)) m_right_active = false;
-        if (Input::pressed(Input::Button::R)) m_right_active = true;
+        if (Input::pressed(Input::Button::ZL)) m_right_active = false;
+        if (Input::pressed(Input::Button::ZR)) m_right_active = true;
     }
 
     // Context menu
@@ -635,6 +635,7 @@ void FileBrowserScreen::draw() {
     std::vector<Widgets::ButtonHint> hints = {
         { "A", Lang::t("hints.open") },
         { "X", Lang::t("hints.select") },
+        { "L/R", Lang::t("hints.page") },
         { "+", Lang::t("hints.context_menu") },
         { "-", Lang::t("hints.split_view") },
         { "B", Lang::t("hints.back") },
@@ -909,6 +910,10 @@ void FileBrowserScreen::poll_install() {
 void FileBrowserScreen::save_install_log() {
     if (m_install_log_saved) return;
     m_install_log_saved = true;
+
+    // Action logging off -> keep the log on screen for this session but write
+    // nothing to the SD card. (The scrollable Result view above still works.)
+    if (!Config::get().behavior.action_logging) return;
 
     const std::string dir = Config::get().paths.log_folder;
     if (!dir.empty() && !Fs::exists(dir)) Fs::make_directory(dir);  // NO-COMMIT: log folder on SD, never a save

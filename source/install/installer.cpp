@@ -22,8 +22,7 @@
 
 #include "install/installer.hpp"
 #include "install/ncz.hpp"
-#include "install/prefetch_reader.hpp"
-#include <chrono>
+#include "config/config.hpp"
 #include "core/nca.hpp"
 #include "core/keys.hpp"
 #include <SDL2/SDL.h>
@@ -483,21 +482,20 @@ bool install(std::vector<ContentEntry> contents,
 
         bool nca_ok = true;
 
-        // Prefetch the source for this entry: a background thread reads ahead while
-        // this thread decompresses/re-encrypts/writes, overlapping network I/O with
-        // CPU+SD work. Only the prefetch worker touches e.read (the net: source),
-        // so the connection stays single-threaded. Header reads above used e.read
-        // directly; from here the access is (mostly) sequential.
-        PrefetchReader prefetch(e.read, e.size);
-        ReadFn e_read = [&prefetch](uint64_t off, void* buf, size_t len) {
-            return prefetch.read(off, buf, len);
-        };
+        // Optional integrity check: hash the NCA bytes as they're written and
+        // compare against the content-id (which is the first 16 bytes of the NCA's
+        // SHA-256). Off by default costs nothing; on, it catches a corrupt source
+        // at install time instead of at first launch. Both write paths emit bytes
+        // in order, so a streaming hash is exact.
+        const bool verify_hash = Config::get().behavior.verify_hash_on_install;
+        Sha256Context nca_sha;
+        if (verify_hash) sha256ContextCreate(&nca_sha);
 
         if (is_ncz_entry) {
             // ── NCZ/NSZ: decompress + re-encrypt, then write in chunks ────────
             uint64_t write_off = 0;
             std::string ncz_err = NczDecompressor::decompress(
-                e_read, e.size, keys,
+                e.read, e.size, keys,
                 [&](uint64_t nca_offset, const uint8_t* data, size_t len) -> bool {
                     if (progress.cancel.load()) return false;
                     if (R_FAILED(ncmContentStorageWritePlaceHolder(
@@ -505,6 +503,7 @@ bool install(std::vector<ContentEntry> contents,
                         progress.message = "WritePlaceHolder failed (NCZ) for " + e.name;
                         return false;
                     }
+                    if (verify_hash) sha256ContextUpdate(&nca_sha, data, len);
                     write_off = nca_offset + len;
                     progress.bytes_done.fetch_add(len);
                     return true;
@@ -517,35 +516,32 @@ bool install(std::vector<ContentEntry> contents,
         } else {
             // ── Plain NCA: stream directly into placeholder ───────────────────
             uint64_t off = 0;
-            using Clock = std::chrono::steady_clock;
-            int64_t ns_read = 0, ns_write = 0;
-            auto since = [](Clock::time_point a) {
-                return std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - a).count();
-            };
             while (off < e.size) {
                 if (progress.cancel.load()) { nca_ok = false; break; }
                 size_t chunk = (size_t)std::min<uint64_t>(e.size - off, CHUNK);
-                auto tr = Clock::now();
-                size_t got = e_read(off, buf.data(), chunk);
-                ns_read += since(tr);
+                size_t got = e.read(off, buf.data(), chunk);
                 if (got == 0) {
                     progress.message = "Read error in " + e.name;
                     nca_ok = false; break;
                 }
-                auto tw = Clock::now();
-                Result wr = ncmContentStorageWritePlaceHolder(&dst_cs, &ph, off, buf.data(), got);
-                ns_write += since(tw);
-                if (R_FAILED(wr)) {
+                if (R_FAILED(ncmContentStorageWritePlaceHolder(&dst_cs, &ph, off, buf.data(), got))) {
                     progress.message = "WritePlaceHolder failed for " + e.name;
                     nca_ok = false; break;
                 }
+                if (verify_hash) sha256ContextUpdate(&nca_sha, buf.data(), got);
                 off += got;
                 progress.bytes_done.fetch_add(got);
             }
-            if (FILE* tf = std::fopen("sdmc:/switch/GarageNX/logs/install_timing.log", "a")) {
-                std::fprintf(tf, "NSP plain %.0f MB: read(wait)=%.1fs write=%.1fs\n",
-                             off / (1024.0 * 1024.0), ns_read / 1e9, ns_write / 1e9);
-                std::fclose(tf);
+        }
+
+        // Compare the streamed hash to the content-id (first 16 bytes of SHA-256).
+        if (nca_ok && verify_hash) {
+            uint8_t digest[0x20];
+            sha256ContextGetHash(&nca_sha, digest);
+            if (std::memcmp(digest, content_id.c, sizeof(content_id.c)) != 0) {
+                progress.message = "Hash mismatch (corrupt?) in " + e.name;
+                progress.push_log("ERROR: hash verification failed for " + e.name);
+                nca_ok = false;
             }
         }
 
@@ -783,10 +779,21 @@ bool install(std::vector<ContentEntry> contents,
         ::Result push_rc = serviceDispatchIn(&ns_srv, 16, push_in,
             .buffer_attrs = { SfBufferAttr_HipcMapAlias | SfBufferAttr_In },
             .buffers = { { records.data(), sizeof(ContentStorageRecord) * records.size() } });
-        SDL_Log("PushApplicationRecord(%016llX) cmd16 rc=0x%08X records=%zu",
-           (unsigned long long)app_id, push_rc, records.size());
+        (void)push_rc;
 
         serviceClose(&ns_srv);
+
+        // On [6.0.0+], the ns application record alone isn't enough — qlaunch also
+        // needs a launch version registered with avm (Application Version Manager),
+        // or the title won't surface on the HOME menu even though the record exists.
+        // This is the step Sphaira/yati do and GarageNX was missing. (cnmt.key.version
+        // is the version of the content just installed — the base's version.)
+        if (hosversionAtLeast(6, 0, 0)) {
+            if (R_SUCCEEDED(avmInitialize())) {
+                avmPushLaunchVersion(app_id, cnmt.key.version);
+                avmExit();
+            }
+        }
     }
 
     // Trigger NS to synchronize its application record list with the meta-DB.
@@ -833,13 +840,10 @@ bool install(std::vector<ContentEntry> contents,
         SDL_Log("nsListApplicationRecord(trigger) rc=0x%08X count=%d",
            nsListApplicationRecord(dummy, 1, 0, &out_count), out_count);
 
-        Event upd_evt{};
-        ::Result evt_rc = nsGetApplicationRecordUpdateSystemEvent(&upd_evt);
-        SDL_Log("nsGetApplicationRecordUpdateSystemEvent rc=0x%08X", evt_rc);
-        if (R_SUCCEEDED(evt_rc)) {
-            SDL_Log("eventWait rc=0x%08X", eventWait(&upd_evt, 2000000000ULL));
-            eventClose(&upd_evt);
-        }
+        // We deliberately do NOT call nsGetApplicationRecordUpdateSystemEvent +
+        // eventWait here: that auto-clear system event is how qlaunch learns to
+        // rebuild its title list, and consuming it here would swallow the signal so a
+        // freshly installed title shows a record but no icon until the next refresh.
 
         for (const ParsedCnmt& cnmt : cnmts) {
             if (cnmt.key.type != NcmContentMetaType_Application) continue;

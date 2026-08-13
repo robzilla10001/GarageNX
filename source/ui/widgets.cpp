@@ -72,6 +72,16 @@ bool List::handle_input() {
     for (int i = 0; i < up_steps; ++i)
         m_cursor = m_wrap.step(m_cursor, static_cast<int>(m_items.size()), false, true);
 
+    // L/R page the list by (nearly) a full screen — one row of overlap keeps a
+    // visual anchor. Clamps at the ends rather than wrapping, so paging is
+    // predictable when scanning a long directory. Supports held-repeat.
+    const int last = static_cast<int>(m_items.size()) - 1;
+    const int page = m_visible_rows > 1 ? m_visible_rows - 1 : 1;
+    const int pgdn = std::max(Input::press_count(Input::Button::R), Input::repeat(Input::Button::R) ? 1 : 0);
+    const int pgup = std::max(Input::press_count(Input::Button::L), Input::repeat(Input::Button::L) ? 1 : 0);
+    for (int i = 0; i < pgdn; ++i) m_cursor = std::min(m_cursor + page, last);
+    for (int i = 0; i < pgup; ++i) m_cursor = std::max(m_cursor - page, 0);
+
     if (Input::pressed(Input::Button::A)) {
         return true;
     }
@@ -99,6 +109,7 @@ void List::draw(int x, int y, int w, int h, const ListStyle& style) {
     }
 
     int visible_rows = h / style.row_height;
+    m_visible_rows = visible_rows > 0 ? visible_rows : 1;
     ensure_visible(m_cursor, visible_rows);
 
     SDL_Renderer* r = Renderer::get();

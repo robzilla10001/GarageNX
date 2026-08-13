@@ -211,6 +211,25 @@ static void load_all() {
     // Battery lot code is not exposed by a public setcal call in libnx, so it
     // remains N/A (honest placeholder per the design decision).
 
+    // ── LCD panel vendor (calibration) ─────────────────────────────────────────
+    {
+        u32 lcd_vendor = 0;
+        if (R_SUCCEEDED(setcalGetLcdVendorId(&lcd_vendor))) {
+            const char* name = nullptr;
+            switch (lcd_vendor) {
+                case 0x10:  name = "Japan Display Inc. (JDI)"; break;
+                case 0xF20: name = "InnoLux";                  break;
+                case 0xF30: name = "AU Optronics (AUO)";       break;
+                case 0x20:  name = "Samsung";                  break;
+                default: break;
+            }
+            char buf[48];
+            if (name) std::snprintf(buf, sizeof(buf), "%s (0x%X)", name, lcd_vendor);
+            else      std::snprintf(buf, sizeof(buf), "0x%X", lcd_vendor);
+            s_hw.screen_id = ok(std::string(buf));
+        }
+    }
+
     // ── Fuses / device id / blanked-PRODINFO detection ────────────────────────
     {
         u64 device_id = 0;
@@ -250,7 +269,7 @@ static void load_all() {
     }
 
     // Fields we don't yet have a reliable public-service read for on all
-    // firmwares are left as N/A intentionally: fuses_burned, purpose,
+    // firmwares are left as N/A intentionally: purpose,
     // hiz_charging, kiosk_mode, dram_id, parental_pin, screen_id.
     // These get filled in as we validate the correct service calls against real
     // hardware; N/A is the honest placeholder per the design decision.
@@ -315,10 +334,8 @@ bool is_sensitive_field(const std::string& label_key) {
     // Keys (from en.json) whose values are device-identifying and should be
     // masked until the user reveals them.
     static const char* kSensitive[] = {
-        "system_info.fw_device_id",
         "system_info.fw_serial_reported",
         "system_info.fw_serial_true",
-        "system_info.fw_dram_id",
         "system_info.fw_parental_pin",
         "system_info.hw_bt_mac",
         "system_info.hw_wifi_mac",

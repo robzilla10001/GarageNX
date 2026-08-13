@@ -25,7 +25,6 @@ struct FirmwareInfo {
     Field displayed_version;   // user-facing version string
     Field display_name;        // e.g. "NintendoSDK Firmware for NX ..."
     Field dram_id;
-    Field fuses_burned;        // count of burned anti-downgrade fuses
     Field soc_type;            // Erista / Mariko (inferred)
     Field equipment_type;
     Field purpose;

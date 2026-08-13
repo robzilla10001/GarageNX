@@ -278,17 +278,45 @@ std::unique_ptr<Screen> SettingsScreen::root() {
     }));
 
     // ── Behaviour ───────────────────────────────────────────────────────────
-    // ONLY settings that are actually read by something. Round 2 briefly exposed
-    // six that are not — action_logging, highlight_update_files,
-    // verify_hash_on_install, show_cache_warming, rotate_screen, use_overclocking,
-    // screen_dim_seconds — all present in Config and consumed by no code at all.
-    // A toggle that does nothing is worse than an absent one: it reads as a
-    // feature, and the user cannot tell it from a broken one. They stay in the
-    // config struct (harmless, round-tripped, ready if implemented) but are not
-    // offered until something honours them.
+    // Every toggle here is honoured by real code. Four settings that never had a
+    // consumer (highlight_update_files, show_cache_warming, rotate_screen,
+    // use_overclocking) were removed from Config entirely rather than shown as
+    // toggles that do nothing. action_logging, verify_hash_on_install, and the two
+    // screen-dim timers are wired and offered below.
     std::vector<Row> behav = {
+        [] {
+            Row r;
+            r.kind  = Row::Kind::Choice;
+            r.label = Lang::t("settings.date_format");
+            // Stored as a 3-letter order (DMY/MDY/YMD); shown as the familiar
+            // slash form. datetime.cpp already reads behavior.date_format for the
+            // clock + log names, so this takes effect immediately.
+            r.choice_get = [] {
+                const std::string& f = Config::get().behavior.date_format;
+                return f == "MDY" ? 1 : (f == "YMD" ? 2 : 0);
+            };
+            r.choice_set = [](int v) {
+                Config::get_mutable().behavior.date_format =
+                    (v == 1) ? "MDY" : (v == 2) ? "YMD" : "DMY";
+            };
+            r.choice_values = { 0, 1, 2 };
+            r.choice_labels = { "DD/MM/YYYY", "MM/DD/YYYY", "YYYY/MM/DD" };
+            return r;
+        }(),
         toggle_row(Lang::t("settings.button_repeat"),
                    &Config::Behavior::button_repeat_on_hold),
+        toggle_row(Lang::t("settings.action_logging"),
+                   &Config::Behavior::action_logging),
+        toggle_row(Lang::t("settings.verify_hash_on_install"),
+                   &Config::Behavior::verify_hash_on_install),
+        num_row(Lang::t("settings.screen_dim_seconds"),
+                [] { return Config::get().behavior.screen_dim_seconds; },
+                [](int v) { Config::get_mutable().behavior.screen_dim_seconds = v; },
+                0, 600, " s"),
+        num_row(Lang::t("settings.screen_dim_seconds_net"),
+                [] { return Config::get().behavior.screen_dim_seconds_net; },
+                [](int v) { Config::get_mutable().behavior.screen_dim_seconds_net = v; },
+                0, 600, " s"),
     };
     rows.push_back(submenu_row(Lang::t("settings.section_behavior"), [behav] {
         return std::unique_ptr<Screen>(new SettingsScreen(

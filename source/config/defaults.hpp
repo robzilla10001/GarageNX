@@ -24,11 +24,8 @@ inline constexpr const char* TITLEDB_URL      = "https://github.com/blawar/title
 
 // ── Behavior ──────────────────────────────────────────────────────────────────
 inline constexpr bool ACTION_LOGGING        = true;
-inline constexpr bool HIGHLIGHT_UPDATE_FILES= true;
-inline constexpr bool ROTATE_SCREEN        = false;
-inline constexpr bool USE_OVERCLOCKING     = false;
-inline constexpr bool SHOW_CACHE_WARMING   = false;
 inline constexpr int  SCREEN_DIM_SECONDS   = 30;
+inline constexpr int  SCREEN_DIM_SECONDS_NET = 0;   // network sessions: never, by default
 inline constexpr bool BUTTON_REPEAT        = true;
 inline constexpr int  BUTTON_REPEAT_DELAY_MS    = 400;
 inline constexpr int  BUTTON_REPEAT_INTERVAL_MS = 80;

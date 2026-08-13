@@ -17,6 +17,7 @@ struct Power {
     int   charge_percent  = 0;     // 0..100
     bool  charging        = false; // true if charger connected AND charging
     bool  connected       = false; // charger/USB power connected
+    std::string charger_type;      // "No charger" / "USB-PD (Enough Power)" / ...
     bool  valid           = false;
 };
 
@@ -41,9 +42,9 @@ struct ChargeInfo {
     Val<bool>   charging_enabled;
     Val<std::string> supply_route;
     Val<float>  battery_temp_c;
-    Val<int>    current_capacity_mah;
+    Val<std::string> current_capacity_mah;   // charge %, formatted "NN.NN%"
     Val<int>    battery_voltage_mv;
-    Val<int>    battery_age_pct;
+    Val<std::string> battery_age_pct;         // age %, formatted "NN.NN%"
     Val<std::string> power_role;
     Val<std::string> power_source;
     Val<int>    source_voltage_mv;

@@ -104,6 +104,7 @@ private:
     std::vector<ListItem> m_items;
     int m_cursor       = 0;
     int m_scroll_offset = 0;   // index of first visible row
+    int m_visible_rows  = 8;   // rows shown at last draw(); used for L/R paging
     WrapNav m_wrap;            // delayed round-robin navigation state
 
     void clamp_cursor();

@@ -37,7 +37,36 @@ namespace Core::Activity {
 
 Summary summary() {
     Summary s;   // all fields default-constructed → valid=false → "N/A"
-#ifndef PLATFORM_SWITCH
+#ifdef PLATFORM_SWITCH
+    // Aggregate per-title pdm statistics WITHOUT resolving names/labels (which read
+    // control data per title and cost seconds). We only need application ids, which
+    // ncm gives directly and cheaply. Honest limits: can't count played-then-deleted
+    // games, and the RTC-set / first-gameplay dates live only in the play-log save
+    // archive, so those two fields stay N/A.
+    bool ncm_ok = false;
+    const auto groups = Core::Ncm::group_by_application(Core::Ncm::list_all(&ncm_ok));
+
+    uint64_t total_seconds = 0, total_launches = 0;
+    int games = 0;
+    for (const auto& g : groups) {
+        const uint64_t app_id = g.app.program_id;
+        if (app_id == 0) continue;
+        PdmPlayStatistics st{};
+        if (R_SUCCEEDED(pdmqryQueryPlayStatisticsByApplicationId(app_id, false, &st))) {
+            const uint64_t secs     = st.playtime / 1000000000ULL;
+            const uint32_t launches = (uint32_t)st.total_launches;
+            if (secs > 0 || launches > 0) ++games;
+            total_seconds  += secs;
+            total_launches += launches;
+        }
+    }
+    if (ncm_ok) {
+        s.unique_games      = { games, true };
+        s.total_sessions    = { (int)total_launches, true };
+        s.total_playtime_h  = { (float)(total_seconds / 3600.0), true };
+        s.active_playtime_h = { (float)(total_seconds / 3600.0), true };
+    }
+#else
     // PC stub: give the UI something to lay out against during development.
     s.rtc_started       = { "N/A", false };
     s.first_event_date  = { "28-05-2026 16:36:10", true };

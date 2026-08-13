@@ -1,6 +1,10 @@
 // source/screens/menu_dispatch.cpp
 
 #include "screens/menu_dispatch.hpp"
+#ifdef PLATFORM_SWITCH
+// libnx exit-destination control (u32): 1 = exit to HOME menu, 0 = loader/hbmenu.
+extern "C" unsigned __nx_applet_exit_mode;
+#endif
 #include "screens/submenu_screen.hpp"
 #include "screens/settings_screen.hpp"
 #include "screens/save_manager.hpp"
@@ -296,9 +300,11 @@ std::unique_ptr<Screen> menu_activate(MenuItem id, bool& pop) {
 
         case MenuItem::ExitToHome:
 #ifdef PLATFORM_SWITCH
-            // Clean process termination without arming a next-load: libnx returns
-            // to HOME and qlaunch re-scans records. (See app_exit notes.) Request a
-            // full app quit so this works from inside the Exit submenu too.
+            // libnx reads __nx_applet_exit_mode during its exit sequence: 1 = exit to
+            // the HOME menu (where qlaunch re-scans records and shows freshly
+            // installed titles), 0 = return to the loader/hbmenu. This is the
+            // mechanism NXMP uses. Works even when launched from hbmenu.
+            __nx_applet_exit_mode = 1;
             menu_request_quit();
             pop = true;
 #endif
@@ -306,6 +312,7 @@ std::unique_ptr<Screen> menu_activate(MenuItem id, bool& pop) {
 
         case MenuItem::ExitToHBMenu:
 #ifdef PLATFORM_SWITCH
+            __nx_applet_exit_mode = 0;   // default: return to the loader/hbmenu
             if (envHasNextLoad())
                 envSetNextLoad("sdmc:/hbmenu.nro", "sdmc:/hbmenu.nro");
             menu_request_quit();

@@ -7,6 +7,7 @@
 #include "services/storage_catalog.hpp"
 #include "services/save_surface.hpp"
 #include "services/title_surface.hpp"
+#include "services/write_guard.hpp"
 #include "core/nsp_stream.hpp"
 #include "core/ncm.hpp"
 #include "install/stream_driver.hpp"
@@ -493,6 +494,22 @@ void HttpServer::run() {
                                 ::mkdir(dir_path.c_str(), 0755);
                             }
                             
+                            // Enforce the shared catalog write policy before
+                            // touching the filesystem: ReadWrite surfaces (SD,
+                            // Album) proceed; NAND/Saves block on an on-device
+                            // confirmation; ReadOnly and unknown paths are refused.
+                            // Same guard FTP and MTP use — this is what stops a raw
+                            // PUT from writing a protected surface unconfirmed.
+                            if (Services::guard_write("HTTP", "write", vfs_path,
+                                    Config::get().http.surfaces)
+                                != Services::WriteDecision::Allow) {
+                                reply(cfd, "HTTP/1.1 403 Forbidden\r\n"
+                                           "Connection: close\r\n\r\n"
+                                           "Location is read-only or the write was "
+                                           "declined on the console\n");
+                                ::close(cfd); m_clients.fetch_sub(1); continue;
+                            }
+
                             // Open file for writing
                             FILE* f = ::fopen(vfs_path.c_str(), "wb");
                             if (f) {
@@ -549,9 +566,64 @@ void HttpServer::run() {
                                 reply(cfd, "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n");
                             }
                         }
+                    } else if (method == "DELETE") {
+                        // Delete a file or (empty) directory. Resolve to the VFS
+                        // path, enforce the same write policy as PUT, then unlink.
+                        if (!m_allow_upload) {
+                            reply(cfd, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+                            ::close(cfd); m_clients.fetch_sub(1); continue;
+                        }
+                        const std::string dvfs = resolve_vfs(fs_path);
+                        if (dvfs.empty()) {
+                            reply(cfd, "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+                            ::close(cfd); m_clients.fetch_sub(1); continue;
+                        }
+                        if (Services::guard_write("HTTP", "delete", dvfs,
+                                Config::get().http.surfaces)
+                            != Services::WriteDecision::Allow) {
+                            reply(cfd, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+                                       "Location is read-only or the delete was "
+                                       "declined on the console\n");
+                            ::close(cfd); m_clients.fetch_sub(1); continue;
+                        }
+                        struct stat st{};
+                        int drc = (::stat(dvfs.c_str(), &st) == 0 && S_ISDIR(st.st_mode))
+                                      ? ::rmdir(dvfs.c_str())
+                                      : ::unlink(dvfs.c_str());
+                        reply(cfd, drc == 0
+                            ? "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n"
+                            : "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+                              "Delete failed (directory not empty?)\n");
+                    } else if (method == "POST") {
+                        // POST /api/mkdir?path=<dir> — create a new folder. Same
+                        // guard as any other write. (POST, not PUT, so it can't be
+                        // confused with a file upload.)
+                        const std::string apip = http_path_only(path);
+                        if (!m_allow_upload || apip != "/api/mkdir") {
+                            reply(cfd, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+                            ::close(cfd); m_clients.fetch_sub(1); continue;
+                        }
+                        const std::string want = http_query_param(path, "path");
+                        const std::string mvfs = resolve_vfs(want.empty() ? "/" : want);
+                        if (mvfs.empty()) {
+                            reply(cfd, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+                            ::close(cfd); m_clients.fetch_sub(1); continue;
+                        }
+                        if (Services::guard_write("HTTP", "mkdir", mvfs,
+                                Config::get().http.surfaces)
+                            != Services::WriteDecision::Allow) {
+                            reply(cfd, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+                                       "Location is read-only or the operation was "
+                                       "declined on the console\n");
+                            ::close(cfd); m_clients.fetch_sub(1); continue;
+                        }
+                        reply(cfd, ::mkdir(mvfs.c_str(), 0755) == 0
+                            ? "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n"
+                            : "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+                              "mkdir failed (already exists?)\n");
                     } else {
                         // Method not allowed
-                        reply(cfd, "HTTP/1.1 405 Method Not Allowed\r\nAllow: GET, PUT\r\nConnection: close\r\n\r\n");
+                        reply(cfd, "HTTP/1.1 405 Method Not Allowed\r\nAllow: GET, PUT, DELETE, POST\r\nConnection: close\r\n\r\n");
                     }
                 }
                 ::close(cfd);

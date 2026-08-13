@@ -33,6 +33,7 @@
 #include "core/usb_mount.hpp"
 #include "core/save_mount.hpp"
 #include "core/keys.hpp"
+#include "services/net_surface.hpp"
 #include "services/title_surface.hpp"
 #include "core/sleep_inhibit.hpp"
 #include "services/confirmation_broker.hpp"
@@ -273,6 +274,11 @@ static void shutdown_services() {
     setExit();
     setsysExit();
     psmExit();
+    // Release any mounted SMB/NFS share BEFORE socketExit(): a live libsmb2/libnfs
+    // context holds an open socket, and tearing down the socket service with a
+    // dangling session breaks libnx's clean applet teardown — which sends us back to
+    // hbmenu instead of the HOME menu. No-op if nothing is mounted (or client off).
+    Services::net_surface_release();
     socketExit();
     nifmExit();
     ncmExit();
@@ -323,11 +329,43 @@ int main(int argc, char* argv[]) {
     bool auto_backup_done = (Config::get().behavior.save_auto_backup_days <= 0);
     uint32_t first_frame_at = 0;
 
+    // Idle-dim state (app-level screensaver). Menus dim after
+    // behavior.screen_dim_seconds; Connectivity sessions after
+    // screen_dim_seconds_net. 0 = never (see below).
+    uint32_t dim_last_activity = SDL_GetTicks();
+    uint32_t dim_last_mask     = 0;
+    bool     dim_on            = false;
+
     while (running && !stack.empty()) {
         // ── Input ─────────────────────────────────────────────────────────────
         if (!Input::poll()) {
             running = false;
             break;
+        }
+
+        // ── Screen dim (idle) ─────────────────────────────────────────────────
+        // App-level dim after inactivity. The timeout is context-dependent: a
+        // Connectivity session (FTP/HTTP/MTP or network browse — anything holding
+        // a sleep guard) uses screen_dim_seconds_net (default: never), everything
+        // else uses screen_dim_seconds (default: 30 s). Any button activity resets
+        // it; the press that wakes a dimmed screen is swallowed so it doesn't also
+        // act on the UI.
+        bool woke_from_dim = false;
+        {
+            const uint32_t nowd = SDL_GetTicks();
+            const uint32_t mask = Input::held_mask();
+            const bool activity = (mask != 0) || (mask != dim_last_mask);
+            dim_last_mask = mask;
+            if (activity) {
+                dim_last_activity = nowd;
+                if (dim_on) { dim_on = false; woke_from_dim = true; }
+            }
+            const auto& beh = Config::get().behavior;
+            const int secs = Core::SleepInhibit::active() ? beh.screen_dim_seconds_net
+                                                          : beh.screen_dim_seconds;
+            if (!dim_on && secs > 0 &&
+                (nowd - dim_last_activity) >= static_cast<uint32_t>(secs) * 1000u)
+                dim_on = true;
         }
 
         // ── Periodic status bar refresh (once per second) ──────────────────────
@@ -389,7 +427,7 @@ int main(int argc, char* argv[]) {
         }
 
         // ── Update ────────────────────────────────────────────────────────────
-        if (!stack.empty() && !Modal::is_active()) {
+        if (!stack.empty() && !Modal::is_active() && !woke_from_dim) {
             bool do_pop = false;
             auto next = stack.back()->update(do_pop);
 
@@ -444,6 +482,13 @@ int main(int argc, char* argv[]) {
 
         StatusBar::draw();
 
+        // Idle dim overlay: over the screen and bars, but BEFORE the modal so a
+        // confirmation prompt stays readable. Alpha blend is enabled globally.
+        if (dim_on) {
+            SDL_SetRenderDrawColor(Renderer::get(), 0, 0, 0, 165);
+            Renderer::fill_rect(0, 0, Renderer::BASE_WIDTH, Renderer::BASE_HEIGHT);
+        }
+
         // Modal renders on top of everything (after bars)
         if (Modal::is_active()) {
             Modal::Result res = Modal::update_and_draw();
@@ -494,11 +539,10 @@ int main(int argc, char* argv[]) {
     // `#define main SDL_main` and provides its own real main that wraps ours), so
     // a `return` here goes back into SDL's wrapper rather than libnx's crt0 — and
     // that wrapper path lands on hbmenu instead of HOME. exit(0) runs the C
-    // runtime's normal exit (atexit/__libnx_exit) and terminates the process the
-    // way a real title does, which returns to the HOME menu and lets qlaunch
-    // re-scan installed titles. This is the same exit(0) that plain-libnx
-    // installers (e.g. Plutonium-based) use. Cleanup above has already run.
-    // Unlike the earlier raw svcExitProcess() attempt, exit(0) is the SANCTIONED
-    // exit path — it does the managed libnx teardown, so it does not crash.
+    // runtime's normal exit (atexit/__libnx_exit) — the SANCTIONED path that does
+    // the managed libnx teardown, so it does not crash. (A raw svcExitProcess() to
+    // force HOME from under hbloader faults — the loader's exit protocol is not
+    // followed — so we do not do that; reaching HOME requires running as a real
+    // Application via a forwarder, where this exit(0) returns to HOME on its own.)
     exit(0);
 }

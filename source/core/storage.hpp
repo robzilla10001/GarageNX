@@ -4,6 +4,7 @@
 // from the status bar on an interval.
 
 #include <cstdint>
+#include <string>
 
 namespace Core::Storage {
 
@@ -22,6 +23,19 @@ struct SpaceInfo {
 
 // SD card capacity (the sdmc: mount).
 SpaceInfo sd_card();
+
+// Decoded SD card CID register. All strings empty and valid=false if the CID
+// could not be read (or on the PC stub).
+struct SdCid {
+    bool        valid = false;
+    std::string manufacturer;   // decoded name, or "0xNN" if the ID is unknown
+    std::string oem_id;         // 2-char ASCII application/OEM id
+    std::string product_name;   // up to 5-char ASCII
+    std::string revision;       // "n.m"
+    std::string serial;         // 8 hex digits
+    std::string mfg_date;       // "MM/YYYY"
+};
+SdCid sd_cid();
 
 // NAND user partition capacity. On PC stub returns a plausible value.
 SpaceInfo nand_user();

@@ -199,9 +199,8 @@ static void test_every_field_round_trips() {
     w.app.update_check_url = "http://example.invalid/u";
     w.app.titledb_url      = "http://example.invalid/t";
 
-    w.behavior.action_logging = false; w.behavior.highlight_update_files = false;
-    w.behavior.rotate_screen = true;   w.behavior.use_overclocking = true;
-    w.behavior.show_cache_warming = true; w.behavior.screen_dim_seconds = 99;
+    w.behavior.action_logging = false;
+    w.behavior.screen_dim_seconds = 99; w.behavior.screen_dim_seconds_net = 45;
     w.behavior.button_repeat_on_hold = false; w.behavior.show_clock = false;
     w.behavior.show_seconds = false;   w.behavior.date_format = "YMD";
     w.behavior.time_24h = false;       w.behavior.save_auto_backup_days = 7;
@@ -248,10 +247,9 @@ static void test_every_field_round_trips() {
     CHECK(c.app.update_check_url == "http://example.invalid/u", "update url");
     CHECK(c.app.titledb_url == "http://example.invalid/t", "titledb url");
 
-    CHECK(!c.behavior.action_logging && !c.behavior.highlight_update_files, "behavior bools");
-    CHECK(c.behavior.rotate_screen && c.behavior.use_overclocking, "behavior bools 2");
-    CHECK(c.behavior.show_cache_warming, "show_cache_warming");
+    CHECK(!c.behavior.action_logging, "action_logging");
     CHECK(c.behavior.screen_dim_seconds == 99, "screen_dim_seconds");
+    CHECK(c.behavior.screen_dim_seconds_net == 45, "screen_dim_seconds_net");
     CHECK(!c.behavior.button_repeat_on_hold, "button_repeat_on_hold");
     CHECK(!c.behavior.show_clock && !c.behavior.show_seconds, "clock bools");
     CHECK(c.behavior.date_format == "YMD", "date_format");

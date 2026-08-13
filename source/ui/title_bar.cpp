@@ -40,8 +40,7 @@ void draw() {
     // Version string (center-right, secondary)
     std::string ver_str =
         "v" + s_info.app_version +
-        "  |  FW " + s_info.fw_version +
-        "  |  SDK " + s_info.sdk_version;
+        "  |  FW " + s_info.fw_version;
 
     SDL_Color sc = Theme::get(Theme::Token::FgSecondary);
     SDL_Surface* ver_surf = Font::render(ver_str, Font::Size::Small,

@@ -18,6 +18,32 @@
 | Build system | CMake (devkitPro toolchain) |
 | License | AGPLv3 (§13 source disclosure via `APP_SOURCE_URL`) |
 
+### Post-parity additions (built after this reference's body was written)
+
+This document's body describes the parity build. Since then the following shipped
+and are hardware-verified; where they touch a subsystem below, that subsystem's
+prose may predate them:
+
+- **Browse Network (SMB/NFS).** A `net:` devoptab over libnfs/libsmb2
+  (`source/services/net_surface.*`), a connection chooser + on-device editor
+  (`source/screens/network_browser.*`, `network_edit.*`), read-ahead buffering and
+  reconnect-through-drops, threaded non-freezing copy, and split-to-SD. Compiled
+  only when `GARAGENX_NET_CLIENT` is defined and the two portlibs are installed —
+  see `BUILDING_NETWORK_CLIENT.md`.
+- **HTTP full read/write parity.** The web UI (`source/services/web_ui.hpp`) browses
+  every catalog surface and now uploads-into-folder, deletes, and makes folders;
+  the server added plain-PUT/DELETE/`POST /api/mkdir`, all routed through
+  `write_guard` so NAND/save writes raise the on-device confirmation.
+- **Exit to HOME** via libnx `__nx_applet_exit_mode = 1` (set in `menu_dispatch`/
+  `main_menu` for the HOME exits; `= 0` for the explicit hbmenu exit). Returning to
+  HOME is also what makes a freshly installed title appear.
+- **Install → HOME-menu registration.** After the ncm meta commit and the ns record
+  push, the installer calls `avmPushLaunchVersion` on 6.0.0+ and deliberately does
+  NOT consume `nsGetApplicationRecordUpdateSystemEvent` (so qlaunch still rebuilds).
+- **Behaviour settings.** Four never-consumed toggles removed; `action_logging`,
+  `verify_hash_on_install`, and a split `screen_dim_seconds` / `screen_dim_seconds_net`
+  (app-level idle dim, context by sleep-guard) wired and shown in Settings.
+
 ---
 
 ## 2. Repository Structure
@@ -174,21 +200,20 @@ sdmc:/switch/GarageNX/
     "titledb_url": "https://github.com/blawar/titledb/raw/master/versions.txt"
   },
   "behavior": {
-    "action_logging": true,
-    "highlight_update_files": true,
-    "rotate_screen": false,
-    "use_overclocking": false,
+    "action_logging": true,           // gates writing the install log to SD
     "saves_ro_mode": false,
-    "show_cache_warming": false,
-    "screen_dim_seconds": 30,
+    "screen_dim_seconds": 30,         // menus/browsers: app-level dim after N s idle (0 = never)
+    "screen_dim_seconds_net": 0,      // FTP/HTTP/MTP sessions: dim after N s (0 = never)
     "button_repeat_on_hold": true,
     "show_clock": true,
     "show_seconds": false,
     "date_format": "DMY",       // DMY | MDY | YMD  (clock + log names)
     "time_24h": true,           // 24h clock display; logs are always 24h
     "save_auto_backup_days": 0,
-    "verify_hash_on_install": true
+    "verify_hash_on_install": true    // stream SHA-256 per NCA vs content-id; fail install on mismatch
   },
+  // Removed (never had a consumer): highlight_update_files, rotate_screen,
+  // use_overclocking, show_cache_warming.
   "paths": {
     "save_backup": "sdmc:/switch/GarageNX/backups",
     "log_folder": "sdmc:/switch/GarageNX/logs",
@@ -2643,12 +2668,20 @@ the same failure that nearly rebuilt Slice C.
 Settings round 2 exposed every behaviour toggle that had a config field and a lang
 key. Seven of them — `action_logging`, `highlight_update_files`,
 `verify_hash_on_install`, `show_cache_warming`, `rotate_screen`,
-`use_overclocking`, `screen_dim_seconds` — are read by no code at all. They were
-aspirational fields from an earlier design, and their presence looked like
-evidence that something honoured them.
+`use_overclocking`, `screen_dim_seconds` — were at that time read by no code at
+all. They were aspirational fields from an earlier design, and their presence
+looked like evidence that something honoured them.
 
-It does not. **Before exposing a setting, grep for a consumer.** A toggle that
+It did not. **Before exposing a setting, grep for a consumer.** A toggle that
 changes nothing is worse than an absent one: it presents as a feature, and the user
+
+_Resolution (later session):_ the seven were dealt with, not left. Four with no
+plausible cheap consumer — `highlight_update_files`, `show_cache_warming`,
+`rotate_screen`, `use_overclocking` — were **removed** from Config entirely.
+The other three were **wired** and are now shown in Settings: `action_logging`
+gates the install-log write, `verify_hash_on_install` streams a per-NCA SHA-256
+check, and `screen_dim_seconds` became a menu timer plus a `screen_dim_seconds_net`
+timer driving an app-level idle dim. The principle stands regardless.
 cannot distinguish it from a broken one — the same reasoning that made the manual
 backup button back up everything rather than run a policy that could silently
 no-op.

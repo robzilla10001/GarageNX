@@ -7,6 +7,10 @@
 // submenu, pushes a leaf screen, or performs an exit/power action.
 
 #include "screens/main_menu.hpp"
+#ifdef PLATFORM_SWITCH
+// libnx exit-destination control (u32): 1 = exit to HOME menu, 0 = loader/hbmenu.
+extern "C" unsigned __nx_applet_exit_mode;
+#endif
 #include "screens/menu_dispatch.hpp"
 #include "lang/localization.hpp"
 #include "ui/renderer.hpp"
@@ -47,16 +51,9 @@ std::unique_ptr<Screen> MainMenuScreen::update(bool& pop) {
     // exit-to-home / exit-to-hbmenu items), so the user needn't open Exit to leave.
     if (Input::pressed(Input::Button::B)) {
 #ifdef PLATFORM_SWITCH
-        // Under a loader, arm hbmenu; as a real Application, clean-terminate to HOME.
-        switch (appletGetAppletType()) {
-            case AppletType_Application:
-            case AppletType_SystemApplication:
-                break;                       // clean exit -> HOME
-            default:
-                if (envHasNextLoad())
-                    envSetNextLoad("sdmc:/hbmenu.nro", "sdmc:/hbmenu.nro");
-                break;
-        }
+        // B exits toward HOME (libnx exit mode 1) so qlaunch refreshes and installed
+        // titles appear. "Exit to hbmenu" is the explicit way back to hbmenu.
+        __nx_applet_exit_mode = 1;
 #endif
         pop = true;
         return nullptr;

@@ -17,6 +17,7 @@
 
 #include "screens/screen.hpp"
 #include "ui/widgets.hpp"
+#include "core/sleep_inhibit.hpp"
 
 #include <memory>
 #include <string>
@@ -31,6 +32,13 @@ public:
     void draw() override;
 
 private:
+    // Keep the console awake for the whole network session: this chooser stays on
+    // the stack beneath the FileBrowserScreen it opens on net:/, so holding the
+    // guard here inhibits auto-sleep/dimming through browsing AND long transfers —
+    // matching FTP/HTTP/MTP, which each hold one for their session. (The idle timer
+    // is what was cutting off SMB transfers mid-way.)
+    Core::SleepInhibit::Guard m_stay_awake;
+
     // One selectable connection. `name` keys the config lookup and the credential
     // store; `label` is the display string built once by net_display_label().
     struct Row {

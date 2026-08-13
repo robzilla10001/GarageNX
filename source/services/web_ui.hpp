@@ -137,6 +137,10 @@ inline constexpr const char* kWebUiHtml = R"HTMLDOC(<!DOCTYPE html>
   .nm a:hover { color:var(--accent); }
   .sz { color:var(--fg2); font-size:13px; font-variant-numeric:tabular-nums;
         flex:none; }
+  .act { flex:none; width:28px; text-align:right; }
+  button.x { background:transparent; border:0; color:var(--fg2); cursor:pointer;
+             font-size:13px; padding:2px 6px; border-radius:6px; line-height:1; }
+  button.x:hover { background:var(--err); color:#fff; }
   .empty, .err { padding:18px 16px; color:var(--fg2); }
   .err { color:var(--err); }
   footer { text-align:center; color:var(--fg2); font-size:12px; padding:8px 0 28px; }
@@ -185,6 +189,13 @@ inline constexpr const char* kWebUiHtml = R"HTMLDOC(<!DOCTYPE html>
   <section>
     <h2>Storage</h2>
     <div id="crumbs">/</div>
+    <div class="row" id="fsbar" style="display:none;margin:10px 0 4px">
+      <button id="newdir" class="ghost">New folder</button>
+      <button id="uphere" class="ghost">Upload file here</button>
+      <input type="file" id="upfile" hidden>
+      <span class="sp" style="flex:1"></span>
+      <span id="upstat" style="color:var(--fg2);font-size:13px"></span>
+    </div>
     <div id="listing"><div class="empty">Loading…</div></div>
   </section>
 </main>
@@ -269,10 +280,12 @@ function load(p) {
       }
       for (var i = 0; i < e.length; i++) {
         var it = e[i], full = join(CWD, it.name);
+        var del = "<span class='act'><button class='x' data-del='" +
+                  esc(full) + "' title='Delete'>&#10005;</button></span>";
         if (it.type === "dir") {
           html += "<li><span class='ico'>&#128193;</span><span class='nm'>" +
                   "<a data-d='" + esc(full) + "'>" + esc(it.name) + "</a></span>" +
-                  "<span class='sz'></span></li>";
+                  "<span class='sz'></span>" + del + "</li>";
         } else {
           // encodeURI (not encodeURIComponent) so '/' survives as a separator.
           // Without this a filename containing '#' truncates the URL at the
@@ -281,7 +294,7 @@ function load(p) {
           html += "<li><span class='ico'>&#128196;</span><span class='nm'>" +
                   "<a href='" + esc(encodeURI(full)) + "' download>" +
                   esc(it.name) + "</a></span>" +
-                  "<span class='sz'>" + h(it.size) + "</span></li>";
+                  "<span class='sz'>" + h(it.size) + "</span>" + del + "</li>";
         }
       }
       html += "</ul>";
@@ -299,6 +312,27 @@ function load(p) {
           load(this.getAttribute("data-d"));
         };
       }
+
+      // Delete controls (one per entry). The server enforces the write policy:
+      // read-only surfaces answer 403, NAND/Saves raise an on-device prompt.
+      var dels = out.querySelectorAll("button[data-del]");
+      for (var m2 = 0; m2 < dels.length; m2++) {
+        dels[m2].onclick = function () {
+          var p = this.getAttribute("data-del");
+          if (!confirm("Delete\n" + p + " ?")) return;
+          fetch(encodeURI(p), { method: "DELETE" })
+            .then(function (r) {
+              if (r.ok) { load(CWD); }
+              else { r.text().then(function (t) {
+                alert("Delete failed (HTTP " + r.status + ").\n" + (t || "").trim()); }); }
+            })
+            .catch(function () { alert("Delete failed — connection lost."); });
+        };
+      }
+
+      // File-ops toolbar only makes sense inside a surface, not at the root
+      // chooser (which holds no writable location of its own).
+      document.getElementById("fsbar").style.display = (CWD === "/") ? "none" : "";
     })
     .catch(function (err) {
       out.innerHTML = "<div class='err'>Could not list this folder — " +
@@ -405,6 +439,43 @@ goEl.onclick = function () {
 function xhr2ok(s) { return s >= 200 && s < 300; }
 
 cancelEl.onclick = function () { if (xhr) xhr.abort(); };
+
+/* ── File operations (new folder / upload into the current folder) ─────────── */
+document.getElementById("newdir").onclick = function () {
+  var name = prompt("New folder name:");
+  if (!name) return;
+  fetch("/api/mkdir?path=" + encodeURIComponent(join(CWD, name)), { method: "POST" })
+    .then(function (r) {
+      if (r.ok) { load(CWD); }
+      else { r.text().then(function (t) {
+        alert("Could not create folder (HTTP " + r.status + ").\n" + (t || "").trim()); }); }
+    })
+    .catch(function () { alert("Could not create folder — connection lost."); });
+};
+
+var upFile = document.getElementById("upfile");
+var upStat = document.getElementById("upstat");
+document.getElementById("uphere").onclick = function () { upFile.click(); };
+upFile.onchange = function () {
+  if (!upFile.files.length) return;
+  var f = upFile.files[0], dest = join(CWD, f.name);
+  upStat.textContent = "Uploading " + f.name + "…";
+  var ux = new XMLHttpRequest();
+  ux.open("PUT", encodeURI(dest));            // plain file write, NOT an install
+  ux.upload.onprogress = function (e) {
+    if (e.lengthComputable)
+      upStat.textContent = "Uploading " + f.name + " — " +
+        (100 * e.loaded / e.total).toFixed(0) + "%";
+  };
+  ux.onload = function () {
+    if (xhr2ok(this.status)) { upStat.textContent = "Uploaded " + f.name; load(CWD); }
+    else upStat.textContent = "Upload failed (HTTP " + this.status + "). " +
+                              (this.responseText || "").trim();
+  };
+  ux.onerror = function () { upStat.textContent = "Upload failed — connection lost."; };
+  ux.send(f);
+  upFile.value = "";                          // allow re-picking the same file
+};
 
 /* ── Idle status poll ────────────────────────────────────────────────────────
    Polled only when NOT uploading. The server handles one connection at a time,
