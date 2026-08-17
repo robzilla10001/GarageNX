@@ -33,7 +33,7 @@ static std::vector<std::string> s_body_lines;
 
 static uint32_t s_hold_start = 0;   // SDL_GetTicks when the A-hold began (0=idle)
 static float    s_hold_frac  = 0.f;
-static constexpr float MODAL_HOLD_SECONDS = 1.5f;
+static constexpr float MODAL_HOLD_SECONDS = 2.0f;
 
 // A modal must never react to the button press that OPENED it. Input::poll()
 // runs once per frame and pressed() is edge state that reads do NOT consume, so

@@ -97,6 +97,20 @@ static void titlekek_decrypt(const uint8_t titlekek[0x10],
     aes128DecryptBlock(&ctx, out, in);
 }
 
+// [3] DeleteTicket(RightsId) -> ()
+// No output data beyond Result. Switchbrew's ETicket_services page (fetched
+// this session) lists this as cmd 3 but gives no request-struct detail beyond
+// "RightsId" — this mirrors the raw-input-struct convention already proven
+// working in THIS file by cmd 16/22/23 (rights_id as 0x10 bytes of raw input,
+// no buffer), rather than guessing a new shape. Genuinely untested on
+// hardware in this codebase — the read commands above have dump-path mileage,
+// this write-side one does not.
+static Result esDeleteTicket(const uint8_t rights_id[0x10]) {
+    EsRightsId rid;
+    std::memcpy(rid.c, rights_id, 0x10);
+    return serviceDispatchIn(&s_es, 3, rid);
+}
+
 #endif // PLATFORM_SWITCH
 
 // ── Public API ──────────────────────────────────────────────────────────────────
@@ -258,6 +272,16 @@ std::vector<TicketRef> list_common_tickets() {
     }
 #endif
     return out;
+}
+
+bool delete_ticket(const uint8_t rights_id[0x10]) {
+#ifndef PLATFORM_SWITCH
+    (void)rights_id;
+    return false;
+#else
+    if (!s_init && !init()) return false;
+    return R_SUCCEEDED(esDeleteTicket(rights_id));
+#endif
 }
 
 } // namespace Core::Es

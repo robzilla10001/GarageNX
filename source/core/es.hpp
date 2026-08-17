@@ -73,4 +73,22 @@ struct TicketRef {
 /// neither is an error worth surfacing.
 std::vector<TicketRef> list_common_tickets();
 
+// Delete a common ticket from the console's ES store, by rights ID. Issues es
+// IPC command 3 (DeleteTicket, per Switchbrew's ETicket_services page — fetched
+// and confirmed directly against that source, not from memory), using the same
+// raw-input-struct calling convention already proven by GetCommonTicketData /
+// GetCommonTicketAndCertificateSize/Data in this file: the rights ID goes in as
+// 0x10 bytes of raw input data, not a buffer.
+//
+// UNLIKE those, this specific call has no hardware mileage in this codebase —
+// the read-side commands have long dump-path use; this write-side one does
+// not. Hardware-verify carefully before relying on it, ideally against a
+// ticket for something easily reacquired (a free eShop demo, or a title you
+// still have the original install file for) before trusting it more broadly.
+//
+// Only ever touches common tickets — this codebase has no personalized-ticket
+// support at all (see the file header comment above). Returns false if the
+// rights ID has no common ticket, or on any IPC failure.
+bool delete_ticket(const uint8_t rights_id[0x10]);
+
 } // namespace Core::Es

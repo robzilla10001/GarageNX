@@ -42,7 +42,29 @@ prose may predate them:
   NOT consume `nsGetApplicationRecordUpdateSystemEvent` (so qlaunch still rebuilds).
 - **Behaviour settings.** Four never-consumed toggles removed; `action_logging`,
   `verify_hash_on_install`, and a split `screen_dim_seconds` / `screen_dim_seconds_net`
-  (app-level idle dim, context by sleep-guard) wired and shown in Settings.
+  (app-level idle dim, context by sleep-guard) wired and shown in Settings. A
+  date-format selector was added (DD/MM/YYYY default, + MM/DD, YYYY/MM/DD); the
+  unwired SDK field was removed from the title bar.
+- **System Information — real-data completion.** `source/screens/system_info.cpp`
+  went from mostly-N/A to fully wired: SD card details via a decoded CID
+  (`Core::Storage::sd_cid()`, byte map `field[k]=cid[14-k]`), LCD vendor via
+  `setcalGetLcdVendorId`, the MAX17050 gas gauge via direct i2c reads
+  (`Core::Battery::max17050()`, RSENSE=10 mΩ), the full Charging section via a
+  single `psmGetBatteryChargeInfoFields` call plus a BQ24193 i2c register read
+  for `charging_config` (`Core::Battery::charge_info()`), and Game Activity via
+  an ncm+pdm aggregate (`Core::Activity::summary()` — deliberately NOT the
+  play-log save archive; see that file's header comment for why, and for why it
+  must not call the name-resolving `title_play_stats()`). A batch of fields with
+  no real data source (DRAM ID, device ID, fuses_burned, etc.) were removed
+  rather than left as permanent placeholders — see `ROADMAP_to_parity.md` STATUS
+  for the reasoning on each, especially `fuses_burned`.
+- **Tools (maintenance) menu — IN PROGRESS.** `source/screens/tools_screen.*`,
+  reached via `MenuItem::ToolsMenu` under System. Establishes a reusable
+  destructive-operation pattern: read-only dry-run scan → Danger modal (2.0 s
+  held confirm, `MODAL_HOLD_SECONDS` in `source/ui/modal.cpp`) → execute → result.
+  Only "Clean install placeholders" is implemented so far; see
+  `SESSION_HANDOFF.md` §4 for the full remaining op list and a cautionary note
+  about a reverted orphaned-content attempt.
 
 ---
 

@@ -95,7 +95,7 @@ public:
     /// entry. An XCI front-end must therefore report 0 here rather than infer a
     /// length from `secure`: coming up short does not fail an install, it leaves
     /// unread bytes in the endpoint and desyncs the session.
-    uint64_t container_size() const { return m_container_size; }
+    uint64_t container_size() const { return m_container_size.load(std::memory_order_relaxed); }
 
     bool ok() const { return m_phase.load(std::memory_order_relaxed) != Phase::Failed; }
     const std::string& error() const { return m_error; }
@@ -216,7 +216,15 @@ private:
     std::string m_filename;
     uint64_t    m_total = 0;
     uint64_t    m_pos   = 0;          // absolute read position in the container
-    uint64_t    m_container_size = 0; // known once the table is parsed
+
+    // Same cross-thread shape as m_phase above: written once by finalize_entries()
+    // on the feed path (main thread for a direct feed, the OverlapBuffer worker
+    // thread for an overlapped one — see stream_driver.cpp's "late size discovery"
+    // check, which reads this every loop iteration from the main thread while the
+    // worker thread can be mid-finalize_entries()). Atomic so that read/write pair
+    // is race-free; relaxed is sufficient for the same reason as m_phase — it's a
+    // published value, not a lock guarding other data.
+    std::atomic<uint64_t> m_container_size{0}; // known once the table is parsed
 
     // ── The collector (see Phase/Step above) ─────────────────────────────────
     std::vector<uint8_t> m_blob;      // the bytes of the collection in flight

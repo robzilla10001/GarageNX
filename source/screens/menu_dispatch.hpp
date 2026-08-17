@@ -49,6 +49,7 @@ enum class MenuItem {
     SystemInfo,
     Settings,
     ActivityLog,
+    ToolsMenu,
 
     // Exit submenu
     ExitToHome,
@@ -90,6 +91,3 @@ std::unique_ptr<Screen> menu_activate(MenuItem id, bool& pop);
 // removes one screen, which for a submenu would just return to the top level.)
 bool menu_quit_requested();
 void menu_request_quit();
-// True only when the user chose "Exit to hbmenu" — main() then keeps the exit(0)
-// path (armed next-load) so hbloader reloads hbmenu instead of returning to HOME.
-bool menu_exit_to_hbmenu();

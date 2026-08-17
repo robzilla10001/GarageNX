@@ -44,13 +44,15 @@ std::string sanitize(const std::string& raw) {
 namespace Core {
 namespace SaveMount {
 
-std::vector<User> list_users() {
+std::vector<User> list_users(bool* ok) {
     std::vector<User> out;
+    if (ok) *ok = false;
 #ifdef PLATFORM_SWITCH
     AccountUid uids[8];
     s32 count = 0;
     if (R_FAILED(accountListAllUsers(uids, (s32)(sizeof(uids)/sizeof(uids[0])), &count)))
         return out;
+    if (ok) *ok = true;
 
     for (s32 i = 0; i < count; ++i) {
         User u;
@@ -108,6 +110,39 @@ std::vector<SaveEntry> list_saves(const User& u) {
             e.application_id = infos[i].application_id;
             e.save_data_id   = infos[i].save_data_id;   // handle used for deletion
             e.size_bytes     = 0;   // not reported here; the listing shows a folder
+            out.push_back(e);
+        }
+    }
+    fsSaveDataInfoReaderClose(&reader);
+#endif
+    return out;
+}
+
+std::vector<OrphanCandidateSave> list_all_account_saves() {
+    std::vector<OrphanCandidateSave> out;
+#ifdef PLATFORM_SWITCH
+    // Same reader loop as list_saves() above — same open call, same read call,
+    // same FsSaveDataType_Account filter — just no per-user uid filter, and uid
+    // is kept in the result instead of being discarded.
+    FsSaveDataInfoReader reader;
+    if (R_FAILED(fsOpenSaveDataInfoReader(&reader, FsSaveDataSpaceId_User)))
+        return out;
+
+    for (;;) {
+        FsSaveDataInfo infos[16];
+        s64 read_count = 0;
+        if (R_FAILED(fsSaveDataInfoReaderRead(
+                &reader, infos, sizeof(infos)/sizeof(infos[0]), &read_count)))
+            break;
+        if (read_count <= 0) break;
+
+        for (s64 i = 0; i < read_count; ++i) {
+            if (infos[i].save_data_type != FsSaveDataType_Account) continue;
+            OrphanCandidateSave e;
+            e.uid_lo         = infos[i].uid.uid[0];
+            e.uid_hi         = infos[i].uid.uid[1];
+            e.application_id = infos[i].application_id;
+            e.save_data_id   = infos[i].save_data_id;
             out.push_back(e);
         }
     }
@@ -216,15 +251,13 @@ bool delete_save_record(uint64_t save_data_id) {
     // as a belt-and-braces guard rather than trust every caller forever.
     release();
 
-    // ── THE UNVERIFIED CALL (5.4) ────────────────────────────────────────────
-    // fsDeleteSaveDataFileSystemBySaveDataSpaceId is the switchbrew-documented way
-    // to remove an account save by id, but there is no libnx header in the build
-    // sandbox to check the exact name/signature against, so this is the one line
-    // in this change taken on knowledge rather than a verified header. If the
-    // Switch build fails to find this symbol, the alternatives to try, in order,
-    // are: fsDeleteSaveDataFileSystemBySaveDataSpaceId(FsSaveDataSpaceId_User, id)
-    // / fsDeleteSaveDataFileSystem(id) (older libnx). The rest of the delete flow
-    // does not depend on which spelling is correct.
+    // fsDeleteSaveDataFileSystemBySaveDataSpaceId — confirmed against a real
+    // libnx fs.h (line 513: `Result fsDeleteSaveDataFileSystemBySaveDataSpace
+    // Id(FsSaveDataSpaceId save_data_space_id, u64 saveID); ///< [2.0.0+]`,
+    // exact match to the call below) and separately hardware-verified via
+    // Save Manager's own working Delete button. Originally written "on
+    // knowledge" without a header to check against — this replaces that
+    // history rather than erasing it: it WAS unverified, it no longer is.
     const Result rc = fsDeleteSaveDataFileSystemBySaveDataSpaceId(
         FsSaveDataSpaceId_User, save_data_id);
     if (R_FAILED(rc)) {

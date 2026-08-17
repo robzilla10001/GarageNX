@@ -27,6 +27,7 @@ extern "C" unsigned __nx_applet_exit_mode;
 #include "screens/file_browser.hpp"
 #include "screens/title_list.hpp"
 #include "screens/system_info.hpp"
+#include "screens/tools_screen.hpp"
 #include "screens/ftp_screen.hpp"
 #include "screens/http_screen.hpp"
 #include "screens/mtp_screen.hpp"
@@ -88,6 +89,7 @@ const std::vector<MenuEntry>& menu_system_items() {
         { MenuItem::SystemInfo,       "main_menu.system_info"        },
         { MenuItem::Settings,    "main_menu.settings"     },
         { MenuItem::ActivityLog, "main_menu.activity_log" },
+        { MenuItem::ToolsMenu,   "main_menu.tools"        },
     };
     return v;
 }
@@ -160,6 +162,7 @@ bool menu_item_visible(MenuItem id) {
         case MenuItem::InstallCartridge:      return vis.install_from_cartridge;
         case MenuItem::InstalledTitles:       return vis.view_installed_games;
         case MenuItem::SystemInfo:            return vis.tools;
+        case MenuItem::ToolsMenu:             return vis.tools;
         case MenuItem::Tickets:               return vis.view_tickets;
         case MenuItem::Saves:                 return vis.view_saves;
         case MenuItem::BackupSaves:           return vis.backup_saves;
@@ -218,6 +221,9 @@ std::unique_ptr<Screen> menu_activate(MenuItem id, bool& pop) {
 
         case MenuItem::SystemInfo:
             return std::make_unique<SystemInfoScreen>();
+
+        case MenuItem::ToolsMenu:
+            return std::make_unique<ToolsScreen>();
 
         case MenuItem::FTP:  return std::make_unique<FTPScreen>();
         case MenuItem::HTTP: return std::make_unique<HTTPScreen>();

@@ -151,12 +151,11 @@
     "create_version_manifest": "Create Version Manifest",
     "clean_orphaned_records": "Orphaned installation records",
     "clean_old_updates": "Old game updates",
-    "clean_placeholders": "Placeholders",
+    "clean_placeholders": "Clean install placeholders",
     "clean_unused_tickets": "Unused tickets",
     "clean_repair_tickets": "Repair tickets with dump errors",
     "clean_system_updates": "Downloaded system updates",
     "clean_erpt": "Clear erpt_reports folder",
-    "clean_ticket_cache": "Clear ticket cache",
     "clean_atm_contents": "Clear /atmosphere/contents",
     "clean_deleted_user_saves": "Delete saves of deleted users",
     "warn_fill_zeros": "This will take a long time and may cause data loss if interrupted. Continue?",
@@ -170,7 +169,10 @@
     "ntp_failed": "NTP sync failed.",
     "manifest_done": "Manifest written to sdmc:/versions.txt",
     "dump_fw_progress": "Dumping firmware… {pct}%",
-    "dump_fw_done": "Firmware dumped to {path}"
+    "dump_fw_done": "Firmware dumped to {path}",
+    "nothing_to_do": "Nothing to clean up — already tidy.",
+    "confirm_body": "Hold to confirm removal. This cannot be undone.",
+    "confirm_remove": "Remove"
   },
   "system_info": {
     "section_app": "Application",
