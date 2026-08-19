@@ -1,6 +1,7 @@
 // source/screens/tools_screen.cpp
 
 #include "screens/tools_screen.hpp"
+#include "screens/wifi_profile_screen.hpp"
 #include "ui/modal.hpp"
 #include "ui/renderer.hpp"
 #include "ui/theme.hpp"
@@ -629,111 +630,6 @@ bool parental_controls_delete() {
 }
 #endif  // PLATFORM_SWITCH
 
-// ── Operation: delete Wi-Fi profiles ────────────────────────────────────────
-// Deletes every SAVED USER Wi-Fi network (NetworkProfileType User only —
-// deliberately excludes System/SsidList and Temporary profile types, which a
-// cleanup tool has no business touching; this also matches what official
-// Nintendo software itself does — Switchbrew's notes on cmd 7 record that
-// sdknso hardcodes NetworkProfileType "User").
-//
-// libnx's nifm.h has NO enumeration function at all (confirmed by reading the
-// full header — only GetCurrentNetworkProfile [the ACTIVE one] and
-// GetNetworkProfile [needs an already-known Uuid] exist) and no delete
-// function either. Both are hand-rolled here against
-// nifmGetServiceSession_GeneralService() — real, confirmed in this project's
-// own nifm.h — using command numbers and structure layouts from Switchbrew's
-// own NIFM_services page (IGeneralService), fetched directly this session:
-//
-//   cmd 7  EnumerateNetworkProfiles — fully documented: input u8
-//          NetworkProfileType, output array of SfNetworkProfileBasicInfo
-//          (exact byte layout below, matches the wiki table field-for-field)
-//          plus an output s32 total count.
-//   cmd 10 RemoveNetworkProfile — the command NUMBER is confirmed real (it's
-//          in Switchbrew's own command table), but no prose description of
-//          its parameter shape was ever written for it, unlike its immediate
-//          neighbors (cmd 8 GetNetworkProfile takes a Uuid; cmd 9
-//          SetNetworkProfile returns one). This assumes the same Uuid-in
-//          shape BY PATTERN, not confirmed prose — the one genuinely
-//          unverified piece here. Failure mode if wrong is SAFE, not
-//          dangerous: an IPC size/shape mismatch fails loudly (a Result
-//          error), it does not silently target a different profile — the
-//          Uuid passed is always read straight back out of this exact call's
-//          own EnumerateNetworkProfiles output, never guessed or
-//          reconstructed.
-//
-// No new service init: nifm is already running for the app's whole lifetime
-// (main.cpp: nifmInitialize(NifmServiceType_User) / nifmExit()), and User-
-// type enumeration/removal is exactly what a User-type session supports per
-// Switchbrew's own note on cmd 7 ("any other NetworkProfileType requires
-// nifm:a").
-#ifdef PLATFORM_SWITCH
-// Wire layout per Switchbrew's SfNetworkProfileBasicInfo table — packed, no
-// compiler-inserted padding, since this is read directly out of an IPC output
-// buffer byte-for-byte. static_assert below catches a layout mistake at
-// compile time rather than a silent misread at runtime.
-#pragma pack(push, 1)
-struct RawNetworkProfileBasicInfo {
-    uint8_t id[0x10];        // 0x00 Uuid — the handle RemoveNetworkProfile needs
-    char    name[0x40];      // 0x10 NUL-terminated network name
-    uint8_t profile_type;    // 0x50 NetworkProfileType
-    uint8_t iface_type;      // 0x51 NetworkInterfaceType
-    uint8_t ssid[0x21];      // 0x52 Ssid
-    uint8_t auth;            // 0x73 Authentication
-    uint8_t enc;             // 0x74 Encryption
-};
-#pragma pack(pop)
-static_assert(sizeof(RawNetworkProfileBasicInfo) == 0x75,
-             "must match Switchbrew's documented SfNetworkProfileBasicInfo exactly");
-
-constexpr uint8_t kNifmProfileType_User = 1; // bit 0 per Switchbrew's NetworkProfileType table
-
-Result nifmEnumerateNetworkProfilesRaw(uint8_t profile_type,
-                                       RawNetworkProfileBasicInfo* out,
-                                       s32 max_count, s32* out_total) {
-    return serviceDispatchInOut(nifmGetServiceSession_GeneralService(), 7,
-        profile_type, *out_total,
-        .buffer_attrs = { SfBufferAttr_HipcMapAlias | SfBufferAttr_Out },
-        .buffers = { { out, sizeof(RawNetworkProfileBasicInfo) * (size_t)max_count } });
-}
-
-Result nifmRemoveNetworkProfileRaw(const uint8_t uuid[0x10]) {
-    struct { uint8_t id[0x10]; } raw_uuid;
-    std::memcpy(raw_uuid.id, uuid, 0x10);
-    return serviceDispatchIn(nifmGetServiceSession_GeneralService(), 10, raw_uuid);
-}
-
-std::vector<std::array<uint8_t, 0x10>> wifi_profile_ids() {
-    constexpr s32 WINDOW = 32; // generous — a console realistically has a handful
-    std::vector<RawNetworkProfileBasicInfo> buf(WINDOW);
-    s32 total = 0;
-    std::vector<std::array<uint8_t, 0x10>> out;
-    if (R_FAILED(nifmEnumerateNetworkProfilesRaw(kNifmProfileType_User, buf.data(),
-                                                 WINDOW, &total)))
-        return out;
-    const s32 count = (total < WINDOW) ? total : WINDOW; // defensive cap
-    for (s32 i = 0; i < count; ++i) {
-        std::array<uint8_t, 0x10> id{};
-        std::memcpy(id.data(), buf[(size_t)i].id, 0x10);
-        out.push_back(id);
-    }
-    return out;
-}
-
-int wifi_profiles_scan() {
-    return (int)wifi_profile_ids().size();
-}
-
-int wifi_profiles_delete() {
-    // Re-enumerate right before deleting, same reasoning as every other op
-    // here: profiles can change between the dry-run and the held confirm.
-    std::vector<std::array<uint8_t, 0x10>> ids = wifi_profile_ids();
-    int deleted = 0;
-    for (const auto& id : ids)
-        if (R_SUCCEEDED(nifmRemoveNetworkProfileRaw(id.data()))) ++deleted;
-    return deleted;
-}
-#endif  // PLATFORM_SWITCH
-
 std::string human_size(u64 bytes) {
     char b[32];
     if (bytes >= (1ull << 30))      std::snprintf(b, sizeof(b), "%.2f GB", bytes / double(1u << 30));
@@ -960,27 +856,14 @@ ToolsScreen::ToolsScreen() {
     });
 
     // ── Delete Wi-Fi profiles ─────────────────────────────────────────────────
+    // Picker, not batch delete — see the Op::push doc comment in
+    // tools_screen.hpp for why. Enumerate/select/confirm/delete all live in
+    // WifiProfileScreen now; this row just pushes it.
     m_ops.push_back({
         Lang::t("tools.delete_wifi_profiles"),
-        [] () -> ScanResult {
-            ScanResult r;
-#ifdef PLATFORM_SWITCH
-            r.count  = wifi_profiles_scan();
-            r.any    = r.count > 0;
-            r.detail = r.any ? Lang::t("tools.warn_wifi_profiles") : "";
-#endif
-            return r;
-        },
-        [] (const ScanResult&) -> std::string {
-#ifdef PLATFORM_SWITCH
-            int n = wifi_profiles_delete();
-            char b[64];
-            std::snprintf(b, sizeof(b), "Removed %d Wi-Fi profile(s).", n);
-            return b;
-#else
-            return "Removed 0 Wi-Fi profile(s).";
-#endif
-        }
+        nullptr,
+        nullptr,
+        [] () -> std::unique_ptr<Screen> { return std::make_unique<WifiProfileScreen>(); }
     });
 
     std::vector<Widgets::ListItem> rows;
@@ -992,8 +875,10 @@ ToolsScreen::ToolsScreen() {
     m_list.set_items(std::move(rows));
 }
 
-void ToolsScreen::select(int idx) {
-    if (idx < 0 || idx >= static_cast<int>(m_ops.size())) return;
+std::unique_ptr<Screen> ToolsScreen::select(int idx) {
+    if (idx < 0 || idx >= static_cast<int>(m_ops.size())) return nullptr;
+
+    if (m_ops[idx].push) return m_ops[idx].push(); // picker-style op — no scan/confirm flow
 
     m_pending_scan = m_ops[idx].scan();
     if (!m_pending_scan.any) {
@@ -1001,7 +886,7 @@ void ToolsScreen::select(int idx) {
                       Lang::t("tools.nothing_to_do"),
                       Modal::Kind::Info, Lang::t("modal.ok"), "" });
         m_pending = -1;
-        return;
+        return nullptr;
     }
 
     std::string body = m_pending_scan.detail + "\n" + Lang::t("tools.confirm_body");
@@ -1010,6 +895,7 @@ void ToolsScreen::select(int idx) {
                   Lang::t("tools.confirm_remove"),
                   Lang::t("modal.cancel") });
     m_pending = idx;
+    return nullptr;
 }
 
 void ToolsScreen::on_modal_result(int result) {
@@ -1027,7 +913,7 @@ void ToolsScreen::on_modal_result(int result) {
 std::unique_ptr<Screen> ToolsScreen::update(bool& pop) {
     pop = false;
     if (Input::pressed(Input::Button::B)) { pop = true; return nullptr; }
-    if (m_list.handle_input()) select(m_list.cursor());
+    if (m_list.handle_input()) return select(m_list.cursor());
     return nullptr;
 }
 

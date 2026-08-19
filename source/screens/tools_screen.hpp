@@ -39,6 +39,14 @@ private:
         std::string                              label;
         std::function<ScanResult()>              scan;      // read-only
         std::function<std::string(const ScanResult&)> run;  // returns result text
+
+        // Alternative to scan+run: when set, selecting this row pushes a new
+        // Screen instead of running the batch dry-run/hold-confirm flow. For
+        // ops where there's no way to say which SPECIFIC item "should" be
+        // acted on — an inherently per-item choice (which Wi-Fi network,
+        // which user) rather than a bulk cleanup category. scan/run are
+        // ignored when this is set.
+        std::function<std::unique_ptr<Screen>()> push;
     };
 
     std::vector<Op> m_ops;
@@ -47,5 +55,5 @@ private:
     int        m_pending = -1;   // index of the op awaiting held confirmation
     ScanResult m_pending_scan;
 
-    void select(int idx);
+    std::unique_ptr<Screen> select(int idx);
 };
