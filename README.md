@@ -55,7 +55,7 @@ Add dependencies/portlibs:
   6. cd build
   7. git clone https://github.com/DarkMatterCore/libusbhsfs
   8. cd libusbhsfs && make BUILD_TYPE=GPL install
-  9. cd ..
+  9. cd .. && cd tools
   10. chmod +x build-net-portlibs.sh
   11. ./build-net-portlibs.sh
 
@@ -63,7 +63,7 @@ Add dependencies/portlibs:
 
 ```bash
 cd build
-cmake -- -DPLATFORM=Switch && make -j$(nproc)
+cmake .. -DPLATFORM=Switch && make -j$(nproc)
 ```
 
 The output `GarageNX.nro` will be in the `build/` directory. Copy it to `sdmc:/switch/GarageNX/GarageNX.nro` on your SD card.

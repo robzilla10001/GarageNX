@@ -16,9 +16,10 @@ stubs/
 
 # CMake artifacts
 CMakeCache.txt
-CMakeLists.txt
+!CMakeLists.txt
 CMakeFiles/
 *.cmake
+!toolchain-switch.cmake
 Makefile
 compile_commands.json
 
@@ -41,8 +42,6 @@ compile_commands.json
 GarageNX_data/
 
 # ─── Misc ─────────────────────────────────────────────────────────────────────
-tools/
-tests/
 *.log
 *.tmp
 tags
