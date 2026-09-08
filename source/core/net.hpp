@@ -3,7 +3,7 @@
 // Small network-identity helpers shared by the M6 services (FTP/HTTP/MTP) and
 // their status screens. Requires socketInitialize() to have been called at
 // startup (main.cpp). The IP is used for the on-screen address and the QR
-// payload; nothing here opens listening sockets — that's the services' job.
+// payload; nothing here opens listening sockets - that's the services' job.
 
 #include <cstdint>
 #include <string>

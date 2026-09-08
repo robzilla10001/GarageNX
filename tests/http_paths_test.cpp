@@ -1,7 +1,7 @@
 // tests/http_paths_test.cpp
 //
 // The HTTP install-path classifier. Pure string work that decides whether a PUT
-// installs or writes a plain file, and to which target — so a bug here either
+// installs or writes a plain file, and to which target - so a bug here either
 // silently drops an upload on the SD as a raw file (no install) or routes it to
 // the wrong storage. Mirrors ftp_paths_test.
 
@@ -84,7 +84,7 @@ static void test_percent_decoding() {
           "several escapes");
     CHECK(leaf == "A+B [USA].nsp", "%2B %20 %5B %5D decode");
 
-    // A malformed escape is left literal, never dropped — corrupting a filename
+    // A malformed escape is left literal, never dropped - corrupting a filename
     // silently is worse than an ugly one.
     CHECK(http_percent_decode("bad%2") == "bad%2", "truncated escape left literal");
     CHECK(http_percent_decode("bad%zz") == "bad%zz", "non-hex escape left literal");
@@ -108,7 +108,7 @@ static void test_is_install_path() {
 }
 
 // The web-UI routing helpers. These decide whether a request is the UI page, an
-// API call, or a file — so a bug sends a browser a raw file where the app should
+// API call, or a file - so a bug sends a browser a raw file where the app should
 // be, or hands an API URL to the filesystem.
 static void test_path_only_and_query() {
     CHECK(http_path_only("/api/list?path=/foo") == "/api/list", "query stripped");
@@ -147,7 +147,7 @@ static void test_route_predicates() {
 // The exact composition the server uses to turn a request target into a
 // filesystem path: strip the query, THEN percent-decode. Pinned because getting
 // the order or the presence of either step wrong is a silent 404 on ordinary
-// files — the web UI made this obvious (every title name with a space failed to
+// files - the web UI made this obvious (every title name with a space failed to
 // download) but it was latent the whole time HTTP was curl-only.
 static void test_request_target_to_fs_path() {
     auto fs = [](const std::string& t) {

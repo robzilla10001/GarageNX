@@ -14,7 +14,7 @@ namespace Install {
 // The XCI header's fields are read by absolute offset in parse() below rather
 // than through a struct: the layout does not pack cleanly, and a struct that
 // disagrees with the code is worse than no struct. There was one here until
-// slice 4c — unreferenced, and documenting the root HFS0 offset at 0x120, which
+// slice 4c - unreferenced, and documenting the root HFS0 offset at 0x120, which
 // is the gamecard IV. parse() reads 0x130 and always did.
 
 struct Hfs0Header {
@@ -127,7 +127,7 @@ void XciReader::parse() {
 
     SDL_Log("XciReader: root HFS0 at byte offset 0x%llX", (unsigned long long)root_off);
 
-    // Parse the root HFS0 — its entries are the partition names ("update",
+    // Parse the root HFS0 - its entries are the partition names ("update",
     // "normal", "secure", "logo"). We need to locate "secure".
     std::vector<PfsEntry> root_parts;
     if (!parse_hfs0(root_off, root_parts, "root")) {
@@ -141,7 +141,7 @@ void XciReader::parse() {
     }
     if (!secure) { m_error = "No 'secure' partition found in XCI"; return; }
 
-    // Parse the Secure HFS0 — its entries are the actual NCAs.
+    // Parse the Secure HFS0 - its entries are the actual NCAs.
     if (!parse_hfs0(secure->offset, m_entries, "secure")) {
         m_error = "Failed to parse Secure HFS0"; return;
     }

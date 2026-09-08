@@ -16,19 +16,17 @@ bool g_mounted = false;
 uint32_t g_last_fail_rc = 0;
 
 // ── THE UNVERIFIED CALLS (5.4) ───────────────────────────────────────────────
-// There is no libnx header in the build sandbox, so the exact names/signatures
-// below are taken from switchbrew rather than checked. They are all confined to
-// this one function, each logs its Result, and the fallbacks to try are recorded
-// here so a build failure is a two-minute fix rather than an investigation:
+// Names/signatures below are taken from switchbrew; each logs its Result. The
+// fallbacks to try if the build fails:
 //
 //   fsOpenDeviceOperator(&devop)
-//       — older libnx: takes no argument and returns a global; newer takes FsDeviceOperator*.
+//       - older libnx: takes no argument and returns a global; newer takes FsDeviceOperator*.
 //   fsDeviceOperatorIsGameCardInserted(&devop, &out)
-//       — `out` may be `bool*` or `u8*`/`u32*` depending on version.
+//       - `out` may be `bool*` or `u8*`/`u32*` depending on version.
 //   fsDeviceOperatorGetGameCardHandle(&devop, &handle)
-//       — may be named ...GetGameCardHandle or ...GetGameCardHandleForDebug.
+//       - may be named ...GetGameCardHandle or ...GetGameCardHandleForDebug.
 //   fsOpenGameCardFileSystem(&fs, &handle, FsGameCardPartition_Secure)
-//       — partition enum may be FsGameCardPartition_Secure or FsGameCardPartiton_Secure
+//       - partition enum may be FsGameCardPartition_Secure or FsGameCardPartiton_Secure
 //         (libnx carried that typo for a long time). Try both if it will not compile.
 //
 // Nothing outside this file depends on which spelling is correct.
@@ -74,7 +72,7 @@ bool try_mount() {
         return false;
     }
 
-    // fsdev takes ownership and closes the FsFileSystem on unmount — do NOT
+    // fsdev takes ownership and closes the FsFileSystem on unmount - do NOT
     // fsFsClose it here. Same contract as the NAND and album mounts.
     if (fsdevMountDevice("gamecard", fs) == -1) {
         SDL_Log("gamecard: fsdevMountDevice failed");
@@ -112,7 +110,7 @@ void gamecard_refresh() {
     const bool present = card_present();
 
     // Act only on a CHANGE. A card can be inserted or ejected at any moment, so
-    // unlike NAND this cannot be a one-shot at startup — but re-mounting an
+    // unlike NAND this cannot be a one-shot at startup - but re-mounting an
     // already-mounted card every frame would be both wasteful and a good way to
     // upset the filesystem.
     if (present && !g_mounted) {

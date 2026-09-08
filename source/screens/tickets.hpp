@@ -3,7 +3,7 @@
 //
 // The common tickets installed on this console.
 //
-// A ticket carries the content key for a titlekey-crypto title — most eShop
+// A ticket carries the content key for a titlekey-crypto title - most eShop
 // games and updates. Listing them answers "what does this console actually hold
 // keys for", which is the question the menu entry implies.
 //

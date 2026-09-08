@@ -1,6 +1,6 @@
 #pragma once
 // source/services/ftp_server.hpp
-// Clean-room FTP server (RFC 959 subset) built directly on BSD sockets — no
+// Clean-room FTP server (RFC 959 subset) built directly on BSD sockets - no
 // external ftpd/ftpsrv dependency. Runs on the NetworkService worker thread.
 // Passive mode only (PASV/EPSV); single-threaded select() loop over the listener
 // and client control sockets, with blocking data transfers that still poll
@@ -24,8 +24,8 @@ public:
               std::string root = "sdmc:/");
 
     // CRITICAL: stop() (which joins the worker thread) MUST run before any member
-    // is destroyed. Without this, C++ destroys members first — including
-    // m_install, which the worker thread is actively using inside an install —
+    // is destroyed. Without this, C++ destroys members first - including
+    // m_install, which the worker thread is actively using inside an install -
     // and only then runs the base ~NetworkService that joins the worker. That is
     // a cross-thread use-after-free: cancelling an FTP transfer crashed with a
     // Data Abort @ 0x0 (the 2168-0002 in the report is a stale register), the
@@ -40,8 +40,8 @@ public:
     uint64_t bytes_recv()    const { return m_bytes_recv.load(); }
 
     // Current install's wire (compressed) size and received bytes, for the
-    // screen's average/ETA — same contract as MtpServer. 0 when no install is in
-    // progress or the size isn't known yet (ETA shows "—").
+    // screen's average/ETA - same contract as MtpServer. 0 when no install is in
+    // progress or the size isn't known yet (ETA shows "-").
     uint64_t current_wire_size() const { return m_wire_size.load(); }
     uint64_t current_wire_recv() const { return m_wire_recv.load(); }
 

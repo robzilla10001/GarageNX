@@ -63,7 +63,7 @@ void OverlapBuffer::quiesce() {
     m_cv_work.notify_all();
 #ifdef PLATFORM_SWITCH
     // Blocks until worker_loop() returns. If the worker is mid-sink (the slow
-    // half, run outside the lock) this waits for that sink call to finish — which
+    // half, run outside the lock) this waits for that sink call to finish - which
     // is the whole point: after this returns, the sink provably will not run
     // again, so state the sink closes over can be torn down safely.
     threadWaitForExit(&m_thread);

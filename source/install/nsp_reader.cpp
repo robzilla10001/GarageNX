@@ -40,14 +40,14 @@ static bool ends_with(const std::string& s, const char* suffix) {
 
 // ── Split-archive support ────────────────────────────────────────────────────
 //
-// A large NSP cannot be one file on FAT32 (4 GiB limit), so GarageNX's dumper —
-// like DBI and Tinfoil — writes a DIRECTORY named <name>.nsp containing numbered
+// A large NSP cannot be one file on FAT32 (4 GiB limit), so GarageNX's dumper -
+// like DBI and Tinfoil - writes a DIRECTORY named <name>.nsp containing numbered
 // parts 00, 01, 02 ... The parts concatenated ARE the PFS0; there is no per-part
 // header. So the reader presents them as one contiguous stream and nothing above
 // it needs to know.
 //
 // Adding split OUTPUT without split INPUT produced dumps that completed and could
-// not be installed — a worse outcome than not splitting, because the failure moved
+// not be installed - a worse outcome than not splitting, because the failure moved
 // from the dump to a later, quieter step.
 bool NspReader::open_source(const std::string& path) {
     if (Fs::is_directory(path)) {
@@ -99,7 +99,7 @@ size_t NspReader::pread_at(void* buf, size_t len, uint64_t off) {
 
         // NSP offsets routinely exceed 2 GB, so the seek offset must be 64-bit.
         // On this target (devkitA64 / aarch64, LP64) `long` IS 64-bit, so plain
-        // fseek is correct — fseeko is not declared here, and reaching for it was
+        // fseek is correct - fseeko is not declared here, and reaching for it was
         // a mistake: I guarded against a truncation that cannot occur on this
         // platform and broke the build doing it.
         //

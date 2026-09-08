@@ -2,7 +2,7 @@
 // source/install/nsp_reader.hpp
 // Parse a PFS0 (NSP) container from a file path.
 //
-// PFS0 is the outer container format for NSP files. Layout:
+// PFS0 layout:
 //   0x00  magic "PFS0"
 //   0x04  u32 file_count
 //   0x08  u32 string_table_size
@@ -16,9 +16,9 @@
 //   then file data (at offset 0x10 + file_count*0x18 + string_table_size,
 //                   padded to a 0x10 boundary)
 //
-// The reader opens the file once and holds the fd open for streaming. Callers
-// read individual files by entry index; reading is done via the ReadFn callback
-// so the installer can pipe data directly into NCM without an intermediate buffer.
+// The reader opens the file once and holds the fd open for streaming; callers
+// read individual files by entry index via the ReadFn callback, so the
+// installer pipes data directly into NCM without an intermediate buffer.
 
 #include <cstdint>
 #include <cstdio>

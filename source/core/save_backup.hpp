@@ -3,21 +3,18 @@
 //
 // On-device save backup: copy a title's save data to the SD card.
 //
-// This is the SAFE half of 3e. Restore is the dangerous half and is deliberately
-// not here yet — see the roadmap. Backup only ever READS the save and writes to
-// the SD card, so the worst outcome is a wasted copy, and it is a prerequisite
-// for doing restore safely: the pre-restore snapshot uses this exact code.
-//
-// Reading a save over FTP/MTP already works, so this is not the only way to get a
-// save off the console. What it adds is a backup with no PC involved, and the
-// rollback story that makes restore defensible.
+// This is the SAFE half of 3e; restore is deliberately not here yet (see the
+// roadmap). Backup only ever READS the save and writes to the SD card, so the
+// worst outcome is a wasted copy, and it is the prerequisite for doing restore
+// safely: the pre-restore snapshot uses this exact code.
 //
 // ── Layout ───────────────────────────────────────────────────────────────────
 //
 //     <backup_root>/<User>/<Title [APPID]>/<YYYYMMDD-HHMMSS>/...
 //
-// One directory per run, stamped so nothing is ever silently overwritten and the
-// newest is obvious by name. backup_root comes from Config::Paths::save_backup.
+// One directory per run, stamped so nothing is ever silently overwritten and
+// the newest is obvious by name. backup_root comes from
+// Config::Paths::save_backup.
 
 #include "core/fs.hpp"
 
@@ -33,12 +30,10 @@ namespace Core::SaveBackup {
 
 /// Make one path component safe for the SD card's filesystem.
 ///
-/// This is not cosmetic. Save folders are named after ACCOUNT NICKNAMES and GAME
-/// TITLES, neither of which is constrained to anything: real titles contain ':'
-/// ("Pokemon: Let's Go"), '?', '/', and trailing dots. FAT32 and exFAT reject
-/// those outright, so an unsanitised name does not produce an ugly folder — it
-/// produces a failed copy, on the exact titles a user is most likely to want
-/// backed up.
+/// Not cosmetic: save folders are named after account nicknames and game
+/// titles, which contain ':' ("Pokemon: Let's Go"), '?', '/', and trailing
+/// dots. FAT32 and exFAT reject those outright, so an unsanitised name
+/// produces a failed copy, not just an ugly folder.
 ///
 /// Rules: illegal and control characters become '_'; leading/trailing dots and
 /// spaces are stripped (FAT silently drops them, which makes a path the caller
@@ -61,7 +56,7 @@ inline std::string sanitize_component(const std::string& name, size_t max_len = 
 
     // FAT silently DROPS trailing dots and spaces, so a caller that built a path
     // ending in one would look for a directory that does not exist under that
-    // name — the target and the created directory disagree, which is a horrible
+    // name - the target and the created directory disagree, which is a horrible
     // failure to debug on a console. Strip them here instead.
     while (!out.empty() && (out.back() == '.' || out.back() == ' ' || out.back() == '_'))
         out.pop_back();
@@ -123,32 +118,24 @@ inline bool is_backup_stamp(const std::string& name) {
 }
 
 /// Order stamps newest-first. Stamps are fixed-width and zero-padded, so
-/// descending lexicographic order IS reverse chronological — which is the whole
+/// descending lexicographic order IS reverse chronological - which is the whole
 /// reason sortable_stamp() exists rather than reusing log_stamp().
 inline void sort_newest_first(std::vector<std::string>& stamps) {
     std::sort(stamps.begin(), stamps.end(), std::greater<std::string>());
 }
 
-/// Extract the application id from a title-label folder name. Handles BOTH forms
-/// a backup directory can carry:
+/// Extract the application id from a title-label folder name. Handles both
+/// forms a backup directory can carry:
 ///
-///   "<Name> [016 hex]"  — the normal, resolved form; id is the LAST bracket group
-///   "Title 016 hex"     — the id-only fallback, written when the title's name was
-///                         not resolvable at backup time (an uninstalled game, or
-///                         a backup taken before the name cache had filled)
+///   "<Name> [016 hex]"  - the normal, resolved form; id is the LAST bracket group
+///   "Title 016 hex"     - the id-only fallback, written when the title's name
+///                         was not resolvable at backup time
 ///
-/// Returns 0 if neither form matches.
-///
-/// Pure, so it is host-tested. It matters for restoring a DELETED save: once the
-/// live save is gone, this label — the folder name on the SD card — is the only
-/// surviving record of which title the backup belongs to, and the id inside it is
-/// what recreation needs. Parsing the LAST bracket group is deliberate: a game
-/// name may itself contain brackets ("Ys [Memoire]"), but the id we appended is
-/// always the final group.
-///
-/// The fallback form matters just as much for DISPLAY: a backup folder named
-/// "Title 0100..." can be shown under its real game name by recovering the id here
-/// and re-resolving, without renaming anything on disk.
+/// Returns 0 if neither form matches. Pure, so it is host-tested. Parsing the
+/// LAST bracket group is deliberate: a game name may itself contain brackets
+/// ("Ys [Memoire]"), but the id we appended is always the final group. The
+/// fallback form also matters for display: a folder named "Title 0100..." can
+/// be shown under its real game name by re-resolving the id.
 inline uint64_t app_id_from_label(const std::string& title_label) {
     auto parse_hex16 = [](const std::string& hex, uint64_t& out) -> bool {
         if (hex.size() != 16) return false;
@@ -164,7 +151,7 @@ inline uint64_t app_id_from_label(const std::string& title_label) {
         return true;
     };
 
-    // Bracket form first — the normal case.
+    // Bracket form first - the normal case.
     const size_t close = title_label.rfind(']');
     if (close != std::string::npos) {
         const size_t open = title_label.rfind('[', close);
@@ -191,7 +178,7 @@ inline uint64_t app_id_from_label(const std::string& title_label) {
 ///
 /// Pure and host-tested. Auto-backup staleness is measured in whole days, and
 /// doing that by day-number avoids all the timezone and DST hazards of
-/// subtracting two time_t values — the stamp is local wall-clock at backup time,
+/// subtracting two time_t values - the stamp is local wall-clock at backup time,
 /// and "now" is local wall-clock, so comparing calendar days is exactly right and
 /// hour-of-day never enters into it.
 inline long stamp_day_number(const std::string& stamp) {
@@ -227,7 +214,7 @@ inline long days_between_stamps(const std::string& newest, const std::string& no
 /// Should a save whose newest backup is `newest_stamp` be auto-backed-up now,
 /// given a threshold of `threshold_days`? `now_stamp` is today's stamp.
 ///
-///   - threshold_days <= 0 disables auto-backup entirely (the default) — nothing
+///   - threshold_days <= 0 disables auto-backup entirely (the default) - nothing
 ///     is ever stale, so nothing runs. This is the off switch.
 ///   - an empty/absent newest_stamp (no backup ever) is stale whenever
 ///     auto-backup is enabled at all.
@@ -240,7 +227,7 @@ inline bool save_is_stale(const std::string& newest_stamp, const std::string& no
 }
 
 /// Progress phases for the auto-backup sweep, so the UI can show what the
-/// otherwise-silent sweep is doing. The slow part is usually NOT the copying —
+/// otherwise-silent sweep is doing. The slow part is usually NOT the copying -
 /// it is Enumerating (priming the ncm title-name cache, which blocks), which is
 /// exactly what makes the sweep look frozen without this.
 enum class AutoPhase { Enumerating, BackingUp, Done };
@@ -256,35 +243,19 @@ struct AutoProgress {
 /// Auto-backup sweep: back up every LIVE save whose newest backup is older than
 /// Config::Behavior::save_auto_backup_days (0 = off, the default).
 ///
-/// Runs synchronously on the caller's thread and can touch many saves — the
-/// single mount slot forces it sequential — so it is meant to be called ONCE at a
-/// natural pause (app open), never per frame.
-///
-/// `on_progress` (optional) is invoked at each phase transition and before each
-/// save is backed up, so the caller can REDRAW — the sweep blocks the thread, so
-/// without the caller pumping a frame from this callback the screen freezes. It
-/// must be cheap and must not re-enter the sweep.
-///
-/// Returns the number of saves backed up. Safe to call when off: returns 0
-/// immediately.
+/// Runs synchronously and can touch many saves (the single mount slot forces it
+/// sequential), so call it ONCE at a natural pause, never per frame.
+/// `on_progress` is invoked at each phase transition and before each save is
+/// backed up, so the caller can redraw; it must be cheap and must not re-enter
+/// the sweep. Returns the number of saves backed up (0 immediately when off).
 int auto_backup_stale(const std::function<void(const AutoProgress&)>& on_progress
                           = nullptr);
 
-/// Back up EVERY live save, regardless of when it was last backed up. This is the
-/// MANUAL "back up my saves now" action.
-///
-/// Deliberately NOT the staleness sweep. A button that runs the stale policy would
-/// do nothing at all when auto-backup is off (the default) or when nothing happens
-/// to be stale — a control that silently no-ops is worse than no control, because
-/// the user cannot tell "it worked" from "it ignored me". Pressing a button means
-/// "do it now", so it does it.
-///
-/// Shares one sweep implementation with auto_backup_stale(); they differ only in
-/// which saves they select, so neither can drift from the other on layout,
-/// progress reporting, or error handling.
-///
-/// Same threading contract and same progress callback as the automatic sweep.
-/// Returns the number of saves backed up.
+/// Back up EVERY live save, regardless of when it was last backed up. This is
+/// the MANUAL "back up my saves now" action - deliberately not the staleness
+/// sweep, which would silently no-op when auto-backup is off or nothing is
+/// stale. Shares one sweep implementation with auto_backup_stale(); same
+/// threading contract and progress callback.
 int backup_all(const std::function<void(const AutoProgress&)>& on_progress = nullptr);
 
 // ── The operations ───────────────────────────────────────────────────────────
@@ -296,7 +267,7 @@ int backup_all(const std::function<void(const AutoProgress&)>& on_progress = nul
 /// caller passes through exactly what the user saw.
 ///
 /// Mounts the save through the shared choke point (Services::save_resolve), so
-/// the single-slot rule and every other save invariant apply unchanged — this
+/// the single-slot rule and every other save invariant apply unchanged - this
 /// does NOT open its own mount.
 ///
 /// Runs synchronously and can take a while; call it on a worker thread and read
@@ -307,14 +278,14 @@ std::string create(const std::string& user,
                    Fs::Progress& progress);
 
 /// Stamped backup directory names for this title, newest first. Entries that do
-/// not match the stamp shape are excluded — see is_backup_stamp().
+/// not match the stamp shape are excluded - see is_backup_stamp().
 std::vector<std::string> list(const std::string& user,
                               const std::string& title_label);
 
 // ── Browsing the backup TREE itself (independent of live saves) ──────────────
 //
 // The Save Manager's normal hierarchy is driven by the LIVE saves on the console.
-// That makes a backup unreachable the moment its save is deleted — the title
+// That makes a backup unreachable the moment its save is deleted - the title
 // vanishes from the list, taking the path to its backups with it, even though the
 // backups sit untouched on the SD card. This is the "I deleted a save and cannot
 // restore it" trap: the snapshot exists but nothing leads to it.
@@ -331,23 +302,16 @@ std::vector<std::string> backup_titles(const std::string& user);
 
 /// REPLACE the save for (user, title_label) with the contents of `backup_dir`.
 ///
-/// THIS IS DESTRUCTIVE AND NOT REVERSIBLE BY ITSELF. It is a whole-save replace:
-/// existing contents are deleted, then the backup is copied in. Per-file copying
-/// would leave behind files that exist in the save but not in the backup, and for
-/// many games a save carrying leftovers from a different point in time is
-/// CORRUPT rather than merely stale — which is exactly why this is the dangerous
-/// half of 3e and why callers must take a snapshot first.
+/// DESTRUCTIVE AND NOT REVERSIBLE BY ITSELF. It is a whole-save replace:
+/// existing contents are deleted, then the backup is copied in. Per-file
+/// copying would leave behind files not in the backup, and for many games a
+/// save carrying leftovers from a different point in time is CORRUPT rather
+/// than merely stale - hence callers MUST take a pre-restore snapshot via
+/// create() and show the user where it went (this function deliberately does
+/// not snapshot on its own).
 ///
-/// Callers MUST have taken a pre-restore snapshot via create() and MUST have
-/// shown the user where it went. This function does not take one itself: it would
-/// then be silently doing two writes for one request, and a snapshot the user was
-/// never told about is not a rollback they can use.
-///
-/// Commits once at the end, over the whole replace. A failed commit fails the
-/// restore — a half-restored save reported as success is the worst outcome
-/// available here.
-///
-/// Synchronous; same threading contract as create(). Returns true on success.
+/// Commits once at the end, over the whole replace; a failed commit fails the
+/// restore. Synchronous; same threading contract as create().
 bool restore(const std::string& user,
              const std::string& title_label,
              const std::string& backup_dir,

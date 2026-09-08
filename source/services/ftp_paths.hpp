@@ -1,6 +1,6 @@
 // source/services/ftp_paths.hpp
 //
-// Pure path model for the FTP storage roots — no sockets, no libnx, so it is
+// Pure path model for the FTP storage roots - no sockets, no libnx, so it is
 // unit-tested on the host. This mirrors MTP's model, where the client picks a
 // STORAGE first and its contents live inside:
 //
@@ -9,9 +9,8 @@
 //   /SD Install/x    → drop x here to install it to the SD card
 //   /NAND Install/x  → drop x here to install it to NAND
 //
-// The root itself holds NO real files — only the storage folders — so the client
-// gets a clean chooser instead of install folders hybridised into the SD listing.
-// Names match the MTP storage descriptions so both transports look identical.
+// The root itself holds NO real files - only the storage folders. Names match
+// the MTP storage descriptions so both transports look identical.
 
 #pragma once
 
@@ -25,10 +24,10 @@ inline constexpr const char* kFtpSdInstallDir   = "SD Install";
 inline constexpr const char* kFtpNandInstallDir = "NAND Install";
 
 enum class FtpTarget {
-    Filesystem,   // a path under /SD Card — normal file I/O
-    SdInstall,    // under /SD Install — install to SD card
-    NandInstall,  // under /NAND Install — install to NAND
-    Root,         // the chooser "/" itself — no files, only storage folders
+    Filesystem,   // a path under /SD Card - normal file I/O
+    SdInstall,    // under /SD Install - install to SD card
+    NandInstall,  // under /NAND Install - install to NAND
+    Root,         // the chooser "/" itself - no files, only storage folders
     Invalid,      // a bare path not under any known storage root
 };
 
@@ -67,7 +66,7 @@ inline FtpTarget ftp_classify(const std::string& posix, std::string& rel) {
     return FtpTarget::Invalid;   // bare path not under a storage root
 }
 
-// True when `posix` names a storage folder itself (not a path within it) — the
+// True when `posix` names a storage folder itself (not a path within it) - the
 // install folders and the SD Card folder at depth 1.
 inline bool ftp_is_storage_dir(const std::string& posix) {
     std::string first, rest;

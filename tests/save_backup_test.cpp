@@ -7,7 +7,7 @@
 // constrained to anything: real Switch titles contain ':' ("Pokemon: Let's Go"),
 // '?' ("Who Wants to Be a Millionaire?"), '/' in some regional names, and
 // trailing dots. FAT32 and exFAT reject those characters outright, so an
-// unsanitised path does not produce an ugly folder name — it produces a FAILED
+// unsanitised path does not produce an ugly folder name - it produces a FAILED
 // COPY, silently, on the titles most likely to be backed up.
 //
 // The copy itself needs a mounted save and stays on hardware. This does not.
@@ -68,7 +68,7 @@ static void test_illegal_characters() {
 }
 
 // FAT silently DROPS trailing dots and spaces. A caller that built a path ending
-// in one would then look for a directory that does not exist under that name —
+// in one would then look for a directory that does not exist under that name -
 // the copy target and the created directory disagree, which is a confusing
 // failure to debug on a console.
 static void test_trailing_dots_and_spaces() {
@@ -136,7 +136,7 @@ static void test_distinct_titles_stay_distinct() {
 //
 // This filter is a safety boundary, not tidiness. An SD card is the user's own:
 // stray folders, half-extracted archives, ".DS_Store" from a Mac, a directory
-// they made by hand — all can sit beside real backups. Offering one of those as a
+// they made by hand - all can sit beside real backups. Offering one of those as a
 // restore source would REPLACE a save with garbage, and restore is the one
 // operation here that cannot be undone from inside the game.
 static void test_stamp_recognition() {
@@ -157,7 +157,7 @@ static void test_stamp_recognition() {
 
 // Newest first, because a restore list where the newest is not obvious is a list
 // that invites picking the wrong one. Stamps are fixed-width and zero-padded, so
-// descending lexicographic IS reverse chronological — the reason sortable_stamp()
+// descending lexicographic IS reverse chronological - the reason sortable_stamp()
 // exists instead of reusing log_stamp(), which follows the user's date order.
 static void test_sort_newest_first() {
     std::vector<std::string> v = {
@@ -187,7 +187,7 @@ static void test_title_dir_is_parent_of_run_dir() {
     CHECK(run == title + "/20260712-143005", "and differs only by the stamp");
 
     // Both must sanitize identically, or listing would look in a different place
-    // than creating wrote to — a bug that only appears on awkward title names.
+    // than creating wrote to - a bug that only appears on awkward title names.
     const std::string t2 = backup_title_dir(root, "Rob", "Pokemon: Let's Go");
     const std::string r2 = backup_dir_for(root, "Rob", "Pokemon: Let's Go", "S");
     CHECK(r2.compare(0, t2.size(), t2) == 0,
@@ -199,7 +199,7 @@ static void test_title_dir_is_parent_of_run_dir() {
 // title-label FOLDER NAME is the only surviving record of which title it belongs
 // to, and the id inside "[...]" is what recreating the save needs. A wrong parse
 // here means restoring an orphaned backup recreates the WRONG title's save, or
-// none — so this is pinned hard.
+// none - so this is pinned hard.
 static void test_app_id_from_label() {
     CHECK(app_id_from_label("Zelda [0100000000010000]") == 0x0100000000010000ULL,
           "the id inside the bracket");
@@ -236,7 +236,7 @@ static void test_app_id_from_label() {
     std::printf("  ok: app id parsed from backup label\n");
 }
 
-// Auto-backup staleness — the pure decision behind 3e-c. A bug here is invisible
+// Auto-backup staleness - the pure decision behind 3e-c. A bug here is invisible
 // in the worst way: too-eager backs up every save on every launch (SD thrash),
 // too-lax never backs up and the "safety net" silently does nothing. Both are
 // caught here rather than by watching a console.
@@ -246,7 +246,7 @@ static void test_stamp_day_number() {
     CHECK(stamp_day_number("19700102-000000") == 1, "next day is 1");
     CHECK(stamp_day_number("19700201-000000") == 31, "31 days into February");
 
-    // Hour-of-day must NOT affect the day number — staleness is whole calendar
+    // Hour-of-day must NOT affect the day number - staleness is whole calendar
     // days, so two stamps on the same date are zero days apart no matter the time.
     CHECK(stamp_day_number("20260712-000001") == stamp_day_number("20260712-235959"),
           "same date, different time -> same day number");

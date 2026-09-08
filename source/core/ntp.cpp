@@ -1,7 +1,10 @@
 // source/core/ntp.cpp
 
 #include "core/ntp.hpp"
+#include "core/datetime.hpp"
 #include <SDL2/SDL.h>
+#include <cstdarg>
+#include <cstdio>
 #include <cstring>
 #include <ctime>
 
@@ -13,6 +16,30 @@
 #include <netdb.h>
 #include <unistd.h>
 #include <poll.h>
+
+// timeInitialize() opens time:u by default, and a time:u session cannot set the
+// network clock - timeSetCurrentTime(TimeType_NetworkSystemClock) fails, so the
+// NTP query succeeded but the clock never moved. Requesting the System service
+// type (time:s) makes the session able to set it, which is exactly what the
+// reference tool switch-time does. The user-clock fallback below still covers
+// consoles where time:s is refused.
+TimeServiceType __nx_time_service_type = TimeServiceType_System;
+
+// Appends one line to sdmc:/switch/GarageNX/logs/ntp.log (the dir is created
+// by boot's ensure_directories). Query and clock-set Results land here so
+// hardware triage starts from recorded evidence - same discipline as
+// wifi.log / pctl.log. SDL_Log output is invisible without nxlink.
+static void ntp_log(const char* fmt, ...) {
+    FILE* f = ::fopen("sdmc:/switch/GarageNX/logs/ntp.log", "a");
+    if (!f) return;
+    char line[256];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(line, sizeof(line), fmt, args);
+    va_end(args);
+    ::fprintf(f, "%s\n", line);
+    ::fclose(f);
+}
 #else
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -23,6 +50,12 @@
 #endif
 
 namespace Core::Ntp {
+
+#ifdef PLATFORM_SWITCH
+// libnx's Result (u32) collides with this namespace's Result struct inside the
+// namespace, so alias the struct for the one function that needs both.
+using NtpResult = Core::Ntp::Result;
+#endif
 
 // NTP epoch (1900) to Unix epoch (1970) offset in seconds.
 static constexpr uint64_t NTP_UNIX_DELTA = 2208988800ULL;
@@ -43,7 +76,7 @@ struct NtpPacket {
     uint32_t orig_ts_frac;
     uint32_t recv_ts_sec;
     uint32_t recv_ts_frac;
-    uint32_t tx_ts_sec;       // transmit timestamp — the one we want
+    uint32_t tx_ts_sec;       // transmit timestamp - the one we want
     uint32_t tx_ts_frac;
 };
 #pragma pack(pop)
@@ -114,8 +147,8 @@ static Result do_query(const std::string& server, int timeout_ms) {
 
     r.server_time = (int64_t)((uint64_t)tx_sec - NTP_UNIX_DELTA);
 
-    // Local time for offset
-    int64_t local = (int64_t)time(nullptr);
+    // Local time for offset (live service read, not the newlib boot snapshot)
+    int64_t local = (int64_t)Core::DateTime::now_unix();
     r.offset_seconds = r.server_time - local;
     r.success = true;
     return r;
@@ -127,25 +160,61 @@ Result query(const std::string& server, int timeout_ms) {
 
 Result sync(const std::string& server, int timeout_ms) {
     Result r = do_query(server, timeout_ms);
-    if (!r.success) return r;
+    if (!r.success) {
+#ifdef PLATFORM_SWITCH
+        ntp_log("query failed: %s", r.error.c_str());
+#endif
+        return r;
+    }
 
 #ifdef PLATFORM_SWITCH
-    // Set the system's user clock to the NTP time.
-    // timeInitialize is normally already up (started in main); guard anyway.
-    Result set_result = r;
-    if (R_FAILED(timeSetCurrentTime(TimeType_NetworkSystemClock,
-                                    (uint64_t)r.server_time))) {
-        // Some setups only allow setting the user clock; try that too.
-        if (R_FAILED(timeSetCurrentTime(TimeType_UserSystemClock,
-                                        (uint64_t)r.server_time))) {
-            set_result.success = false;
-            set_result.error = "could not set system clock";
-        }
+    NtpResult set_result = r;
+
+    u64 pre_user = 0, pre_net = 0;
+    timeGetCurrentTime(TimeType_UserSystemClock, &pre_user);
+    timeGetCurrentTime(TimeType_NetworkSystemClock, &pre_net);
+    ntp_log("=== sync: server=%s timeout=%dms", server.c_str(), timeout_ms);
+    ntp_log("pre : user=%lld net=%lld app_time=%lld",
+            (long long)pre_user, (long long)pre_net, (long long)time(nullptr));
+    ntp_log("server_time=%lld offset=%llds",
+            (long long)r.server_time, (long long)r.offset_seconds);
+
+    u32 rc_net = timeSetCurrentTime(TimeType_NetworkSystemClock,
+                                    (uint64_t)r.server_time);
+    if (R_SUCCEEDED(rc_net)) {
+        u64 post_net = 0;
+        timeGetCurrentTime(TimeType_NetworkSystemClock, &post_net);
+        ntp_log("set NetworkSystemClock: OK (post read=%lld)", (long long)post_net);
+        ntp_log("post: app_time=%lld (newlib snapshot) live_user=%lld",
+                (long long)time(nullptr), (long long)Core::DateTime::now_unix());
+        set_result.detail = "network clock set";
+        return set_result;
     }
+    ntp_log("set NetworkSystemClock FAILED: 0x%08X", rc_net);
+    // Some setups only allow setting the user clock; try that too.
+    u32 rc_user = timeSetCurrentTime(TimeType_UserSystemClock,
+                                     (uint64_t)r.server_time);
+    if (R_SUCCEEDED(rc_user)) {
+        ntp_log("set UserSystemClock: OK (fallback)");
+        ntp_log("post: app_time=%lld (newlib snapshot) live_user=%lld",
+                (long long)time(nullptr), (long long)Core::DateTime::now_unix());
+        set_result.detail = "user clock set (network clock refused)";
+        return set_result;
+    }
+    ntp_log("set UserSystemClock FAILED: 0x%08X", rc_user);
+    ntp_log("post: app_time=%lld (newlib snapshot) live_user=%lld",
+            (long long)time(nullptr), (long long)Core::DateTime::now_unix());
+    char b_net[9], b_user[9];
+    snprintf(b_net, sizeof(b_net), "%08X", rc_net);
+    snprintf(b_user, sizeof(b_user), "%08X", rc_user);
+    set_result.success = false;
+    set_result.error = std::string("could not set clock (network 0x") +
+                       b_net + ", user 0x" + b_user + ")";
+    ntp_log("sync failed: %s", set_result.error.c_str());
     return set_result;
 #else
     // PC stub: don't touch the host clock; just report what we found.
-    SDL_Log("Ntp::sync — (PC stub) would set clock to %lld (offset %lld s)",
+    SDL_Log("Ntp::sync - (PC stub) would set clock to %lld (offset %lld s)",
             (long long)r.server_time, (long long)r.offset_seconds);
     return r;
 #endif

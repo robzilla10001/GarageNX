@@ -33,7 +33,7 @@ uint64_t                        g_seen_gen   = 0;   // last title-db generation 
 bool                            g_wanted     = false;
 
 #ifdef PLATFORM_SWITCH
-// Kept deliberately (not temporary): logs only RARE events — one line per
+// Kept deliberately (not temporary): logs only RARE events - one line per
 // enumeration, plus any title whose Control NCA will not resolve. This listing
 // failed four different ways during development and the log is what identified
 // each cause; a title that silently loses its name is exactly the kind of thing
@@ -78,7 +78,7 @@ std::vector<VirtualEntry> installed_titles_list() {
     g_cv.notify_all();
 
     // Block this WORKER thread until the main loop has enumerated and finished
-    // resolving names — it does one unit of work per frame, so this is roughly
+    // resolving names - it does one unit of work per frame, so this is roughly
     // (1 + title_count) frames. Waiting here is what makes the FIRST listing
     // correct: without it a client saw an empty folder, because the cache is only
     // filled a frame after the request arrives.
@@ -92,7 +92,7 @@ std::vector<VirtualEntry> installed_titles_list() {
         return g_shutdown || (g_enumerated && g_next_resolve >= g_titles.size());
     });
 
-    return g_entries;   // COPY under the lock — see the header for why
+    return g_entries;   // COPY under the lock - see the header for why
 }
 
 bool installed_titles_find(const std::string& filename, Core::Ncm::Title& out) {
@@ -195,7 +195,7 @@ void installed_titles_tick() {
     if (!Core::Keys::available()) {
         static bool warned = false;
         if (!warned) { warned = true; tlog("no keys: names stay id-based"); }
-        // Nothing more will ever happen without keys — release any waiter now
+        // Nothing more will ever happen without keys - release any waiter now
         // rather than making it sit out the full timeout.
         g_next_resolve = g_titles.size();
         g_cv.notify_all();

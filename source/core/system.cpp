@@ -70,7 +70,7 @@ static std::string region_name(SetRegion r) {
 
 // Recover the true serial from Atmosphère's pre-blank PRODINFO backup. The file
 // is named "<SERIAL>_PRODINFO.bin" in sdmc:/atmosphere/automatic_backups/. We
-// only need the directory entry name — the file contents are irrelevant (and
+// only need the directory entry name - the file contents are irrelevant (and
 // may read as 0 bytes). Returns an invalid Field if no such backup exists.
 static Field read_serial_from_backup() {
     const char* dir_path = "sdmc:/atmosphere/automatic_backups/";
@@ -134,12 +134,10 @@ static void load_all() {
         s_hw.serial          = ok(serial.number);
     }
 
-    // The TRUE serial (accurate even when PRODINFO is blanked) is what DBI
-    // shows. Atmosphère writes a PRODINFO backup before blanking to
+    // The TRUE serial (accurate even when PRODINFO is blanked): Atmosphère
+    // backs up PRODINFO before blanking to
     //   sdmc:/atmosphere/automatic_backups/<SERIAL>_PRODINFO.bin
-    // with the real serial encoded IN THE FILENAME. We read it straight from the
-    // directory listing — no NAND/BIS access or keys required. This is exactly
-    // how DBI recovers the "guessed"/true serial.
+    // so the real serial can be read from the filename - how DBI recovers it.
     s_fw.serial_true = read_serial_from_backup();
 
     // ── Device nickname (setsys) ───────────────────────────────────────────────
@@ -159,7 +157,7 @@ static void load_all() {
     }
 
     // ── Product model → SoC generation + board/equipment model ────────────────
-    // These are two different things, and DBI shows the board model:
+    // DBI shows the board model:
     //   SetSysProductModel  Board name   SoC generation
     //   Nx                  Icosa        Erista  (retail original)
     //   Copper              Copper       Erista  (dev unit)
@@ -318,16 +316,13 @@ void refresh() {
 }
 
 std::string sdk_version() {
-    // The NintendoSDK version the *firmware* was built against (what DBI shows,
-    // e.g. "21.4.0" on FW 21.0.1). This is a genuinely separate three-part
-    // number — it is NOT derivable from SetSysFirmwareVersion's major/minor/
-    // micro/revision fields (verified on hardware: those yield "21.0.1.1").
-    //
-    // The real value lives in the SystemVersion title (program ID
-    // 0100000000000809) on NAND, which must be read through NCM. That plumbing
-    // arrives with Milestone 4 (title management), so rather than display a
-    // wrong number we show an explicit placeholder. Honest beats plausible.
-    return "—";  // em dash placeholder until Milestone 4
+    // The NintendoSDK version the firmware was built against (what DBI shows,
+    // e.g. "21.4.0" on FW 21.0.1) - a separate three-part number, not derivable
+    // from SetSysFirmwareVersion (verified on hardware: those yield "21.0.1.1").
+    // The real value lives in the SystemVersion title (0100000000000809) on NAND
+    // and needs NCM plumbing, so show an explicit placeholder rather than a
+    // wrong number.
+    return "-";
 }
 
 bool is_sensitive_field(const std::string& label_key) {

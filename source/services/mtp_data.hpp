@@ -2,11 +2,9 @@
 // source/services/mtp_data.hpp
 // PTP/MTP wire primitives: container framing and dataset marshalling.
 //
-// Deliberately free of USB and libnx. The transport half (mtp_server) cannot be
-// exercised anywhere but real hardware, so everything that *can* be reasoned
-// about and unit-tested off-device lives here instead: header parsing, string
-// and array encoding, and the DeviceInfo/StorageInfo datasets. Wire format is
-// little-endian throughout (PTP over USB).
+// Deliberately free of USB and libnx so everything that can be unit-tested
+// off-device lives here: header parsing, string and array encoding, and the
+// DeviceInfo/StorageInfo datasets. Wire format is little-endian (PTP over USB).
 
 #include <cstdint>
 #include <string>
@@ -67,7 +65,7 @@ namespace ObjProp {
 constexpr uint16_t StorageId        = 0xDC01;
 constexpr uint16_t ObjectFormat     = 0xDC02;
 constexpr uint16_t ProtectionStatus = 0xDC03;
-constexpr uint16_t ObjectSize       = 0xDC04;   // UInt64 — the point of all this
+constexpr uint16_t ObjectSize       = 0xDC04;   // UInt64 - the point of all this
 constexpr uint16_t ObjectFileName   = 0xDC07;
 constexpr uint16_t DateModified     = 0xDC09;
 constexpr uint16_t ParentObject     = 0xDC0B;
@@ -77,7 +75,7 @@ constexpr uint16_t Name             = 0xDC44;
 
 // ─── PTP datatype codes ──────────────────────────────────────────────────────
 // Needed to walk an ObjectPropList: each element's value length is implied by
-// its datatype and nothing else, so an unrecognised datatype is unskippable —
+// its datatype and nothing else, so an unrecognised datatype is unskippable -
 // the rest of the dataset becomes unparseable. That is what Invalid_ObjectProp_
 // Format exists to report.
 namespace DataType {
@@ -209,8 +207,8 @@ private:
 //
 // NOTE the size does NOT come from here. SendObjectPropList carries
 // ObjectCompressedSize in its COMMAND PARAMETERS, split high/low across
-// params 4 and 5 — that split is the actual 64-bit mechanism. A host may also
-// include an ObjectSize property in this dataset, but it is not obliged to.
+// params 4 and 5. A host may also include an ObjectSize property here, but
+// is not obliged to.
 struct ObjectProp {
     uint32_t    handle = 0;
     uint16_t    code   = 0;
@@ -236,15 +234,10 @@ bool parse_object_prop_list(const uint8_t* p, size_t n,
 ///     u8  form_flag        0 = none
 ///     <form>               omitted when form_flag == 0
 ///
-/// Not optional decoration. A host that asks GetObjectPropsSupported what we
-/// support then asks GetObjectPropDesc about EACH answer, to learn its datatype
-/// before it can encode a value — libmtp gives up on the whole send if any one
-/// description fails ("could not get property description"). So this must
-/// describe every code GetObjectPropsSupported names, and nothing it names may
-/// be undecodable by parse_object_prop_list().
-///
-/// Returns false for a property we do not support, which the caller reports as
-/// ObjectPropNotSupported.
+/// Not optional decoration: libmtp gives up on the whole send if any one
+/// description fails, so this must describe every code
+/// GetObjectPropsSupported names. Returns false for a property we do not
+/// support, which the caller reports as ObjectPropNotSupported.
 bool build_object_prop_desc(uint16_t code, Writer& w);
 
 /// Find a property by code. Returns nullptr when absent.

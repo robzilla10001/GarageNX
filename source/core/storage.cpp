@@ -108,7 +108,7 @@ SpaceInfo nand_user() {
 }
 
 SpaceInfo nand_system() {
-    // Identical to nand_user() but for the System partition — same open/query/
+    // Identical to nand_user() but for the System partition - same open/query/
     // close shape, deliberately copied rather than reinvented. Open-and-close per
     // call is what nand_user() has always done and it is a cheap query; do NOT
     // hold the handle open, since this is polled from the status bar.
@@ -136,7 +136,7 @@ static SpaceInfo query_path(const char* path) {
 
 SpaceInfo sd_card()   { return query_path("."); }
 SdCid sd_cid() {
-    // PC stub — a plausible card so the section renders in dev.
+    // PC stub - a plausible card so the section renders in dev.
     return SdCid{ true, "SanDisk (3)", "5344", "SL16G", "8.0", "1A2B3C4D", "07/2021" };
 }
 SpaceInfo nand_user() {
@@ -148,7 +148,7 @@ SpaceInfo nand_user() {
     return info;
 }
 SpaceInfo nand_system() {
-    // Fabricate a small, nearly-full system partition — the realistic shape, and
+    // Fabricate a small, nearly-full system partition - the realistic shape, and
     // the one that would expose a layout bug at the tight end.
     SpaceInfo info;
     info.total_bytes = 5ULL * 1024 * 1024 * 1024;

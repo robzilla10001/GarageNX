@@ -59,7 +59,7 @@ std::string FtpServer::to_vfs(const std::string& cwd, const std::string& arg) co
     // Resolve against the shared catalog: any ENABLED Filesystem surface (SD Card,
     // Album, and later NAND/gamecard) maps to its concrete VFS path. Root, the
     // install folders, title-query surfaces, and bare/disabled paths return "" so
-    // filesystem commands reject them — this is what keeps non-SD storages from
+    // filesystem commands reject them - this is what keeps non-SD storages from
     // leaking into the root listing and keeps disabled storages unreachable.
     const auto r = Services::sp_resolve(posix, Config::get().ftp.surfaces);
     if (r.kind == Services::PathKind::Filesystem ||
@@ -107,14 +107,9 @@ struct Client {
 };
 }
 
-// Count distinct connected peers rather than open control sockets.
-//
-// A single FTP user routinely holds more than one control connection: most
-// clients (FileZilla, and the file managers that browse over FTP) open a second
-// channel the first time you enter a directory so browsing and transfers don't
-// block each other. Counting sockets therefore reports "2 clients" for one
-// person. Counting unique peer addresses reports people, which is what the
-// status screen is actually claiming to show.
+// Count distinct connected peers rather than open control sockets: most FTP
+// clients open a second control channel for browsing, so counting sockets
+// reports "2 clients" for one person.
 static int distinct_peers(const std::vector<Client>& clients) {
     std::vector<uint32_t> seen;
     for (const auto& c : clients) {
@@ -227,7 +222,7 @@ void FtpServer::run() {
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons(m_port);
     if (::bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        set_error("bind() failed — port in use?"); ::close(listen_fd); return;
+        set_error("bind() failed - port in use?"); ::close(listen_fd); return;
     }
     if (::listen(listen_fd, 4) < 0) {
         set_error("listen() failed"); ::close(listen_fd); return;
@@ -439,24 +434,20 @@ bool FtpServer_handle(FtpServer& srv, Client& c, const std::string& line,
         const auto rp_list = Services::sp_resolve(posix, Config::get().ftp.surfaces);
         if (ftp_is_root(posix)) {
             // The root is a pure chooser: the enabled storage folders from the
-            // shared catalog. Filesystem surfaces are listed ONLY if their mount is
-            // actually available — a surface can be enabled in config but not yet
-            // mounted (NAND is Wave 2, Saves is Wave 3), and listing an unmounted
-            // one produces a folder that errors on entry ("not a directory"). We
-            // probe the mount root; as each wave adds its mount, the surface
-            // auto-appears here with no listing change. Install surfaces have no
-            // mount and always list; the TitleQuery surface is skipped until Wave 3.
+            // shared catalog, probed at their mount root - a surface enabled in
+            // config but not yet mounted would otherwise list as a folder that
+            // errors on entry. Install surfaces have no mount and always list;
+            // the TitleQuery surface is skipped until Wave 3.
             for (const auto& s : Services::StorageCatalog::enabled_surfaces(Config::get().ftp.surfaces)) {
-                // TitleQuery surfaces (Installed Titles) are synthesized — they have
-                // no mount to probe, so they always list.
-                // Save Data is Filesystem-kind in the catalog (so the write guard
-                // recognises "save:" paths), but its top levels are SYNTHESIZED —
-                // nothing is mounted until a title folder is entered. Probing
-                // "save:/" here would hide the surface completely.
-                // Shared probe: MTP asks the same question the same way, so an
-                // unmounted surface is hidden identically on both transports.
+                // TitleQuery surfaces (Installed Titles) are synthesized - no
+                // mount to probe, always list. Save Data is Filesystem-kind in
+                // the catalog (so the write guard recognises "save:" paths) but
+                // its top levels are synthesized too; probing "save:/" here
+                // would hide the surface completely. MTP asks the same question
+                // the same way, so an unmounted surface is hidden identically on
+                // both transports.
                 if (!Services::StorageCatalog::mount_available(s))
-                    continue;   // mount not available — don't list it
+                    continue;   // mount not available - don't list it
                 list_virtual_dir(dfd, s.display, names_only);
             }
         } else if (rp_list.kind == Services::PathKind::SaveData) {
@@ -475,7 +466,7 @@ bool FtpServer_handle(FtpServer& srv, Client& c, const std::string& line,
             }
         } else if (rp_list.kind == Services::PathKind::TitleQuery && rp_list.rel.empty()) {
             // Synthesized: one virtual .nsp per installed title. No filesystem is
-            // touched; the listing comes from ncm. Only the surface ROOT lists —
+            // touched; the listing comes from ncm. Only the surface ROOT lists -
             // a path deeper than that names a virtual file, not a directory, and
             // must not re-list everything.
             for (const auto& e : Services::installed_titles_list())
@@ -483,10 +474,10 @@ bool FtpServer_handle(FtpServer& srv, Client& c, const std::string& line,
         } else if (ftp_is_install_dir(posix)) {
             // Install folders are write-only drop targets; they list as empty.
         } else if (!vfs.empty()) {
-            // A path under a Filesystem surface (SD Card, Album, ...) — list it.
+            // A path under a Filesystem surface (SD Card, Album, ...) - list it.
             list_dir(dfd, vfs, names_only);
         }
-        // else: an invalid path (bare/disabled, not under a storage root) — nothing.
+        // else: an invalid path (bare/disabled, not under a storage root) - nothing.
         ::close(dfd);
         reply(fd, "226 Directory send OK\r\n");
         return true;
@@ -612,7 +603,7 @@ bool FtpServer_handle(FtpServer& srv, Client& c, const std::string& line,
         // Only paths under "SD Card" can receive a plain file. Root, the install
         // folders themselves, and bare paths have no filesystem location.
         std::string vfs = to_vfs(c.cwd, arg);
-        if (vfs.empty()) { reply(fd, "550 Cannot write here — choose a storage folder\r\n"); return true; }
+        if (vfs.empty()) { reply(fd, "550 Cannot write here - choose a storage folder\r\n"); return true; }
         if (Services::guard_write("FTP", "write file", vfs, Config::get().ftp.surfaces)
                 != Services::WriteDecision::Allow) {
             reply(fd, "550 Permission denied\r\n"); return true;
@@ -648,7 +639,7 @@ bool FtpServer_handle(FtpServer& srv, Client& c, const std::string& line,
         // Deleting the save "folder" means WIPING the save: the title folder is
         // synthesized (the mount point), so it cannot be rmdir'd, but emptying it
         // is a real, legitimate operation. Route it through the guard so it gets
-        // the same on-device confirmation any other save mutation does — wiping a
+        // the same on-device confirmation any other save mutation does - wiping a
         // save destroys unrecoverable progress, so it must NOT be silent.
         if (Services::save_is_mount_root(vfs)) {
             if (Services::guard_write("FTP", "wipe save", vfs, Config::get().ftp.surfaces)
@@ -781,7 +772,7 @@ bool FtpServer::ftp_install(int data_fd, FtpTarget target, const std::string& le
     // FTP delivers raw file bytes with no framing and no size declaration, so the
     // FirstChunk is empty and the driver recovers the size from the container's
     // own PFS0/HFS0 table. The socket recv IS the byte source; a socket close (0)
-    // ends the stream. This is the same StreamDriver the MTP path uses — same
+    // ends the stream. This is the same StreamDriver the MTP path uses - same
     // install semantics, same teardown safety.
     std::vector<uint8_t> scratch(256 * 1024);
 
@@ -829,7 +820,7 @@ void FtpServer::save_install_log(const std::string& filename, bool ok) {
     ::mkdir(dir.c_str(), 0777);  // NO-COMMIT: log folder on SD, never a save
     FILE* f = ::fopen((dir + "/ftp_install.log").c_str(), "a");
     if (!f) return;
-    std::fprintf(f, "GarageNX FTP install — %s : %s\n",
+    std::fprintf(f, "GarageNX FTP install - %s : %s\n",
                  filename.c_str(), ok ? "OK" : "FAILED");
     ::fclose(f);
 #else

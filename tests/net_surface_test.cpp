@@ -6,7 +6,7 @@
 // and the in-memory session-credential store.
 //
 // The connect/mount half lives behind libsmb2/libnfs and can only be exercised
-// on hardware — per this directory's admission rule it is NOT stubbed here. What
+// on hardware - per this directory's admission rule it is NOT stubbed here. What
 // IS testable is exactly the part that has to be right before a byte moves: a
 // handle's identity, the level a path names, and the promise that a password
 // never outlives the session in a way this store can observe.
@@ -81,7 +81,7 @@ static void test_synthetic_prefix() {
 
 // The synthetic prefix and the mount root MUST NOT be confusable, or the write
 // guard (which matches the "net:" mount root by a plain string compare) would
-// treat a synthetic handle path as a live mounted one — the "savedata:/" vs
+// treat a synthetic handle path as a live mounted one - the "savedata:/" vs
 // "save:" hazard, in this surface.
 static void test_prefix_cannot_collide_with_mount_root() {
     const std::string synth = "network:/NAS/x";
@@ -120,7 +120,7 @@ static void test_split_levels() {
 }
 
 // A consumer must be able to answer "is this a directory?" for the chooser root
-// and a connection's share root WITHOUT connecting — otherwise browsing the
+// and a connection's share root WITHOUT connecting - otherwise browsing the
 // chooser would connect and disconnect servers just to draw the list.
 static void test_no_mount_needed_for_synthesized_levels() {
     CHECK(net_synth_is_synthesized_dir("network:/"), "the chooser root is a dir, no mount");

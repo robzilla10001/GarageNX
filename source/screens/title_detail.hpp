@@ -1,6 +1,6 @@
 #pragma once
 // source/screens/title_detail.hpp
-// Milestone 4 Phase B — detail view for a single application.
+// Milestone 4 Phase B - detail view for a single application.
 //
 // Shows the base application (icon, name, version, program id, size, storage)
 // followed by its installed updates and DLC. In Phase C this screen gains the
@@ -36,7 +36,7 @@ private:
 
     // ── Delete flow ─────────────────────────────────────────────────────────
     // + opens a small action menu; choosing Delete arms the hold-to-confirm
-    // overlay. The user must hold A for HOLD_SECONDS to actually delete — real
+    // overlay. The user must hold A for HOLD_SECONDS to actually delete - real
     // friction for an irreversible action.
     enum class Mode { Browsing, ActionMenu, ConfirmDelete, Deleting, Result,
                       Dumping, DumpResult, Moving, MoveResult };

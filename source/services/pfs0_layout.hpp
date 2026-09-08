@@ -2,7 +2,7 @@
 // source/services/pfs0_layout.hpp
 //
 // The PFS0 (NSP) container layout, as pure arithmetic. Extracted so that the size
-// we ADVERTISE in a listing and the bytes we later STREAM come from one place —
+// we ADVERTISE in a listing and the bytes we later STREAM come from one place -
 // if they disagree by even one byte, a client either truncates the download or
 // errors out at the end, and that is a miserable bug to chase.
 //

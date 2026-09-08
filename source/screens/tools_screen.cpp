@@ -14,10 +14,19 @@
 #endif
 
 #include "core/ncm.hpp"
+#include "core/dump.hpp"
 #include "core/es.hpp"
+#include "core/fs.hpp"
 #include "core/save_mount.hpp"
+#include "ui/font.hpp"
+#include <algorithm>
 #include <array>
+#include <cctype>
+#include <cstdarg>
 #include <cstdio>
+#include <unordered_map>
+
+#include "tools/nsp_repair.hpp"
 #include <cstring>
 #include <dirent.h>
 #include <set>
@@ -25,16 +34,174 @@
 #include <unordered_set>
 #include <utility>
 
+
+// ── Firmware dump helpers ────────────────────────────────────────────────────
+// Enumeration lives in ONE place: Core::Dump::enumerate_firmware_content(),
+// shared by the scan and the dump. Do not re-inline it here.
+static int firmware_dump_scan(int* out_count, u64* out_bytes) {
+    const Core::Dump::FirmwareScan scan =
+        Core::Dump::enumerate_firmware_content(Core::Ncm::Storage::BuiltInSystem);
+    if (out_count) *out_count = scan.unique_ncas;
+    if (out_bytes) *out_bytes = scan.total_bytes;
+    return scan.unique_ncas;
+}
+
+// Firmware dump body, run on the background thread. Keys are optional: raw
+// NCA extraction reads NCM content storage, no titlekey decryption involved.
+// Diagnostics land in logs/firmware_dump.log via Core::Dump::fw_log().
+static void firmware_dump_body(Core::Dump::Progress& progress,
+                               std::string& out_dir) {
+    Core::Keys::LoadResult kr = Core::Keys::load();
+    if (!kr.ok) {
+        Core::Dump::fw_log("Keys not loaded (continuing without): %s",
+                           kr.missing.c_str());
+    }
+    Core::Dump::dump_ncas_from_storage(
+        Core::Ncm::Storage::BuiltInSystem, Core::Keys::get(), progress, out_dir);
+}
+
+// True on the frame ANY button is first pressed.
+static bool fw_any_button_pressed() {
+    using B = Input::Button;
+    static const B all[] = {
+        B::A, B::B, B::X, B::Y, B::L, B::R, B::ZL, B::ZR,
+        B::Plus, B::Minus, B::DUp, B::DDown, B::DLeft, B::DRight,
+        B::LStickClick, B::RStickClick,
+    };
+    for (B b : all) if (Input::pressed(b)) return true;
+    return false;
+}
+
+// ── Background dump lifecycle: thread + polled progress ─────────────────
+// Shared by the firmware dump and the ticket-repair re-dump. The worker
+// publishes into the atomic Progress; the UI polls it every frame.
+void ToolsScreen::fw_dump_thread_fn(void* arg) {
+    auto* self = static_cast<ToolsScreen*>(arg);
+#ifdef PLATFORM_SWITCH
+    if (self->m_bg_op == BgOp::TicketRepair) {
+        // Re-dump each confirmed candidate in turn; stop on cancel, keep
+        // going past individual failures (the point of the op is to fix
+        // everything fixable, then report what could not be).
+        for (; self->m_repair_next < self->m_repair_list.size();
+               ++self->m_repair_next) {
+            if (self->m_fw_progress.cancel.load()) break;
+            const RepairCandidate& c = self->m_repair_list[self->m_repair_next];
+            Core::Dump::fw_log("Repair: re-dumping %016llX (replacing %s)",
+                               (unsigned long long)c.title.program_id,
+                               c.nsp_path.c_str());
+            std::string out_path;
+            Core::Dump::Progress one;
+            one.reset();
+            one.running.store(true);
+            const bool ok = self->repair_one(c, one, out_path);
+            if (ok) ++self->m_repair_ok;
+            else    ++self->m_repair_fail;
+            self->m_fw_progress.current_file = c.title.name.empty()
+                ? c.nsp_path : c.title.name;
+        }
+        self->m_fw_progress.done    = true;
+        self->m_fw_progress.success = (self->m_repair_fail == 0);
+        if (self->m_repair_fail == 0 && self->m_repair_ok == 0)
+            self->m_fw_progress.message = "Nothing repaired";
+        return;
+    }
+#endif
+    firmware_dump_body(self->m_fw_progress, self->m_fw_out_dir);
+}
+
+void ToolsScreen::start_background_dump(BgOp op) {
+    m_bg_op      = op;
+    m_fw_failed  = false;
+    m_fw_fail_msg.clear();
+    m_fw_out_dir.clear();
+    m_fw_progress.reset();
+    m_fw_dumping = true;
+#ifdef PLATFORM_SWITCH
+    m_repair_next = 0;
+    m_repair_ok   = 0;
+    m_repair_fail = 0;
+#endif
+    if (op == BgOp::FirmwareDump)
+        Core::Dump::fw_log("Dump run requested from Tools menu");
+
+#ifdef PLATFORM_SWITCH
+    if (R_SUCCEEDED(threadCreate(&m_fw_thread, fw_dump_thread_fn, this, nullptr,
+                                 0x20000, 0x2C, -2))) {
+        if (R_SUCCEEDED(threadStart(&m_fw_thread))) {
+            m_fw_thread_active = true;
+            return;
+        }
+        threadClose(&m_fw_thread);
+    }
+#endif
+    // Thread refused to start (out of resources): fall back to synchronous.
+    fw_dump_thread_fn(this);
+    poll_firmware_dump();
+}
+
+void ToolsScreen::poll_firmware_dump() {
+    if (!m_fw_dumping) return;
+    if (!m_fw_progress.done.load()) return;   // still running - keep polling
+
+#ifdef PLATFORM_SWITCH
+    if (m_fw_thread_active) {
+        threadWaitForExit(&m_fw_thread);
+        threadClose(&m_fw_thread);
+        m_fw_thread_active = false;
+    }
+#endif
+    m_fw_dumping = false;
+
+#ifdef PLATFORM_SWITCH
+    if (m_bg_op == BgOp::TicketRepair) {
+        // The repair batch reports a tally; cancel mid-batch lands here too.
+        char msg[192];
+        if (m_repair_fail == 0)
+            snprintf(msg, sizeof(msg), "Repaired %d dumped NSP(s) - ticket now included.",
+                     m_repair_ok);
+        else
+            snprintf(msg, sizeof(msg), "Repaired %d NSP(s); %d could not be repaired (see logs).",
+                     m_repair_ok, m_repair_fail);
+        Core::Dump::fw_log("Repair batch done: %d ok, %d failed", m_repair_ok, m_repair_fail);
+        Modal::show({ Lang::t("tools.repair_tickets"), msg,
+                      Modal::Kind::Info, Lang::t("modal.ok"), "" });
+        return;
+    }
+#endif
+
+    if (m_fw_progress.success.load()) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "%s", Lang::t("dump_fw_done").c_str());
+        std::string result = msg;
+        size_t pos = result.find("{path}");
+        if (pos != std::string::npos) result.replace(pos, 6, m_fw_out_dir);
+        Modal::show({ Lang::t("tools.dump_firmware"), result,
+                      Modal::Kind::Info, Lang::t("modal.ok"), "" });
+        return;
+    }
+
+    // FAILURE: the dump already halted itself and cleaned up its partials.
+    // Show a persistent notification; update() pops on ANY button while up.
+    std::string tmpl = Lang::t("dump_fw_failed");
+    const std::string error = m_fw_progress.cancel.load()
+        ? Lang::t("common.cancel")
+        : (m_fw_progress.message.empty() ? std::string("unknown error")
+                                         : m_fw_progress.message);
+    size_t pos = tmpl.find("{error}");
+    if (pos != std::string::npos) tmpl.replace(pos, 7, error);
+    m_fw_fail_msg = tmpl;
+    m_fw_failed   = true;
+    Core::Dump::fw_log("Run reported failure: %s", error.c_str());
+}
+
 namespace {
 
 // ── Operation: clean leftover NCM placeholders ──────────────────────────────
-// Placeholders are the temporary files ncm writes during an install. A clean
-// install deletes its own; a cancelled or crashed install can leave them behind,
-// consuming space while referenced by nothing. Listing + deleting them is safe:
-// a placeholder is by definition not yet a registered, in-use content file.
+// A cancelled or crashed install can leave placeholders behind, consuming
+// space while referenced by nothing. By definition not yet registered content,
+// so listing + deleting them is safe.
 
 #ifdef PLATFORM_SWITCH
-// Count placeholders across the writable content storages (SD + NAND user).
 int placeholder_scan(u64* out_bytes) {
     const NcmStorageId storages[] = { NcmStorageId_SdCard, NcmStorageId_BuiltInUser };
     int total = 0;
@@ -70,8 +237,7 @@ int placeholder_delete() {
         if (R_FAILED(ncmOpenContentStorage(&cs, sid))) continue;
         NcmPlaceHolderId ids[64];
         s32 got = 0;
-        // Re-list after each page: deleting shrinks the set, so always take the
-        // current head rather than tracking a moving offset.
+        // Deleting shrinks the set, so re-list from the head each pass.
         do {
             got = 0;
             if (R_FAILED(ncmContentStorageListPlaceHolder(&cs, ids, 64, &got))) break;
@@ -85,19 +251,9 @@ int placeholder_delete() {
 #endif  // PLATFORM_SWITCH
 
 // ── Operation: clean superseded (old) game update files ────────────────────
-// A Patch (game update) title's content-meta "id" is shared by every version of
-// that patch — only `version` differs, exactly like an app version bump. Once a
-// newer patch for a title is installed, every older patch for the same id is
-// dead weight: it cannot be launched (the newest version always wins) and only
-// costs space. This walks every installed Patch meta, keeps the highest version
-// per id per storage, and flags the rest.
-//
-// Reuses the SAME enumeration shape as Core::Ncm::list_storage() (open db,
-// ncmContentMetaDatabaseList in a WINDOW=256 page, ncmContentMetaDatabaseList-
-// ContentInfo per meta) and the SAME delete order the installer's rollback path
-// uses (delete each referenced content, then remove the meta record, then
-// commit) — see source/install/installer.cpp around the meta-commit rollback.
-// No libnx symbol here is new to this codebase.
+// A Patch title's content-meta id is shared by every version of that patch;
+// once a newer patch is installed, older ones cannot be launched. Keeps the
+// highest version per id per storage.
 
 #ifdef PLATFORM_SWITCH
 struct MetaHit {
@@ -131,10 +287,7 @@ std::vector<MetaHit> list_patches() {
     return out;
 }
 
-// Of every installed patch, the ones that are NOT the highest version for their
-// (storage, id) — i.e. the deletion candidates. Two installs sharing an id on
-// DIFFERENT storages are independent, same as everywhere else in this file that
-// treats SD and NAND as separate worlds.
+// Patches that are NOT the highest version for their (storage, id).
 std::vector<MetaHit> superseded_updates() {
     std::vector<MetaHit> all = list_patches();
     std::vector<MetaHit> losers;
@@ -189,9 +342,8 @@ int superseded_scan(u64* out_bytes) {
 }
 
 int superseded_delete() {
-    // Re-list right before deleting rather than reusing the scan's result —
-    // same reason placeholder_delete() re-lists each page instead of trusting a
-    // stale offset: state can move between the dry run and the held confirm.
+    // Re-list right before deleting: state can move between the dry run and
+    // the held confirm.
     std::vector<MetaHit> losers = superseded_updates();
     const NcmStorageId storages[] = { NcmStorageId_SdCard, NcmStorageId_BuiltInUser };
     int deleted = 0;
@@ -209,9 +361,8 @@ int superseded_delete() {
         for (const auto& hit : losers) {
             if (hit.storage != sid) continue;
 
-            // Delete every content the meta references first, THEN remove the
-            // meta record — the same order installer.cpp's rollback path uses
-            // on a failed commit.
+            // Delete referenced content first, then the meta record - the
+            // order installer.cpp's rollback path uses.
             if (have_cs) {
                 s32 coff = 0;
                 for (;;) {
@@ -248,21 +399,10 @@ int superseded_delete() {
 #endif  // PLATFORM_SWITCH
 
 // ── Operation: clear downloaded (not-yet-applied) system-update data ───────
-// A background OS update that finished downloading but hasn't been applied
-// yet sits as a queued task tracked through `ns`'s ISystemUpdateControl. This
-// clears that queued task via nssuDestroySystemUpdateTask() — confirmed real
-// against the user's own header (no nsDeleteRedundantSystemUpdate exists in
-// this libnx; that was checked and ruled out first). Deliberately NOT
-// implemented as "enumerate ncm SystemUpdate metas, keep the highest version"
-// the way superseded game patches are: which ncm SystemUpdate record
-// corresponds to the currently-applied firmware isn't reliably inferable that
-// way, and getting it wrong here is a different order of risk than a game
-// patch. nssuDestroySystemUpdateTask only touches nim's queued-task state, not
-// any ncm-installed content and not the currently running firmware — there is
-// no path from this call to the active OS. `ns`/`nssu` are already
-// initialized for the app's whole lifetime in main.cpp (nsInitialize /
-// nssuInitialize at startup, nssuExit / nsExit at shutdown) — this op adds no
-// new service init, it just uses what's already running.
+// Clears nim's queued system-update task via nssuDestroySystemUpdateTask().
+// Deliberately not a "keep highest meta version" cleanup like game patches:
+// which ncm record matches the applied firmware is not reliably inferable.
+// Touches only the queued-task state, never installed content or firmware.
 #ifdef PLATFORM_SWITCH
 int system_update_scan() {
     NsSystemUpdateControl c{};
@@ -279,21 +419,9 @@ int system_update_delete() {
 #endif  // PLATFORM_SWITCH
 
 // ── Operation: clear the erpt_reports folder ────────────────────────────────
-// Under Atmosphère, error/crash reports are redirected entirely to the SD card
-// at sdmc:/atmosphere/erpt_reports/ — NOT committed to any system save data
-// (confirmed against Atmosphère's own docs before writing this; the earlier
-// plan of treating this as a system-savedata op was wrong and dropped). This
-// is genuinely plain SD file cleanup: same opendir/readdir/closedir shape as
-// read_serial_from_backup() in core/system.cpp, same stat+unlink shape as the
-// HTTP server's DELETE handler in services/http_server.cpp. No libnx symbol,
-// no new service. Atmosphère itself already auto-clears this folder past 1000
-// files on boot; this is a manual trigger for the same cleanup, not something
-// novel or riskier than what the CFW already does unattended.
-//
-// Only unlinks regular files directly inside the folder and leaves the folder
-// itself in place (Atmosphère expects it to exist and keeps writing to it) —
-// does not recurse into subdirectories, since erpt reports are flat files and
-// finding one would be unexpected.
+// Atmosphère redirects error/crash reports to sdmc:/atmosphere/erpt_reports/
+// and auto-clears the folder past 1000 files on boot; this is a manual trigger
+// for the same cleanup. Unlinks only regular files directly inside.
 #ifdef PLATFORM_SWITCH
 namespace erpt {
 constexpr const char* kDir = "sdmc:/atmosphere/erpt_reports/";
@@ -339,24 +467,10 @@ int erpt_delete() {
 #endif  // PLATFORM_SWITCH
 
 // ── Operation: clean orphaned content ───────────────────────────────────────
-// A previous attempt at this op called ncmContentStorageList(), which does not
-// exist in this libnx at all — built, shipped, and reverted mid-session. This
-// rewrite uses the real functions, confirmed against the user's actual
-// ncm.h (not memory, not a web fetch alone — grepped and pasted back):
-//   ncmContentStorageGetContentCount / ncmContentStorageListContentId
-//     — enumerates NCA content IDs physically present in a storage. This is
-//       the real counterpart to the nonexistent call from the reverted
-//       attempt.
-//   ncmContentMetaDatabaseLookupOrphanContent
-//     — purpose-built for exactly this: hand it content IDs, it reports which
-//       ones aren't referenced by ANY content-meta record. This does the
-//       storage/meta cross-reference inside ncm itself rather than this code
-//       re-deriving "is this referenced anywhere" by hand — a wrong homemade
-//       cross-reference here would risk deleting content that's still in use;
-//       asking ncm directly removes that entire class of mistake.
-// An orphan has no meta record pointing to it at all, so deleting it is
-// ncmContentStorageDelete only — there is no meta entry to Remove/Commit here,
-// unlike superseded updates (which are live meta records being retired).
+// ncmContentStorageGetContentCount/ListContentId enumerates physically present
+// NCA content ids; ncmContentMetaDatabaseLookupOrphanContent reports which are
+// unreferenced by any content-meta record. Asking ncm directly avoids a wrong
+// homemade cross-reference that could delete in-use content.
 #ifdef PLATFORM_SWITCH
 struct OrphanHit {
     NcmContentId content_id;
@@ -387,10 +501,8 @@ std::vector<OrphanHit> list_orphans() {
             if (R_FAILED(rc) || written <= 0) break;
             if (written > WINDOW) written = WINDOW; // defensive
 
-            // LookupOrphanContent wants a bool array matching the content_id
-            // array 1:1. std::vector<bool> is bit-packed, not a real bool
-            // array, so this uses std::array<bool,...> — a genuine bool[],
-            // .data() gives a real bool* with no cast needed.
+            // std::vector<bool> is bit-packed; LookupOrphanContent needs a
+            // real bool array.
             std::array<bool, WINDOW> orphaned{};
             Result orc = ncmContentMetaDatabaseLookupOrphanContent(
                 &db, orphaned.data(), ids.data(), written);
@@ -432,8 +544,8 @@ int orphaned_scan(u64* out_bytes) {
 }
 
 int orphaned_delete() {
-    // Re-list right before deleting, same reasoning as every other op in this
-    // file: state can move between the dry-run and the held confirm.
+    // Re-list right before deleting: state can move between the dry-run and
+    // the held confirm.
     std::vector<OrphanHit> hits = list_orphans();
     const NcmStorageId storages[] = { NcmStorageId_SdCard, NcmStorageId_BuiltInUser };
     int deleted = 0;
@@ -463,34 +575,17 @@ int orphaned_delete() {
 #endif  // PLATFORM_SWITCH
 
 // ── Operation: clean unused tickets (no matching installed title) ──────────
-// A ticket is "unused" here if its derived title id matches NO installed
-// content-meta record of ANY type — Application, Patch, or AddOnContent — on
-// either storage. That's deliberately the broadest possible "still needed"
-// set, not just Applications: patches don't normally carry their own separate
-// rights ID in the standard titlekey scheme (they reuse the base
-// application's), so folding Patch ids into the "known" set costs nothing —
-// no real ticket should ever coincidentally match one — but it biases the
-// check toward NOT deleting, which is the direction to be wrong in. This
-// project's own removed "Installed Tickets" screen carried the exact warning
-// this op has to live up to: "Removing a ticket may break the associated
-// title" (assets/lang/en.json, ticket_list.confirm_body).
-//
-// If Core::Ncm::list_all() itself fails (ok == false), this returns an EMPTY
-// candidate list rather than treating "couldn't enumerate installed titles"
-// as "nothing is installed" — the latter would flag every ticket on the
-// console as unused, which is exactly the failure mode this whole op exists
-// to avoid. Fail closed: unknown means touch nothing.
-//
-// Common tickets only — see core/es.hpp; this codebase has no personalized-
-// ticket support. Uses Core::Es::list_common_tickets() (already proven by the
-// NSP dump path) and the new Core::Es::delete_ticket() (es cmd 3, no hardware
-// mileage yet in this codebase — see that function's doc comment).
+// A ticket is "unused" if its title id matches no installed content-meta record
+// of any type on either storage - deliberately broad, since patches reuse the
+// base application's rights id. If list_all() fails, return an empty list:
+// treating "couldn't enumerate" as "nothing installed" would flag every ticket
+// as unused. Fail closed. Common tickets only (see core/es.hpp).
 #ifdef PLATFORM_SWITCH
 std::vector<std::array<uint8_t, 0x10>> unused_ticket_rights_ids() {
     bool ok = false;
     std::vector<Core::Ncm::Title> titles = Core::Ncm::list_all(&ok);
     std::vector<std::array<uint8_t, 0x10>> out;
-    if (!ok) return out; // couldn't confirm what's installed — touch nothing
+    if (!ok) return out; // couldn't confirm what's installed - touch nothing
 
     std::unordered_set<uint64_t> known;
     for (const auto& t : titles) known.insert(t.meta_id);
@@ -518,47 +613,20 @@ int unused_ticket_delete() {
 #endif  // PLATFORM_SWITCH
 
 // ── Operation: delete saves of deleted users ────────────────────────────────
-// A save-data record is a candidate here if its owning uid matches NO account
-// list_users() currently reports.
-//
-// NOTE ON WHEN THIS ACTUALLY FINDS ANYTHING: standard deletion via Settings >
-// System > Delete User removes that user's save data along with the account
-// (confirmed on real hardware — an earlier version of this comment claimed
-// the opposite and was wrong; corrected here rather than silently). So this
-// op is NOT cleaning up the normal, expected byproduct of deleting a user the
-// ordinary way — there usually isn't one. It exists for the narrower set of
-// paths where an account can go away without its save data following: a
-// corrupted/removed account record, an SD card moved between consoles with
-// mismatched account state, or account removal through something other than
-// the standard System Settings flow. Because the ordinary trigger doesn't
-// reproduce it, the positive path (an actual orphaned save existing to find)
-// has NOT been hardware-tested — only the negative path (no live users
-// deleted, dry-run correctly finding nothing) is realistically testable
-// on demand.
-//
-// DIRECT DELETE, NO PRE-SNAPSHOT — a deliberate product decision, not an
-// oversight: the Danger modal's warning text is the safety net for this
-// specific op, not a backup. This is UNLIKE Save Manager's own Delete flow for
-// a live user's title, which snapshots first — that inconsistency is
-// intentional, not a gap to "fix" later.
-//
-// Uses Core::SaveMount::delete_save_record() — the same call Save Manager's
-// Delete button already exercises on real hardware, and independently
-// confirmed this session against a real libnx fs.h.
-// (Result fsDeleteSaveDataFileSystemBySaveDataSpaceId(FsSaveDataSpaceId,
-// u64); ///< [2.0.0+] — see core/save_mount.cpp for the full note.)
-//
-// FAILS CLOSED the same way unused-ticket cleanup does: if
-// Core::SaveMount::list_users(&ok) itself fails (ok == false), this returns an
-// EMPTY candidate list rather than reading "couldn't enumerate live users" as
-// "there are no live users, so everything else is orphaned" — the latter would
-// try to delete every save-data record on the console.
+// A save-data record is a candidate if its owning uid matches no account
+// list_users() reports. Standard user deletion removes saves with the account,
+// so this only finds the narrower paths where an account disappears without
+// its saves (corrupt record, SD moved between consoles, non-Settings removal);
+// the positive path is not hardware-tested for that reason. Direct delete by
+// design - the Danger modal is the safety net, unlike Save Manager's
+// snapshot-first flow for a live user. Fails closed: if list_users() fails,
+// return an empty list rather than flagging every save as orphaned.
 #ifdef PLATFORM_SWITCH
 std::vector<uint64_t> deleted_user_save_ids() {
     bool ok = false;
     std::vector<Core::SaveMount::User> users = Core::SaveMount::list_users(&ok);
     std::vector<uint64_t> out;
-    if (!ok) return out; // couldn't confirm who's live — touch nothing
+    if (!ok) return out; // couldn't confirm who's live - touch nothing
 
     std::set<std::pair<uint64_t, uint64_t>> live;
     for (const auto& u : users) live.insert({ u.uid_lo, u.uid_hi });
@@ -586,47 +654,94 @@ int deleted_user_saves_delete() {
 #endif  // PLATFORM_SWITCH
 
 // ── Operation: delete parental controls ─────────────────────────────────────
-// Full reset of parental controls (PIN + all restrictions). Scoped to
-// pctlDeleteParentalControls() ONLY — deliberately NOT pctlDeletePairing()
-// (unlinking the mobile Parental Controls app), which every reference this
-// was checked against treats as a distinct, separate action, not part of a
-// "delete parental controls" reset. Bundling it in would silently do more
-// than the label says.
+// Full reset of parental controls (PIN + all restrictions) via
+// pctlDeleteParentalControls() only - deliberately not pctlDeletePairing(),
+// which is a separate action (unlinking the mobile app).
 //
-// pctl.h in this project's own libnx is confirmed READ-ONLY — every declared
-// function was listed (not just a targeted grep), and it's Count/Get/Is only,
-// no Set/Delete of any kind. So this hand-rolls raw IPC against
-// pctlGetServiceSession_Service() — which DOES exist in this project's own
-// header, confirmed — the same shape core/es.cpp already uses for es
-// commands libnx doesn't wrap.
+// This project's pctl.h is read-only (Get/Is only), so the delete is raw IPC
+// against pctlGetServiceSession_Service(), same shape as core/es.cpp. Command
+// id 1043 comes from ITotalJustice/Reset-Parental-Controls-NX (author-annotated
+// "works" from testing; adjacent commands marked "doesn't work"). Not
+// hardware-tested in this codebase.
 //
-// The command ID (1043) is not from Switchbrew or any official source —
-// there is no official documentation for homebrew pctl use at all. It comes
-// from ITotalJustice/Reset-Parental-Controls-NX, a real, working, open-source
-// tool whose author directly annotated it "works" from testing — and, in the
-// same source, explicitly marked the adjacent pctlSetPinCode / pctlGetPinCode
-// / pctlUnlockRestrictionTemporarily as "doesn't work". That specificity is
-// exactly the kind of empirical signal this session has treated as
-// sufficient when no official header exists (the same standing as this
-// project's own es.cpp command IDs, sourced from community documentation
-// rather than an official Nintendo source) — it is not the same as guessing.
-// What it is NOT: hardware-tested in THIS codebase. Treat the dry-run
-// (parental_controls_enabled(), which uses a function already in this
-// project's own confirmed-real pctl.h) as trustworthy once you've seen it
-// report correctly, but test execute against a state you can afford to
-// reconfigure before trusting it broadly — same caution as the ticket-delete
-// op earlier this session.
+// The 2026-09-07 "nothing to tidy" root cause: every pctl wrapper dispatches
+// on the session pctlInitialize() creates. The old code never called it, so
+// every command hit a zeroed Service and failed, and the scan misread "cannot
+// detect" as "parental controls off". pctlInitialize() is now called first.
 #ifdef PLATFORM_SWITCH
-bool parental_controls_enabled() {
-    bool flag = false;
-    if (R_FAILED(pctlIsRestrictionEnabled(&flag))) return false;
-    return flag;
+
+// Appends one line to sdmc:/switch/GarageNX/logs/pctl.log (the dir is created
+// by boot's ensure_directories). Every probe/delete Result lands here so
+// hardware triage starts from recorded codes instead of "it said nothing to
+// tidy" - the same discipline as the firmware-dump and wifi logs.
+static void pctl_log(const char* fmt, ...) {
+    FILE* f = ::fopen("sdmc:/switch/GarageNX/logs/pctl.log", "a");
+    if (!f) return;
+    char line[256];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(line, sizeof(line), fmt, args);
+    va_end(args);
+    ::fprintf(f, "%s\n", line);
+    ::fclose(f);
+}
+
+enum class PctlState { Enabled, Disabled, Unknown };
+
+// Probe the console's parental-controls state. Unknown means "could not
+// detect" - never silently treated as Disabled. Primary signal: pctlGetSafety
+// Level (cmd 1032) - level None(0) means no configuration exists. Second
+// signal: pctlIsRestrictionEnabled (cmd 1031). Either proving true = Enabled.
+PctlState parental_controls_probe(std::string* reason) {
+    Result rc = pctlInitialize();
+    if (R_FAILED(rc)) {
+        char msg[96];
+        snprintf(msg, sizeof(msg), "pctl service unavailable (Result 0x%08X)", rc);
+        pctl_log("probe: %s", msg);
+        if (reason) *reason = msg;
+        return PctlState::Unknown;
+    }
+
+    u32  level = 0;
+    bool restriction = false;
+    bool pairing = false;
+    const Result rc_level       = pctlGetSafetyLevel(&level);
+    const Result rc_restriction = pctlIsRestrictionEnabled(&restriction);
+    const Result rc_pairing     = pctlIsPairingActive(&pairing);
+    pctlExit();
+
+    pctl_log("probe: safety_level=%u (rc 0x%08X) restriction=%d (rc 0x%08X) pairing=%d (rc 0x%08X)",
+             level, rc_level, restriction ? 1 : 0, rc_restriction,
+             pairing ? 1 : 0, rc_pairing);
+
+    if (R_FAILED(rc_level) && R_FAILED(rc_restriction)) {
+        char msg[128];
+        snprintf(msg, sizeof(msg),
+                 "Could not read parental-controls state (Results 0x%08X, 0x%08X)",
+                 rc_level, rc_restriction);
+        if (reason) *reason = msg;
+        return PctlState::Unknown;
+    }
+
+    const bool enabled = (R_SUCCEEDED(rc_level) && level != 0) ||
+                         (R_SUCCEEDED(rc_restriction) && restriction);
+    return enabled ? PctlState::Enabled : PctlState::Disabled;
 }
 
 bool parental_controls_delete() {
-    // Raw IPC, no input, no output — matches the "works"-annotated reference
-    // implementation exactly. See the block comment above for sourcing.
-    return R_SUCCEEDED(serviceDispatch(pctlGetServiceSession_Service(), 1043));
+    // pctlInitialize() FIRST - see the probe's comment for why this is not
+    // optional. Without it 1043 dispatched against a zeroed session.
+    Result rc = pctlInitialize();
+    if (R_FAILED(rc)) {
+        pctl_log("delete: pctl service unavailable (Result 0x%08X)", rc);
+        return false;
+    }
+    // Raw IPC, no input, no output - matches the "works"-annotated reference
+    // implementation exactly (DeleteSettings). See the block comment above.
+    const Result rc_del = serviceDispatch(pctlGetServiceSession_Service(), 1043);
+    pctlExit();
+    pctl_log("delete: DeleteSettings rc=0x%08X", rc_del);
+    return R_SUCCEEDED(rc_del);
 }
 #endif  // PLATFORM_SWITCH
 
@@ -640,6 +755,20 @@ std::string human_size(u64 bytes) {
 }
 
 }  // namespace
+
+ToolsScreen::~ToolsScreen() {
+#ifdef PLATFORM_SWITCH
+    if (m_fw_thread_active) {
+        // Ask the dump to stop, then WAIT: cancelling without waiting would
+        // leave a worker running against members that are about to die - the
+        // exact use-after-free class gamecard.cpp's destructor documents.
+        m_fw_progress.cancel.store(true);
+        threadWaitForExit(&m_fw_thread);
+        threadClose(&m_fw_thread);
+        m_fw_thread_active = false;
+    }
+#endif
+}
 
 ToolsScreen::ToolsScreen() {
     // ── Cleanup: leftover install placeholders ──────────────────────────────
@@ -837,10 +966,16 @@ ToolsScreen::ToolsScreen() {
         [] () -> ScanResult {
             ScanResult r;
 #ifdef PLATFORM_SWITCH
-            const bool enabled = parental_controls_enabled();
-            r.any    = enabled;
-            r.count  = enabled ? 1 : 0;
-            r.detail = enabled ? Lang::t("tools.warn_parental_controls") : "";
+            std::string why;
+            const PctlState st = parental_controls_probe(&why);
+            r.any    = st == PctlState::Enabled;
+            r.count  = r.any ? 1 : 0;
+            // Enabled → the warning text; Unknown → the reason (shown in the
+            // nothing-to-do modal, so detection failure is never dressed up as
+            // "already tidy"); Disabled → empty detail.
+            r.detail = st == PctlState::Enabled
+                           ? Lang::t("tools.warn_parental_controls")
+                           : why;
 #endif
             return r;
         },
@@ -856,15 +991,68 @@ ToolsScreen::ToolsScreen() {
     });
 
     // ── Delete Wi-Fi profiles ─────────────────────────────────────────────────
-    // Picker, not batch delete — see the Op::push doc comment in
+    // Picker, not batch delete - see the Op::push doc comment in
     // tools_screen.hpp for why. Enumerate/select/confirm/delete all live in
     // WifiProfileScreen now; this row just pushes it.
     m_ops.push_back({
         Lang::t("tools.delete_wifi_profiles"),
         nullptr,
         nullptr,
+        false,  // is_destructive = false (read-only)
         [] () -> std::unique_ptr<Screen> { return std::make_unique<WifiProfileScreen>(); }
     });
+
+    // ── Operation: repair tickets with dump errors ───────────────────────────
+// Scoped to patching already-dumped NSP output files on
+// SD that are missing a ticket/cert because a prior dump failed to fetch one
+// - NOT touching the console's own ES ticket store.
+#ifdef PLATFORM_SWITCH
+    m_ops.push_back({
+        Lang::t("tools.repair_tickets"),
+        [this] () -> ScanResult {
+            ScanResult r;
+            const std::vector<RepairCandidate> cands =
+                const_cast<ToolsScreen*>(this)->repair_scan();
+            r.count = (int)cands.size();
+            r.any   = r.count > 0;
+            if (r.any) {
+                char b[256];
+                std::snprintf(b, sizeof(b), "%d dumped NSP(s) missing a ticket that CAN now be fetched:",
+                              r.count);
+                r.detail = b;
+                for (const auto& c : cands) {
+                    r.detail += "\n\u00b7 ";
+                    r.detail += c.title.name.empty() ? c.nsp_path : c.title.name;
+                }
+            }
+            return r;
+        },
+        [] (const ScanResult&) -> std::string {
+            // Never invoked: run_in_background routes the confirmed op to
+            // start_background_dump(TicketRepair) instead.
+            return Lang::t("dump_fw_failed");
+        },
+        false,  // is_destructive = false (re-dump replaces only its own output)
+        nullptr,
+        true,    // run_in_background - threaded, minutes-long re-dumps
+        1        // bg_kind 1 = ticket repair
+    });
+#endif
+
+    // Alphabetical (case-insensitive). The menu is a maintenance catalog, not
+    // a workflow: row order must not encode authoring order. Sorting m_ops
+    // itself (rather than just the display rows) keeps m_pending indices -
+    // and every op lookup through them - consistent with what is displayed.
+    std::sort(m_ops.begin(), m_ops.end(),
+              [](const Op& a, const Op& b) {
+                  const size_t n = std::min(a.label.size(), b.label.size());
+                  for (size_t i = 0; i < n; ++i) {
+                      const int cx = std::tolower((unsigned char)a.label[i]);
+                      const int cy = std::tolower((unsigned char)b.label[i]);
+                      if (cx != cy) return cx < cy;
+                  }
+                  return a.label.size() < b.label.size();  // shorter prefix first
+              });
 
     std::vector<Widgets::ListItem> rows;
     for (const auto& op : m_ops) {
@@ -875,24 +1063,121 @@ ToolsScreen::ToolsScreen() {
     m_list.set_items(std::move(rows));
 }
 
+#ifdef PLATFORM_SWITCH
+// Scan sdmc:/switch/GarageNX/dumps for dumped NSPs with no .tik entry whose
+// title id maps to a title that still exists AND has a common ticket now.
+// Dumps whose title is gone or has no ticket are skipped: the op is a repair,
+// not a cleanup.
+std::vector<RepairCandidate> ToolsScreen::repair_scan() {
+    std::vector<RepairCandidate> out;
+
+    // Titles the console can still dump, indexed by application id.
+    bool ok = false;
+    std::vector<Core::Ncm::Title> titles = Core::Ncm::list_all(&ok);
+    if (!ok) return out;  // fail closed: cannot confirm titles - find nothing
+    std::unordered_map<uint64_t, const Core::Ncm::Title*> by_id;
+    for (const auto& t : titles) by_id.emplace(t.program_id, &t);
+
+    // Common tickets present NOW, by title id. A ticket existing means the
+    // title is titlekey-protected and a re-dump can fetch it.
+    std::unordered_set<uint64_t> ticketed;
+    for (const auto& tik : Core::Es::list_common_tickets())
+        ticketed.insert(tik.title_id);
+
+    const std::string dir = "sdmc:/switch/GarageNX/dumps";
+    bool dir_ok = false;
+    for (const Fs::Entry& e : Fs::list(dir, &dir_ok)) {
+        if (e.is_dir() || e.type != Fs::EntryType::File) continue;
+        if (e.name.size() < 6 ||
+            e.name.compare(e.name.size() - 4, 4, ".nsp") != 0) continue;
+        const std::string path = Fs::join(dir, e.name);
+
+        // Read the header, then the entry table, then just the .cnmt.nca
+        // entry's data - never the whole multi-GB file.
+        FILE* f = fopen(path.c_str(), "rb");
+        if (!f) continue;
+        uint8_t hdr[0x10];
+        if (fread(hdr, 1, sizeof(hdr), f) != sizeof(hdr)) { fclose(f); continue; }
+        const Tools::NspRepair::Header h = Tools::NspRepair::read_header(hdr, sizeof(hdr));
+        if (!h.ok || h.header_size > (uint64_t)e.size) { fclose(f); continue; }
+
+        std::vector<uint8_t> table((size_t)(h.header_size - 0x10));
+        if (fread(table.data(), 1, table.size(), f) != table.size()) { fclose(f); continue; }
+        const std::vector<Tools::NspRepair::EntryInfo> entries =
+            Tools::NspRepair::read_entries(table.data(), table.size(),
+                                           h.count, h.strtab_size);
+
+        bool have_tik = false;
+        const Tools::NspRepair::EntryInfo* cnmt = nullptr;
+        for (const auto& en : entries) {
+            if (Tools::NspRepair::is_tik_name(en.name))  have_tik = true;
+            if (en.name.size() == 32 + 9 &&
+                en.name.compare(en.name.size() - 9, 9, ".cnmt.nca") == 0)
+                cnmt = &en;
+        }
+        if (have_tik || !cnmt) { fclose(f); continue; }
+
+        std::vector<uint8_t> cnmt_data((size_t)cnmt->size);
+        if (fseek(f, (long)(h.header_size + cnmt->data_off), SEEK_SET) != 0 ||
+            fread(cnmt_data.data(), 1, cnmt_data.size(), f) != cnmt_data.size()) {
+            fclose(f); continue;
+        }
+        fclose(f);
+
+        const uint64_t title_id =
+            Tools::NspRepair::title_id_from_cnmt_nca(cnmt_data.data(), cnmt_data.size());
+        if (title_id == 0) continue;
+
+        auto it = by_id.find(title_id);
+        if (it == by_id.end()) continue;                 // title gone - skip
+        if (ticketed.find(title_id) == ticketed.end()) continue;  // no ticket - skip
+        out.push_back({ *it->second, path });
+    }
+    return out;
+}
+
+// Re-dump one candidate through the proven pipeline. dump_title_to_nsp()
+// picks its own canonical output path (<id>_v<version>.nsp) and deletes its
+// own output on failure, so a failed re-dump cannot leave a fresh corrupt
+// file. The incomplete original is removed only after a successful re-dump
+// that landed at a different path; when paths match, the pipeline already
+// replaced it in place.
+bool ToolsScreen::repair_one(const RepairCandidate& c, Core::Dump::Progress& progress,
+                             std::string& out_path) {
+    bool ok = Core::Dump::dump_title_to_nsp(c.title, Core::Keys::get(),
+                                            progress, out_path);
+    if (!ok) return false;
+    if (out_path != c.nsp_path) remove(c.nsp_path.c_str());
+    return true;
+}
+#endif  // PLATFORM_SWITCH
+
 std::unique_ptr<Screen> ToolsScreen::select(int idx) {
     if (idx < 0 || idx >= static_cast<int>(m_ops.size())) return nullptr;
 
-    if (m_ops[idx].push) return m_ops[idx].push(); // picker-style op — no scan/confirm flow
+    if (m_ops[idx].push) return m_ops[idx].push(); // picker-style op - no scan/confirm flow
 
     m_pending_scan = m_ops[idx].scan();
     if (!m_pending_scan.any) {
+        // Include the scan's reason when it has one (e.g. "could not read
+        // parental-controls state") - "already tidy" alone would be a lie when
+        // detection itself failed.
+        std::string body = Lang::t("tools.nothing_to_do");
+        if (!m_pending_scan.detail.empty()) body += "\n\n" + m_pending_scan.detail;
         Modal::show({ m_ops[idx].label,
-                      Lang::t("tools.nothing_to_do"),
+                      body,
                       Modal::Kind::Info, Lang::t("modal.ok"), "" });
         m_pending = -1;
         return nullptr;
     }
 
-    std::string body = m_pending_scan.detail + "\n" + Lang::t("tools.confirm_body");
+    Modal::Kind kind = m_ops[idx].is_destructive ? Modal::Kind::Danger : Modal::Kind::Info;
+    const char* confirm_label = m_ops[idx].is_destructive ? "tools.confirm_remove" : "modal.ok";
+    const char* confirm_body = m_ops[idx].is_destructive ? "tools.confirm_body" : "tools.confirm_body_readonly";
+    std::string body = m_pending_scan.detail + "\n" + Lang::t(confirm_body);
     Modal::show({ m_ops[idx].label, body,
-                  Modal::Kind::Danger,
-                  Lang::t("tools.confirm_remove"),
+                  kind,
+                  Lang::t(confirm_label),
                   Lang::t("modal.cancel") });
     m_pending = idx;
     return nullptr;
@@ -905,6 +1190,23 @@ void ToolsScreen::on_modal_result(int result) {
 
     if (static_cast<Modal::Result>(result) != Modal::Result::Confirmed) return;
 
+    // Background ops never run on the UI thread - see Op::run_in_background.
+    if (m_ops[idx].run_in_background) {
+        if (m_ops[idx].bg_kind == 1) {
+#ifdef PLATFORM_SWITCH
+            // The scan ran seconds ago in select(); re-run it to capture the
+            // candidate list for the worker (ScanResult carries counts, not
+            // the candidates themselves).
+            m_repair_list = repair_scan();
+            if (!m_repair_list.empty())
+                start_background_dump(BgOp::TicketRepair);
+#endif
+        } else {
+            start_background_dump(BgOp::FirmwareDump);
+        }
+        return;
+    }
+
     const std::string msg = m_ops[idx].run(m_pending_scan);
     Modal::show({ m_ops[idx].label, msg,
                   Modal::Kind::Info, Lang::t("modal.ok"), "" });
@@ -912,6 +1214,28 @@ void ToolsScreen::on_modal_result(int result) {
 
 std::unique_ptr<Screen> ToolsScreen::update(bool& pop) {
     pop = false;
+
+    // Poll the dump FIRST, every frame - this is what turns a background
+    // operation into a finished one (gamecard.cpp pattern).
+    const bool was_failed = m_fw_failed;
+    poll_firmware_dump();
+
+    // Failure notification: HALT. Any button returns to the previous screen.
+    // Input on the frame the failure lands is ignored: a B press meant for
+    // cancel must not also dismiss the notification it just caused.
+    if (m_fw_failed) {
+        if (was_failed && fw_any_button_pressed()) pop = true;
+        return nullptr;
+    }
+
+    if (m_fw_dumping) {
+        // B cancels; the dump checks progress.cancel between chunks and files.
+        if (Input::pressed(Input::Button::B)) m_fw_progress.cancel.store(true);
+        return nullptr;
+    }
+
+    if (Modal::is_active()) return nullptr;
+
     if (Input::pressed(Input::Button::B)) { pop = true; return nullptr; }
     if (m_list.handle_input()) return select(m_list.cursor());
     return nullptr;
@@ -925,6 +1249,67 @@ void ToolsScreen::draw() {
     Renderer::fill_rect(x, y, w, h);
     Theme::apply(r, Theme::Token::BgSurface);
     Renderer::fill_rect(x, y, 4, h);
+
+    const SDL_Color fg  = Theme::get(Theme::Token::FgPrimary);
+    const SDL_Color fg2 = Theme::get(Theme::Token::FgSecondary);
+
+    // ── Live progress page (dump running) ────────────────────────────────
+    // Updates land here the frame after each NCA completes: bytes_done,
+    // ncas_done and current_file are atomics the worker bumps per file.
+    if (m_fw_dumping) {
+        const uint64_t total = m_fw_progress.bytes_total.load();
+        const uint64_t done  = m_fw_progress.bytes_done.load();
+        const float frac = total ? (float)((double)done / (double)total) : 0.f;
+
+        std::string hdr = Lang::t("dump_fw_progress");
+        char pct[8];
+        snprintf(pct, sizeof(pct), "%d", (int)(frac * 100.f));
+        size_t pos = hdr.find("{pct}");
+        if (pos != std::string::npos) hdr.replace(pos, 5, pct);
+        Renderer::draw_text(hdr, (int)Font::Size::Large, (int)Font::Weight::Bold,
+                            (int)Font::Family::Sans, fg,
+                            x + Layout::MENU_INDENT_X, y + 50, nullptr, nullptr, w);
+
+        char bytes_line[96];
+        snprintf(bytes_line, sizeof(bytes_line), "%s / %s",
+                 Fs::format_size(done).c_str(), Fs::format_size(total).c_str());
+        Renderer::draw_text(bytes_line, (int)Font::Size::Body, (int)Font::Weight::Regular,
+                            (int)Font::Family::Sans, fg2,
+                            x + Layout::MENU_INDENT_X, y + 96, nullptr, nullptr, w);
+
+        Widgets::draw_progress(x + Layout::MENU_INDENT_X, y + 132,
+                               w - Layout::MENU_INDENT_X * 2, 14, frac);
+
+        // Per-file line: how many NCAs are complete and the one in flight.
+        char files[192];
+        snprintf(files, sizeof(files), "%d / %d NCA(s)  ·  %s",
+                 m_fw_progress.ncas_done.load(), m_fw_progress.ncas_total.load(),
+                 m_fw_progress.current_file.c_str());
+        Renderer::draw_text(files, (int)Font::Size::Small, (int)Font::Weight::Regular,
+                            (int)Font::Family::Sans, fg2,
+                            x + Layout::MENU_INDENT_X, y + 164, nullptr, nullptr, w);
+
+        std::vector<Widgets::ButtonHint> dh = { { "B", Lang::t("common.cancel") } };
+        Widgets::draw_button_legend(x, y + h - 32, w, dh);
+        return;
+    }
+
+    // ── Failure notification: HALT - any button returns to previous screen ──
+    if (m_fw_failed) {
+        Renderer::draw_text(Lang::t("tools.dump_firmware"), (int)Font::Size::Large,
+                            (int)Font::Weight::Bold, (int)Font::Family::Sans, fg,
+                            x + Layout::MENU_INDENT_X, y + 50, nullptr, nullptr, w);
+
+        Renderer::draw_text(m_fw_fail_msg, (int)Font::Size::Body,
+                            (int)Font::Weight::Regular, (int)Font::Family::Sans,
+                            Theme::get(Theme::Token::AccentDanger),
+                            x + Layout::MENU_INDENT_X, y + 110, nullptr, nullptr, w);
+
+        Renderer::draw_text(Lang::t("dump_fw_press_any"), (int)Font::Size::Small,
+                            (int)Font::Weight::Regular, (int)Font::Family::Sans, fg2,
+                            x + Layout::MENU_INDENT_X, y + h - 48, nullptr, nullptr, w);
+        return;
+    }
 
     Widgets::ListStyle style;
     style.row_height    = Layout::MENU_ITEM_H;

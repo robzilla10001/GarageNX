@@ -72,7 +72,7 @@ bool List::handle_input() {
     for (int i = 0; i < up_steps; ++i)
         m_cursor = m_wrap.step(m_cursor, static_cast<int>(m_items.size()), false, true);
 
-    // L/R page the list by (nearly) a full screen — one row of overlap keeps a
+    // L/R page the list by (nearly) a full screen - one row of overlap keeps a
     // visual anchor. Clamps at the ends rather than wrapping, so paging is
     // predictable when scanning a long directory. Supports held-repeat.
     const int last = static_cast<int>(m_items.size()) - 1;
@@ -163,7 +163,7 @@ void List::draw(int x, int y, int w, int h, const ListStyle& style) {
         SDL_Color lc = Theme::get(label_color);
         int label_max_w = w - (text_x - x) - (item.meta.empty() ? style.indent_x : 120);
 
-        // Label — cached: rasterised + uploaded once, reused every frame.
+        // Label - cached: rasterised + uploaded once, reused every frame.
         int lh = 0, lw = 0;
         Renderer::measure_text(item.label, (int)Font::Size::Body,
                                (int)(focused ? Font::Weight::Bold : Font::Weight::Regular),
@@ -176,7 +176,7 @@ void List::draw(int x, int y, int w, int h, const ListStyle& style) {
                                 nullptr, nullptr, label_max_w);
         }
 
-        // Meta (right-aligned) — cached.
+        // Meta (right-aligned) - cached.
         if (!item.meta.empty()) {
             SDL_Color mc = Theme::get(Theme::Token::FgSecondary);
             int mw = 0, mh = 0;

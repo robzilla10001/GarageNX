@@ -182,7 +182,7 @@ void FtpServer::run() {
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons(m_port);
     if (::bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        set_error("bind() failed — port in use?"); ::close(listen_fd); return;
+        set_error("bind() failed - port in use?"); ::close(listen_fd); return;
     }
     if (::listen(listen_fd, 4) < 0) {
         set_error("listen() failed"); ::close(listen_fd); return;

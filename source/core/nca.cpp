@@ -138,7 +138,7 @@ static constexpr size_t   MEDIA_UNIT = 0x200;
 static constexpr size_t   HEADER_ENCRYPTED_SIZE = 0xC00; // header + 4 fs headers
 
 // Bounded string length (avoids strnlen, which needs a feature macro that isn't
-// reliably set in the devkitA64 toolchain — bit us before in system.cpp).
+// reliably set in the devkitA64 toolchain - bit us before in system.cpp).
 static size_t bounded_len(const char* s, size_t max) {
     size_t n = 0;
     while (n < max && s[n] != '\0') n++;
@@ -219,7 +219,7 @@ ControlData read_control(const ReadFn& read, uint64_t nca_size,
 
     auto* hdr = reinterpret_cast<NcaHeader*>(dec.data());
     if (hdr->magic != NCA3_MAGIC) {
-        SDL_Log("Nca — not an NCA3 (magic=0x%08X)", hdr->magic);
+        SDL_Log("Nca - not an NCA3 (magic=0x%08X)", hdr->magic);
         out.fail_reason = "bad NCA3 magic (wrong header_key?)";
         return out;
     }
@@ -236,7 +236,7 @@ ControlData read_control(const ReadFn& read, uint64_t nca_size,
     int kaek_index = hdr->key_area_key_index;
     (void)kaek_index; // we use the application category for control content
     if (!keys.has_kaek_application[keygen]) {
-        SDL_Log("Nca — missing key_area_key_application_%02x", keygen);
+        SDL_Log("Nca - missing key_area_key_application_%02x", keygen);
         char fr[64]; snprintf(fr,sizeof(fr),"missing key_area_key_application_%02x",keygen);
         out.fail_reason = fr;
         return out;
@@ -252,7 +252,7 @@ ControlData read_control(const ReadFn& read, uint64_t nca_size,
         // Titlekey crypto: the content key comes from a ticket, keyed by the
         // NCA's rights id, and must be decrypted with the titlekek for this
         // key generation. Two sources, tried in order:
-        //   1. title.keys (if the user provided it) — the value there is the
+        //   1. title.keys (if the user provided it) - the value there is the
         //      ENCRYPTED titlekey, so it still needs titlekek decryption.
         //   2. the console's ES common-ticket system (most installed titles).
         char rid[33];
@@ -281,7 +281,7 @@ ControlData read_control(const ReadFn& read, uint64_t nca_size,
         }
 
         if (!have_key) {
-            SDL_Log("Nca — no titlekey for rights id %s", rid);
+            SDL_Log("Nca - no titlekey for rights id %s", rid);
             out.fail_reason = "titlekey unavailable (personalized ticket?)";
             return out;
         }
@@ -311,7 +311,7 @@ ControlData read_control(const ReadFn& read, uint64_t nca_size,
         }
     }
     if (romfs_section < 0 || !fsh) {
-        SDL_Log("Nca — no RomFS section found");
+        SDL_Log("Nca - no RomFS section found");
         out.fail_reason = "no RomFS section";
         return out;
     }
@@ -323,7 +323,7 @@ ControlData read_control(const ReadFn& read, uint64_t nca_size,
     // generation in the FS header; the AES-CTR nonce is derived from the section
     // offset. We use libnx's aes128CtrContextCreate with a computed IV.
     if (fsh->encryption_type != 3 /*CTR*/ && fsh->encryption_type != 1 /*None*/) {
-        SDL_Log("Nca — unsupported section encryption %d", fsh->encryption_type);
+        SDL_Log("Nca - unsupported section encryption %d", fsh->encryption_type);
         char fr[48]; snprintf(fr,sizeof(fr),"unsupported section crypto %d",fsh->encryption_type);
         out.fail_reason = fr;
         return out;
@@ -351,7 +351,7 @@ ControlData read_control(const ReadFn& read, uint64_t nca_size,
         // isn't 16-aligned, read from the aligned-down offset and skip the extra
         // head bytes after decrypting. THIS WAS THE BUG: unaligned reads desynced
         // the keystream, producing garbage for any file/table whose offset wasn't
-        // a multiple of 16 — hence exactly "half the titles" failed, depending on
+        // a multiple of 16 - hence exactly "half the titles" failed, depending on
         // where their file-metadata table happened to land.
         uint64_t abs      = section_offset + rel_offset;
         uint64_t aligned  = abs & ~uint64_t(0xF);
@@ -382,7 +382,7 @@ ControlData read_control(const ReadFn& read, uint64_t nca_size,
     // 5. The RomFS is wrapped in an IVFC hash tree. The FS header's hash_info
     //    (offset 0x008 in the 0x200 FS header) holds the IVFC superblock. The
     //    actual RomFS header/data starts at the LAST level's logical_offset
-    //    (relative to section start) — NOT at section byte 0, which is where an
+    //    (relative to section start) - NOT at section byte 0, which is where an
     //    earlier version wrongly read and produced garbage table offsets.
     const IvfcHeader* ivfc = reinterpret_cast<const IvfcHeader*>(fsh->hash_info);
     static constexpr uint32_t IVFC_MAGIC = 0x43465649; // "IVFC"
@@ -397,7 +397,7 @@ ControlData read_control(const ReadFn& read, uint64_t nca_size,
         if (last < 0) last = 0;
         romfs_base = ivfc->levels[last].logical_offset;
     } else {
-        SDL_Log("Nca — RomFS FS header lacks IVFC magic (0x%08X)", ivfc->magic);
+        SDL_Log("Nca - RomFS FS header lacks IVFC magic (0x%08X)", ivfc->magic);
         out.fail_reason = "no IVFC superblock";
         return out;
     }
@@ -409,7 +409,7 @@ ControlData read_control(const ReadFn& read, uint64_t nca_size,
         return out;
     }
     if (rfs.header_size < sizeof(RomFsHeader)) {
-        SDL_Log("Nca — unexpected RomFS header_size=%llu",
+        SDL_Log("Nca - unexpected RomFS header_size=%llu",
                 (unsigned long long)rfs.header_size);
         char fr[64]; snprintf(fr, sizeof(fr),
                               "bad romfs header_size=%llu",
@@ -425,7 +425,7 @@ ControlData read_control(const ReadFn& read, uint64_t nca_size,
     //    (0x20-byte fixed part + name, padded to 4). Entries are chained via the
     //    hash table, and the table can contain gaps/terminators (0xFFFFFFFF
     //    sibling/hash pointers). A naive "break on first odd entry" walk stops
-    //    early and misses control.nacp whenever it isn't the first file — which
+    //    early and misses control.nacp whenever it isn't the first file - which
     //    is exactly why some titles resolved and others didn't. Instead we scan
     //    the entire table, skipping anything that doesn't look like a valid
     //    entry, and advance by the real entry stride.
@@ -459,7 +459,7 @@ ControlData read_control(const ReadFn& read, uint64_t nca_size,
                 icon_off = fe->data_offset; icon_size = fe->data_size;
             }
 
-            // Found what we need — stop early.
+            // Found what we need - stop early.
             if (nacp_size != 0 && icon_off != 0) break;
 
             // Advance by the real entry stride (fixed part + name, 4-aligned).
@@ -475,7 +475,7 @@ ControlData read_control(const ReadFn& read, uint64_t nca_size,
     }
 
     if (nacp_size == 0) {
-        SDL_Log("Nca — control.nacp not found in RomFS");
+        SDL_Log("Nca - control.nacp not found in RomFS");
         out.fail_reason = "control.nacp not found (romfs walk?)";
         return out;
     }

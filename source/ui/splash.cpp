@@ -51,14 +51,14 @@ void show(const std::string& asset_root, int hold_ms, int fade_ms) {
 
     SDL_Surface* surf = IMG_Load(path.c_str());
     if (!surf) {
-        // Decorative only — log and carry on rather than holding up startup.
-        SDL_Log("Splash: could not load %s (%s) — skipping", path.c_str(), IMG_GetError());
+        // Decorative only - log and carry on rather than holding up startup.
+        SDL_Log("Splash: could not load %s (%s) - skipping", path.c_str(), IMG_GetError());
         return;
     }
     SDL_Texture* tex = SDL_CreateTextureFromSurface(r, surf);
     SDL_FreeSurface(surf);
     if (!tex) {
-        SDL_Log("Splash: CreateTextureFromSurface failed (%s) — skipping", SDL_GetError());
+        SDL_Log("Splash: CreateTextureFromSurface failed (%s) - skipping", SDL_GetError());
         return;
     }
     // Required for SDL_SetTextureAlphaMod to have any effect.

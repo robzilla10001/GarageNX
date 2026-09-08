@@ -32,7 +32,7 @@ GamecardScreen::~GamecardScreen() {
     if (m_dump_thread_active) {
         // Ask the dump to stop, then WAIT. Cancelling without waiting would return
         // from this destructor with the worker still running against members that
-        // are about to be destroyed — the cancel makes the wait short, it does not
+        // are about to be destroyed - the cancel makes the wait short, it does not
         // replace it.
         m_progress.cancel.store(true);
         threadWaitForExit(&m_dump_thread);
@@ -82,7 +82,7 @@ void GamecardScreen::start_dump(int idx) {
     // Run on a BACKGROUND THREAD and poll, copying TitleDetailScreen::start_dump()
     // exactly. The first version of this screen called dump_title_to_nsp()
     // synchronously on the main thread with a comment claiming it "draws its own
-    // frames" — it does not, and cannot: unlike the save sweep, the dump API takes
+    // frames" - it does not, and cannot: unlike the save sweep, the dump API takes
     // no progress callback. It only publishes into an atomic Progress struct,
     // which is the shape of something meant to be polled from another thread.
     // The result was a console frozen for the length of a whole dump.
@@ -105,7 +105,7 @@ void GamecardScreen::start_dump(int idx) {
         threadClose(&m_dump_thread);
     }
     // Thread refused to start. Falling back to a synchronous dump freezes the UI,
-    // which is bad — but silently doing nothing is worse, and this path only
+    // which is bad - but silently doing nothing is worse, and this path only
     // happens when the system is already out of thread resources.
     dump_thread_fn(this);
     poll_dump();
@@ -160,7 +160,7 @@ void GamecardScreen::install_thread_fn(void* arg) {
 
     Install::WireSink wire;   // no wire for a local source; totals come from below
 
-    // Size is EXACT — NspStream knows the full container length up front, unlike
+    // Size is EXACT - NspStream knows the full container length up front, unlike
     // FTP where it has to be recovered from the container table.
     Install::drive(inst, ssrc, Install::FirstChunk{nullptr, 0},
                    src->total_size(), /*size_exact=*/true, wire);
@@ -266,7 +266,7 @@ void GamecardScreen::poll_dump() {
 std::unique_ptr<Screen> GamecardScreen::update(bool& pop) {
     pop = false;
 
-    // Poll BOTH workers every frame, before anything else — this is what turns a
+    // Poll BOTH workers every frame, before anything else - this is what turns a
     // background operation into a finished one.
     poll_dump();
     poll_install();
@@ -292,7 +292,7 @@ std::unique_ptr<Screen> GamecardScreen::update(bool& pop) {
     const int idx = m_list.cursor();
     const bool have = idx >= 0 && idx < (int)m_groups.size();
 
-    // X installs to SD, Y to NAND — directly from the card, no intermediate dump.
+    // X installs to SD, Y to NAND - directly from the card, no intermediate dump.
     // Confirmed first because it writes to console storage, unlike Dump.
     if (have && (Input::pressed(Input::Button::X) || Input::pressed(Input::Button::Y))) {
         m_pending_install = idx;
@@ -313,7 +313,7 @@ std::unique_ptr<Screen> GamecardScreen::update(bool& pop) {
 
     if (m_list.handle_input() && have) {
         // Dumping only READS the card and writes to SD, so it needs no danger
-        // confirmation — but it is long, so it confirms that you meant to start it.
+        // confirmation - but it is long, so it confirms that you meant to start it.
         m_pending_dump = idx;
         Modal::Options o;
         o.kind          = Modal::Kind::Confirm;
@@ -380,7 +380,7 @@ void GamecardScreen::draw() {
 
     if (m_dumping) {
         // A live progress page. Without this the screen looked identical whether
-        // the dump was running or hung — which is exactly how a slow operation
+        // the dump was running or hung - which is exactly how a slow operation
         // gets force-closed.
         Renderer::draw_text(Lang::t("gamecard.dumping"), (int)Font::Size::Large,
                             (int)Font::Weight::Bold, (int)Font::Family::Sans, fg,

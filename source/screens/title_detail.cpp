@@ -25,7 +25,7 @@ TitleDetailScreen::~TitleDetailScreen() {
     // LATENT USE-AFTER-FREE, fixed here rather than left for someone to hit: the
     // dump worker writes into m_dump and m_dump_out_path, and this destructor
     // used to run without waiting for it. Backing out of the screen cannot happen
-    // mid-dump (the UI blocks it), but APP EXIT can — main.cpp clears the whole
+    // mid-dump (the UI blocks it), but APP EXIT can - main.cpp clears the whole
     // screen stack, and the worker would then be writing into freed members.
     //
     // Same failure MTP and FTP hit on transfer cancel (Data Abort @ 0x0) until
@@ -128,7 +128,7 @@ std::unique_ptr<Screen> TitleDetailScreen::update(bool& pop) {
                     m_mode = Mode::Deleting;
                 }
             } else {
-                m_hold_start = 0;        // released early — reset
+                m_hold_start = 0;        // released early - reset
                 m_hold_progress = 0.f;
             }
             return nullptr;
@@ -251,7 +251,7 @@ void TitleDetailScreen::start_dump() {
         }
         threadClose(&m_dump_thread);
     }
-    // Thread failed to start — fall back to a synchronous dump.
+    // Thread failed to start - fall back to a synchronous dump.
     dump_thread_fn(this);
     poll_dump();
 #else

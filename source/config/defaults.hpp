@@ -13,7 +13,7 @@ namespace Config::Defaults {
 inline constexpr const char* LANGUAGE         = "en";
 inline constexpr const char* THEME            = "dark";
 // The placeholder an early build shipped. Kept ONLY so from_json can recognise it
-// in an existing config.json and replace it — a stored value beats a default, so
+// in an existing config.json and replace it - a stored value beats a default, so
 // without this the corrected URL would never reach anyone who had already run the
 // app. Do not reuse or "tidy away".
 inline constexpr const char* LEGACY_PLACEHOLDER_UPDATE_URL =
@@ -66,16 +66,13 @@ inline constexpr bool MTP_SD_INSTALL     = true;
 inline constexpr bool MTP_NAND_INSTALL   = false;
 inline constexpr bool MTP_SAVES          = true;
 inline constexpr bool MTP_ALBUM          = true;
-// ON by default now that a mount exists. A game card is PHYSICALLY read-only, so
-// exposing it carries none of the risk that keeps NAND (System) off — it was false
-// only because nothing mounted the surface and a folder that always failed to open
-// would have been worse than an absent one.
+// ON by default now that a mount exists: a game card is physically read-only,
+// so exposing it carries none of the risk that keeps NAND (System) off.
 //
-// NOTE this changes the default for NEW configs only. An existing config.json
-// already stores gamecard=false, and a stored key beats a default — deliberately
-// NOT migrated, because unlike the placeholder update URL, `false` here could be a
-// real choice and overriding it would be presumptuous. Existing users enable it
-// once in Settings > Storage Surfaces.
+// NOTE this changes the default for NEW configs only. A stored key beats a
+// default - `false` in an existing config.json could be a real choice and is
+// deliberately not migrated. Existing users enable it once in
+// Settings > Storage Surfaces.
 inline constexpr bool MTP_GAMECARD       = true;
 inline constexpr bool MTP_USER_STORAGES  = true;
 

@@ -16,24 +16,15 @@
 
 namespace Core::Activity {
 
-// ─── Deferred to Milestone 4 ────────────────────────────────────────────────────
+// ─── Deferred to Milestone 4 ────────────────────────────────────────────────
 //
-// Getting these values ACCURATE (matching what DBI / NX-Activity-Log show)
-// requires reading the per-user play-log save archive at
-// SYSTEM:/save/80000000000000F0, which is the source those tools use. The pdm
-// query APIs we tried (pdmqryQueryAppletEvent / pdmqryQueryPlayStatistics...)
-// don't reproduce DBI's numbers on real hardware:
-//   - the raw applet-event log's first entries predate the RTC being set, so
-//     the "first gameplay" timestamp reads as a near-epoch value (~2025-01-01);
-//   - session counts include system-applet churn we can't cleanly filter from
-//     the event stream alone.
-//
-// The correct approach is tied to the account (user profile) and needs the
-// save-archive mount + parse infrastructure that Milestone 4 introduces for
-// title management. Rather than display wrong numbers, every field reports N/A
-// until then — consistent with our "never fabricate" rule.
-//
-// Tracked in docs/GarageNX_Architecture.md under Milestone 4.
+// Accurate values (matching DBI / NX-Activity-Log) require the per-user
+// play-log save archive at SYSTEM:/save/80000000000000F0, which is the source
+// those tools use. The pdm query APIs don't reproduce DBI's numbers on real
+// hardware: the event log's first entries predate the RTC being set, and
+// session counts include system-applet churn. Rather than display wrong
+// numbers, every field reports N/A until Milestone 4 (tracked in
+// docs/ARCHITECTURE.md).
 
 Summary summary() {
     Summary s;   // all fields default-constructed → valid=false → "N/A"
@@ -83,7 +74,7 @@ std::vector<TitlePlay> title_play_stats(const std::function<void()>& pump) {
 
 #ifdef PLATFORM_SWITCH
     // Resolve installed-title names first. On the main thread this DRIVES the
-    // resolver rather than blocking on it — blocking would park the loop that does
+    // resolver rather than blocking on it - blocking would park the loop that does
     // the resolving, which is the stall pattern documented in save_surface.
     if (pump) {
         Services::installed_titles_request_nonblocking();
@@ -97,13 +88,13 @@ std::vector<TitlePlay> title_play_stats(const std::function<void()>& pump) {
         (void)Services::installed_titles_list();
     }
 
-    // Enumerate via ncm and GROUP BY APPLICATION — the same pattern title_list
+    // Enumerate via ncm and GROUP BY APPLICATION - the same pattern title_list
     // uses. Grouping matters here beyond tidiness: list_all() returns patches and
     // DLC as separate titles, and querying play statistics for a DLC id would add
     // meaningless rows. Only the base application of each group is asked.
     //
     // (Services::installed_titles_list() is NOT the right source: it returns
-    // VirtualEntry — wire filenames and sizes for the transports — and carries no
+    // VirtualEntry - wire filenames and sizes for the transports - and carries no
     // application id at all.)
     bool ncm_ok = false;
     const auto groups = Core::Ncm::group_by_application(Core::Ncm::list_all(&ncm_ok));
@@ -117,19 +108,11 @@ std::vector<TitlePlay> title_play_stats(const std::function<void()>& pump) {
         t.title_label    = Services::save_build_label(app_id);
 
         // ── THE UNVERIFIED CALL (5.4) ────────────────────────────────────────
-        // pdmqryQueryPlayStatisticsByApplicationId is the switchbrew-documented
-        // way to read per-title play data, and pdmqryInitialize() already runs at
-        // startup — but there is no libnx header in the build sandbox to check the
-        // exact name, signature or struct field names against. If the Switch build
-        // cannot resolve this, the things to check in order are:
-        //   * the name may take a UID:
-        //       pdmqryQueryPlayStatisticsByApplicationIdAndUserAccountId(id, uid, false, &st)
-        //   * the bool argument ("include system titles") may be absent on older libnx
-        //   * field names: playtime may be `playtime` or `play_time`, and is in
-        //     NANOSECONDS on current firmware — divide by 1e9, not 1e6
-        //   * launches may be `total_launches` or `launch_count`
-        // Everything else in this file is ordinary C++ and does not depend on
-        // which spelling is correct.
+        // If the Switch build cannot resolve pdmqryQueryPlayStatistics-
+        // ByApplicationId, check in order: the name may take a UID
+        // (...AndUserAccountId(id, uid, false, &st)); the bool may be absent on
+        // older libnx; playtime may be `play_time` (nanoseconds, divide by
+        // 1e9); launches may be `total_launches` or `launch_count`.
         PdmPlayStatistics st{};
         const Result rc = pdmqryQueryPlayStatisticsByApplicationId(
             app_id, /*include_system=*/false, &st);

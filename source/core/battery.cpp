@@ -37,7 +37,7 @@ Power power() {
         }
     }
 #else
-    // PC stub — a static "78%, discharging" so the status bar has something.
+    // PC stub - a static "78%, discharging" so the status bar has something.
     p.charge_percent  = 78;
     p.charge_fraction = 0.78f;
     p.connected = false;
@@ -48,17 +48,12 @@ Power power() {
     return p;
 }
 
-// ─── Deep readouts ──────────────────────────────────────────────────────────────
-// The full charging-controller and max17050 gas-gauge registers are exposed on
-// the Switch through the I2C/PMIC services. libnx does not provide a stable
-// high-level API for every register across all firmware versions, and reads can
-// require permissions homebrew may lack. Per our design decision we attempt what
-// we safely can and report "N/A" for the rest rather than fabricating values.
-//
-// The scaffolding below reads the fields that psm/psc expose reliably, and
-// leaves the register-level fields invalid pending validated I2C access, which
-// we will layer in against real hardware. This keeps the screen honest today
-// and gives us clearly-marked slots to fill later.
+// ─── Deep readouts ──────────────────────────────────────────────────────────
+// The full charging-controller and max17050 gas-gauge registers are exposed
+// through the I2C/PMIC services, but libnx has no stable high-level API for
+// every register across firmware versions. Fields that psm/psc expose reliably
+// are read; register-level fields stay invalid pending validated I2C access -
+// "N/A" rather than fabricated values.
 
 ChargeInfo charge_info() {
     ChargeInfo c;
@@ -177,7 +172,7 @@ Max17050 max17050() {
     // Scaling constants for the Switch board. Voltage is fixed by the part
     // (0.078125 mV/LSB). Capacity/current scale with the sense resistor: verified
     // as 10 mΩ on hardware (capacity read exactly 2x with a 5 mΩ assumption vs
-    // Hekate — 8909 vs 4455 etc.).
+    // Hekate - 8909 vs 4455 etc.).
     constexpr long long RSENSE_uOhm = 10000;
 
     auto setv = [](auto& field, auto v) { field.value = v; field.valid = true; };

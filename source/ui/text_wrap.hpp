@@ -3,16 +3,11 @@
 //
 // The word-wrapping ALGORITHM, separated from font rendering so it can be
 // host-tested. Font::wrap() is a thin adapter that supplies a real text measurer.
-//
-// Worth separating because the tricky cases here cannot be checked by looking at
-// a console screen: whether a break landed inside a multi-byte glyph, whether a
-// space-free 200-character path breaks at the right column, whether a blank line
-// survived. Those are exactly the things a unit test settles in a second and a
-// hardware round settles badly.
+// The tricky cases (breaks inside multi-byte glyphs, space-free long paths,
+// blank lines) cannot be checked by looking at a console screen.
 //
 // The measurement function is injected, so a test can use an exact synthetic
-// metric ("every character is 10px") and assert precise column positions instead
-// of guessing at proportional font widths.
+// metric and assert precise column positions.
 
 #include <cstddef>
 #include <functional>

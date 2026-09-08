@@ -5,26 +5,21 @@
 //
 //     /Network/<Connection>/...
 //
-// lives here so that the on-device browser and — later — FTP, MTP and HTTP
-// cannot drift into different connection lists, different labels, or (the
-// dangerous one) different mount policies. This is the same anti-drift move as
-// StorageCatalog for storages, NspStream for NSP building, and save_surface for
-// Save Data: ONE implementation, several thin adapters.
+// lives here so that the on-device browser and - later - FTP, MTP and HTTP
+// cannot drift into different connection lists, labels, or mount policies.
+// ONE implementation, several thin adapters (same anti-drift move as
+// StorageCatalog, NspStream, and save_surface).
 //
-// It is modelled directly on save_surface, because the two surfaces have the
-// same awkward shape: a synthesized top level that lists things (there, users
-// and titles; here, the configured connections) and a real mount that only
-// becomes valid once a specific leaf is entered. A network share, like "save:",
-// has no single always-valid vfs_root — nothing is mounted until a connection is
-// opened, and only one connection is mounted at a time (single-slot).
+// Modelled directly on save_surface: a synthesized top level that lists things
+// (the configured connections) and a real mount that only becomes valid once a
+// specific leaf is entered. Nothing is mounted until a connection is opened,
+// and only one connection is mounted at a time (single-slot).
 //
 // ── What is PURE here, and what is a hardware seam ───────────────────────────
 // The header is pure and host-testable: the protocol/port model, the display
 // path decomposition, the synthetic-prefix helpers, and the session-credential
 // store. The actual SMB/NFS connect + mount lives in net_surface.cpp behind
-// #ifdef PLATFORM_SWITCH and is deliberately NOT written against a guessed API —
-// see the note at the top of that file. Keeping the description pure is what
-// makes the level logic testable without a console (as with sp_split_save).
+// #ifdef PLATFORM_SWITCH.
 //
 // ── Session credentials are NEVER persisted ──────────────────────────────────
 // The password is prompt-per-session by decision: it never lands in config.json.
@@ -34,7 +29,7 @@
 //
 // ── Synthetic paths (for the future MTP handle wave) ─────────────────────────
 // MTP interns handles by path and a handle must stay valid for a whole session.
-// A mounted "net:/foo" is not a safe handle key — "net:" means a different
+// A mounted "net:/foo" is not a safe handle key - "net:" means a different
 // server depending on what is connected, exactly like "save:". So a network
 // object is named by a synthetic path that carries the connection identity:
 //
@@ -43,7 +38,7 @@
 // The part after the prefix is exactly the `rel` net_split() parses, so there is
 // only one parser and it cannot drift. The concrete "net:/..." path is derived
 // at the moment of use, via net_resolve(). The prefix deliberately does NOT
-// begin with the mount root "net:" — StorageCatalog::surface_for_vfs() and the
+// begin with the mount root "net:" - StorageCatalog::surface_for_vfs() and the
 // write guard match a mount prefix with a plain string compare, and a synthetic
 // path that matched "net:" would be mistaken for a real mounted one. ("network:/"
 // and "net:" share no prefix: compare("network:/"[0..4], "net:") is "netw" != "net:".)
@@ -103,7 +98,7 @@ inline bool net_needs_password(const Config::NetShare& s) {
     return net_protocol_parse(s.protocol) == NetProtocol::Smb && !s.username.empty();
 }
 
-// ── Synthetic prefix (MTP handle keys — see the header comment) ───────────────
+// ── Synthetic prefix (MTP handle keys - see the header comment) ───────────────
 
 inline const char* net_synth_prefix()     { return "network:/"; }
 inline std::size_t  net_synth_prefix_len() { return 9; }
@@ -129,8 +124,8 @@ inline std::string net_synth_rel(const std::string& p) {
 
 // ── Display-path decomposition ────────────────────────────────────────────────
 //
-// `rel` is the part AFTER "/Network/" — i.e. what a catalog resolver hands back
-// as the Network surface's relative path — decomposed into its two real levels:
+// `rel` is the part AFTER "/Network/" - i.e. what a catalog resolver hands back
+// as the Network surface's relative path - decomposed into its two real levels:
 //
 //   ""                      -> Connections : list the configured connections
 //   "<Conn>"                -> Files, rest="" : that connection's share ROOT
@@ -154,7 +149,7 @@ inline NetPath net_split(const std::string& rel) {
     out.level = NetPath::Level::Files;
     const std::size_t slash = rel.find('/');
     if (slash == std::string::npos) {
-        out.connection = rel;               // "<Conn>" — the share root
+        out.connection = rel;               // "<Conn>" - the share root
         return out;
     }
     out.connection = rel.substr(0, slash);
@@ -168,7 +163,7 @@ inline NetPath net_split(const std::string& rel) {
 ///
 /// This matters for the same reason it does for saves: an MTP host asks for an
 /// ObjectInfo for every object it lists, so answering the connection level by
-/// mounting would connect and disconnect a server just to browse the chooser —
+/// mounting would connect and disconnect a server just to browse the chooser -
 /// exactly the bulk-churn the single-slot design exists to avoid.
 inline bool net_synth_is_synthesized_dir(const std::string& p) {
     if (!net_is_synthetic(p)) return false;
@@ -177,7 +172,7 @@ inline bool net_synth_is_synthesized_dir(const std::string& p) {
     return net_split(rel).rest.empty();           // a connection's share root
 }
 
-// ── Connection lookup / labelling (PURE — takes the list explicitly) ──────────
+// ── Connection lookup / labelling (PURE - takes the list explicitly) ──────────
 //
 // The pure forms take the shares vector so they are host-testable with no global
 // state; net_connection_names() in the .cpp is the thin wrapper that reads the
@@ -202,12 +197,12 @@ inline std::string net_display_label(const Config::NetShare& s) {
     return s.name + "  [" + proto + "://" + s.host + "]";
 }
 
-// ── Session credentials (in memory ONLY — never persisted) ────────────────────
+// ── Session credentials (in memory ONLY - never persisted) ────────────────────
 //
 // A tiny per-connection store for the prompt-per-session password. The choke
 // point reads it when it needs to connect an SMB share; the credential-prompt UI
 // (a later wave) writes it. Cleared connection-by-connection, or wholesale at
-// app teardown — never written to disk.
+// app teardown - never written to disk.
 //
 // Linear scan over a vector: the number of configured connections is small
 // (single digits), so a map buys nothing and a vector keeps the state trivially
@@ -224,7 +219,7 @@ public:
 
     /// Copies the held password into `out` and returns true if one is held.
     /// Returns false (and leaves `out` untouched) if none is held for this
-    /// connection — which the choke point treats as "prompt first", NOT as an
+    /// connection - which the choke point treats as "prompt first", NOT as an
     /// empty password.
     bool get(const std::string& connection, std::string& out) const {
         std::lock_guard<std::mutex> lk(m_);
@@ -270,20 +265,20 @@ std::vector<std::string> net_connection_names();
 /// path to use.
 ///
 /// Returns "net:/..." for a Files-level request whose connection mounted
-/// successfully; returns "" for the Connections level and for any failure — and
+/// successfully; returns "" for the Connections level and for any failure - and
 /// in both of those cases the mount is RELEASED. SMB connections read their
 /// session password from net_credentials(); a Files request for a connection
 /// that needs a password but has none held fails (the caller is expected to
 /// prompt and set it first).
 ///
-/// NOTE: the connect/mount body is a hardware seam — see net_surface.cpp.
+/// NOTE: the connect/mount body is a hardware seam - see net_surface.cpp.
 std::string net_resolve(const NetPath& np);
 
 /// Convenience for the synthetic-path callers: split and resolve in one step.
 /// `synth` is a full "network:/..." path.
 std::string net_resolve_synth(const std::string& synth);
 
-/// Release the mounted connection, if any. Does NOT clear session credentials —
+/// Release the mounted connection, if any. Does NOT clear session credentials -
 /// switching between connections must not discard a password the user just
 /// entered. For app teardown, call net_credentials().clear_all() as well.
 void net_surface_release();

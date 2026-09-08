@@ -23,21 +23,21 @@ SaveManagerScreen::SaveManagerScreen() {
 
 void SaveManagerScreen::on_enter() {
     // Coming back from the file browser, the mount may have moved on. Reloading
-    // the current level re-establishes the right state — and at Users/Titles the
+    // the current level re-establishes the right state - and at Users/Titles the
     // shared listing helpers release the mount, which is what makes "navigate
     // away from a title and it unloads" true here too.
     reload();
 }
 
 std::string SaveManagerScreen::display_label(const std::string& entry) const {
-    // Only backup TITLE folders get rewritten for display. Everything else — user
-    // names, stamps, live save labels — is already what it should be.
+    // Only backup TITLE folders get rewritten for display. Everything else - user
+    // names, stamps, live save labels - is already what it should be.
     if (m_level != Level::BackupTitles) return entry;
     if (!Services::save_label_is_unresolved(entry)) return entry;
 
     // An id-only folder name ("Title 0100..."). The directory on disk keeps that
-    // name — renaming it would break every path already recorded and is not ours
-    // to do — but the id inside it is enough to show the real game name now that
+    // name - renaming it would break every path already recorded and is not ours
+    // to do - but the id inside it is enough to show the real game name now that
     // the cache can resolve it.
     const uint64_t app = Core::SaveBackup::app_id_from_label(entry);
     if (app == 0) return entry;
@@ -85,8 +85,8 @@ void SaveManagerScreen::reload() {
 void SaveManagerScreen::start_backup(const std::string& title_label) {
     // Synchronous, matching FileBrowserScreen's copy/delete: this repo has no
     // threaded-op harness yet, and inventing one here would make a save backup
-    // the first threaded UI operation in the project. Saves are small — kilobytes
-    // to a few megabytes — so the freeze is brief. When the harness lands (M6),
+    // the first threaded UI operation in the project. Saves are small - kilobytes
+    // to a few megabytes - so the freeze is brief. When the harness lands (M6),
     // this joins it alongside the file browser rather than ahead of it.
     m_progress.reset();
     m_op_active = true;
@@ -108,7 +108,7 @@ void SaveManagerScreen::start_backup(const std::string& title_label) {
     } else {
         o.kind  = Modal::Kind::Info;
         o.title = Lang::t("save_manager.backup_done_title");
-        // The destination is a long path with no spaces — it relies on the
+        // The destination is a long path with no spaces - it relies on the
         // modal's mid-token wrapping to stay inside the box.
         o.body  = Lang::t("save_manager.backup_done_body") + "\n\n" + dest;
         m_status = dest;
@@ -120,7 +120,7 @@ void SaveManagerScreen::start_backup(const std::string& title_label) {
 void SaveManagerScreen::begin_restore(const std::string& stamp) {
     // Pre-restore snapshot protects the CURRENT save from being overwritten. When
     // restoring from the BACKUP TREE the current save may not exist (it was
-    // deleted — that is why we are here), so there is nothing to snapshot and
+    // deleted - that is why we are here), so there is nothing to snapshot and
     // create() would fail. Skip it in that case; the restore recreates the save.
     m_pending_snapshot.clear();
     if (!m_in_backup_tree) {
@@ -352,7 +352,7 @@ std::unique_ptr<Screen> SaveManagerScreen::update(bool& pop) {
             m_titles_pending = false;
     }
 
-    // Backup folders keep their on-disk names, so m_entries never changes here —
+    // Backup folders keep their on-disk names, so m_entries never changes here -
     // only the DISPLAYED label does, as names resolve. Rebuild the rows rather
     // than the entries.
     if (m_level == Level::BackupTitles && m_titles_pending) {
@@ -400,7 +400,7 @@ std::unique_ptr<Screen> SaveManagerScreen::update(bool& pop) {
         }
         if (m_level == Level::Titles) {
             // Back to the user list. reload() calls save_user_names(), which
-            // releases the mount — leaving a title's save mounted after the user
+            // releases the mount - leaving a title's save mounted after the user
             // has navigated out of it would hold a limited resource for nothing.
             m_level = Level::Users;
             m_user.clear();
@@ -421,7 +421,7 @@ std::unique_ptr<Screen> SaveManagerScreen::update(bool& pop) {
         return nullptr;
     }
 
-    // Plus DELETES the save record entirely — the title leaves the list and the
+    // Plus DELETES the save record entirely - the title leaves the list and the
     // game makes a fresh save next launch. The most destructive action here, so
     // it snapshots first like the others and returns to the user level after.
     if (have && m_level == Level::Titles && Input::pressed(Input::Button::Plus)) {
@@ -572,7 +572,7 @@ void SaveManagerScreen::on_modal_result(int result) {
         if (static_cast<Modal::Result>(result) == Modal::Result::Confirmed) {
             finish_restore();
         } else {
-            // Cancelled. The snapshot stays on the SD card — it is a real backup
+            // Cancelled. The snapshot stays on the SD card - it is a real backup
             // and deleting it to tidy up would throw away something the user may
             // want, for no benefit.
             m_status = m_pending_snapshot;

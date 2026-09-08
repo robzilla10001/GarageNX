@@ -18,7 +18,7 @@ DriveResult drive(StreamInstaller& inst,
 
     // ── Resolve the payload size ────────────────────────────────────────────
     // Precedence, highest first:
-    //   1. A real 64-bit declaration from the transport (size_exact) — the only
+    //   1. A real 64-bit declaration from the transport (size_exact) - the only
     //      value that describes the TRANSFER rather than the container contents.
     //   2. The container's own PFS0/HFS0 table, exact and 64-bit, known once the
     //      first chunk has been parsed by the installer.
@@ -92,7 +92,7 @@ DriveResult drive(StreamInstaller& inst,
         if (inst.complete()) { payload = fed; break; }      // every entry consumed
     }
 
-    // ── Teardown — ORDER IS LOAD-BEARING (see stream_driver.hpp) ─────────────
+    // ── Teardown - ORDER IS LOAD-BEARING (see stream_driver.hpp) ─────────────
     // The overlap worker must be fully parked before abort() destroys anything
     // feed()/push() touches, or that's the cross-thread UAF from 4c. quiesce()
     // is idempotent and safe on the direct (ov invalid) path.

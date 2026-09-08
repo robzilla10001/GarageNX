@@ -5,7 +5,7 @@
 // a fixed, filesystem-safe 24-hour stamp so they sort/label predictably.
 //
 // Everything routes through here so the clock, logs, and any future timestamps
-// stay consistent — never hand-roll strftime at call sites.
+// stay consistent - never hand-roll strftime at call sites.
 
 #include <ctime>
 #include <string>
@@ -27,6 +27,11 @@ std::string date(const std::tm& tm, DateOrder order, char sep = '/');
 // Time of day. 24h -> "14:30[:05]"; 12h -> "2:30[:05] PM".
 std::string time_of_day(const std::tm& tm, bool time_24h, bool seconds);
 
+// Current unix time. On Switch this reads the time service directly, so a
+// clock set after boot (NTP sync) is reflected immediately; newlib's time()
+// would keep returning the boot snapshot until the next launch.
+std::time_t now_unix();
+
 // ─── Config-aware convenience (reads Config::get().behavior) ──────────────────
 
 // Full clock string, e.g. "12/07/2026  14:30:05" (order + 12/24h + seconds all
@@ -44,7 +49,7 @@ std::string log_stamp_now();
 // Filename stamp that ALWAYS sorts chronologically: "20260712-143005".
 // Fixed year-month-day regardless of the user's date order, because these names
 // are sorted by a machine, not read as dates. log_stamp() honours the user's
-// order, which for a DMY user means "12-07-2026" sorting before "05-08-2026" —
+// order, which for a DMY user means "12-07-2026" sorting before "05-08-2026" -
 // fine for a log the user opens by name, wrong for a backup list where "newest"
 // has to be obvious at a glance.
 std::string sortable_stamp(std::time_t t);

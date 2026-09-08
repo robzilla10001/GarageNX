@@ -1,7 +1,7 @@
 // tests/text_wrap_test.cpp
 //
 // The wrapping algorithm behind every modal body. Tested with a SYNTHETIC metric
-// — "every ASCII character is 10px wide" — so assertions can be exact instead of
+// - "every ASCII character is 10px wide" - so assertions can be exact instead of
 // guessing at proportional font widths. What is being tested is where the breaks
 // land, which is font-independent.
 //
@@ -9,7 +9,7 @@
 // ran off the box and off the screen. The renderer only ever split on explicit
 // '\n', which was fine while modals carried short labels and wrong the moment one
 // carried a sentence. The confirmation modals that show FILE PATHS were exposed
-// to the same bug and had simply not been hit yet — a path has no spaces, so it
+// to the same bug and had simply not been hit yet - a path has no spaces, so it
 // needs the mid-token break, which is the case most likely to be got wrong and
 // the least likely to be noticed by looking at a screen.
 
@@ -31,7 +31,7 @@ static int g_checks = 0;
     } while (0)
 
 // 10px per byte, but only counting UTF-8 LEAD bytes, so a multi-byte glyph costs
-// the same as one ASCII character — which is what a real font does.
+// the same as one ASCII character - which is what a real font does.
 static int measure(const std::string& s) {
     int glyphs = 0;
     for (size_t i = 0; i < s.size(); i += TextWrap::utf8_len(s, i)) ++glyphs;
@@ -62,7 +62,7 @@ static void test_explicit_newlines_and_blank_lines() {
     auto r = w("one\ntwo", 500);
     CHECK(r.size() == 2 && r[0] == "one" && r[1] == "two", "newline splits");
 
-    // A blank line is deliberate spacing between paragraphs and must survive —
+    // A blank line is deliberate spacing between paragraphs and must survive -
     // collapsing it would silently reflow every multi-paragraph modal.
     auto b = w("a\n\nb", 500);
     CHECK(b.size() == 3, "blank line preserved");
@@ -94,7 +94,7 @@ static void test_long_token_after_normal_words() {
     std::printf("  ok: long token mixed with normal words\n");
 }
 
-// A break must never land inside a multi-byte glyph — that renders as mojibake,
+// A break must never land inside a multi-byte glyph - that renders as mojibake,
 // and a title with an accented character is entirely ordinary.
 static void test_utf8_not_split() {
     const std::string s = "\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9";  // 6x e-acute
@@ -110,7 +110,7 @@ static void test_utf8_not_split() {
     std::printf("  ok: UTF-8 sequences are never split\n");
 }
 
-// Degenerate inputs must not hang or lose text — a wrap loop that fails to make
+// Degenerate inputs must not hang or lose text - a wrap loop that fails to make
 // progress is an infinite loop on the main thread, which on hardware looks like
 // the console freezing rather than a text bug.
 static void test_degenerate_inputs() {
@@ -127,7 +127,7 @@ static void test_degenerate_inputs() {
     std::printf("  ok: degenerate inputs terminate safely\n");
 }
 
-// The actual NAND (System) confirmation body — the string that was reported
+// The actual NAND (System) confirmation body - the string that was reported
 // running off the screen.
 static void test_real_confirmation_body() {
     const std::string body =

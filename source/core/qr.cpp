@@ -89,7 +89,7 @@ std::vector<uint8_t> rs_generator(int degree) {
     return poly;
 }
 
-// Remainder of data * x^ec divided by the generator — the EC codewords.
+// Remainder of data * x^ec divided by the generator - the EC codewords.
 std::vector<uint8_t> rs_remainder(const std::vector<uint8_t>& data, int ec) {
     const std::vector<uint8_t> gen = rs_generator(ec);
     std::vector<uint8_t> rem(ec, 0);

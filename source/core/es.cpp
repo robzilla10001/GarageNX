@@ -48,7 +48,7 @@ static Result esListCommonTicket(s32* out_written, void* rights_ids, size_t size
 // The rights_id is a 0x10-byte value passed as RAW INPUT DATA (an in-struct
 // argument), NOT a buffer. The only buffer is the output ticket (type-6). Using
 // a buffer descriptor for rights_id is what produced LibnxError_BadInput (0xF601)
-// — libnx rejected the malformed request before it reached ES.
+// - libnx rejected the malformed request before it reached ES.
 struct EsRightsId { uint8_t c[0x10]; };
 
 static Result esGetCommonTicketData(const uint8_t rights_id[0x10],
@@ -100,10 +100,10 @@ static void titlekek_decrypt(const uint8_t titlekek[0x10],
 // [3] DeleteTicket(RightsId) -> ()
 // No output data beyond Result. Switchbrew's ETicket_services page (fetched
 // this session) lists this as cmd 3 but gives no request-struct detail beyond
-// "RightsId" — this mirrors the raw-input-struct convention already proven
+// "RightsId" - this mirrors the raw-input-struct convention already proven
 // working in THIS file by cmd 16/22/23 (rights_id as 0x10 bytes of raw input,
 // no buffer), rather than guessing a new shape. Genuinely untested on
-// hardware in this codebase — the read commands above have dump-path mileage,
+// hardware in this codebase - the read commands above have dump-path mileage,
 // this write-side one does not.
 static Result esDeleteTicket(const uint8_t rights_id[0x10]) {
     EsRightsId rid;
@@ -120,7 +120,7 @@ bool init() {
     if (s_init) return true;
     Result rc = smGetService(&s_es, "es");
     if (R_FAILED(rc)) {
-        SDL_Log("Es::init — smGetService(es) failed: 0x%x", rc);
+        SDL_Log("Es::init - smGetService(es) failed: 0x%x", rc);
         return false;
     }
     s_init = true;
@@ -148,7 +148,7 @@ bool get_titlekey(const uint8_t rights_id[0x10], int key_generation,
     if (key_generation < 0 || key_generation >= Core::Keys::MAX_KEY_GENERATION)
         return false;
     if (!keys.has_titlekek[key_generation]) {
-        SDL_Log("Es — missing titlekek_%02x", key_generation);
+        SDL_Log("Es - missing titlekek_%02x", key_generation);
         return false;
     }
 

@@ -3,8 +3,8 @@
 // Tests the pure core of the rendered-text cache (source/ui/text_cache.hpp):
 // key equality/hashing and the eviction policy. The SDL texture handling in
 // renderer.cpp is glue around this and is hardware-verified; the logic that can
-// be subtly wrong — what counts as the same cached string, and when an entry is
-// evicted — lives here and is tested without SDL.
+// be subtly wrong - what counts as the same cached string, and when an entry is
+// evicted - lives here and is tested without SDL.
 
 #include "ui/text_cache.hpp"
 

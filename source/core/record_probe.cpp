@@ -151,7 +151,7 @@ static const VDef VARIANTS[] = {
     { "4: del27 push26 natural",    Handle::AppManagerIface, 17, 27, 26, 0, 5 },
     { "5: del27 push26 lme_u32",    Handle::AppManagerIface, 17, 27, 26, 0, 6 },
     { "6: del27 push26 autosel",    Handle::AppManagerIface, 17, 27, 26, 0, 2 },
-    // Maybe push is a different cmd than 26 — try 25 and 28 with pad+t5:
+    // Maybe push is a different cmd than 26 - try 25 and 28 with pad+t5:
     { "7: del27 push25 pad+t5",     Handle::AppManagerIface, 17, 27, 25, 0, 0 },
     { "8: del27 push28 pad+t5",     Handle::AppManagerIface, 17, 27, 28, 0, 0 },
     // And push24 (some tables), plus lme_u32 at 26 on raw am2:
@@ -212,16 +212,16 @@ bool run_variant(int index, uint64_t base_app_id,
 
     // ── SAFE PUSH-ONLY PROBE ────────────────────────────────────────────────────
     // We do NOT delete first. We test whether PushApplicationRecord accepts our
-    // input layout by pushing the CURRENT (unfiltered) record back unchanged —
+    // input layout by pushing the CURRENT (unfiltered) record back unchanged -
     // this is a no-op that leaves the record intact but tells us if push=0x0.
     // Only once we KNOW the working push layout do we do the real delete+push.
     //
     // If the list failed (no record present, e.g. already-removed title), we
-    // can't probe push here — report the list error so the user reinstalls.
+    // can't probe push here - report the list error so the user reinstalls.
     ::Result prc = 0xFFFFFFFF;
     if (R_SUCCEEDED(lrc) && count > 0) {
         // Push the FULL current record back (unchanged) to validate the layout
-        // safely — no records are dropped, so this can't orphan the title.
+        // safely - no records are dropped, so this can't orphan the title.
         switch (v.push_variant) {
             case 0: prc = push_pad_type5   (&srv, v.push_cmd, 3, base_app_id, recs.data(), count); break;
             case 1: prc = push_app_first   (&srv, v.push_cmd, 3, base_app_id, recs.data(), count); break;

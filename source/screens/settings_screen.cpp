@@ -27,7 +27,7 @@ bool flush() {
         // Deliberately do NOT clear the flag. A failed write is retried at the
         // next boundary; clearing here would turn one failed write into a lost
         // setting the user believes they made.
-        SDL_Log("Settings::flush — save FAILED, keeping changes dirty for retry");
+        SDL_Log("Settings::flush - save FAILED, keeping changes dirty for retry");
         return false;
     }
     g_dirty = false;
@@ -52,7 +52,7 @@ bool flush() {
 namespace {
 
 // The ten surface toggles for one transport. Built from member pointers so all
-// three transports share one definition — the alternative is thirty lambdas that
+// three transports share one definition - the alternative is thirty lambdas that
 // disagree the first time a surface is added.
 std::vector<SettingsScreen::Row> surface_rows(Config::Surfaces& s) {
     struct Def {
@@ -178,7 +178,7 @@ std::unique_ptr<Screen> SettingsScreen::root() {
             Lang::t("settings.section_storages"), storages));
     }));
 
-    // Saves section — currently just the auto-backup frequency, as a cycling
+    // Saves section - currently just the auto-backup frequency, as a cycling
     // choice (Off / 1 / 3 / 7 / 14 / 30 days). 0 means off, which is the default.
     std::vector<Row> saves;
     {
@@ -353,7 +353,7 @@ std::unique_ptr<Screen> SettingsScreen::root() {
             r.kind  = Row::Kind::Choice;
             r.label = Lang::t("settings.language");
             // Same int-index adaptation as the theme row. Only languages that
-            // actually ship a file are offered — listing a language with no
+            // actually ship a file are offered - listing a language with no
             // translation would silently fall back to English and look broken.
             r.choice_get = [] { return Config::get().app.language == "en" ? 0 : 0; };
             r.choice_set = [](int) { Config::get_mutable().app.language = "en"; };
@@ -438,7 +438,7 @@ std::unique_ptr<Screen> SettingsScreen::root() {
         Row r;
         r.kind  = Row::Kind::Toggle;
         r.label = Lang::t("settings.reset_defaults");
-        r.get   = [] { return false; };          // never "on" — it is an action
+        r.get   = [] { return false; };          // never "on" - it is an action
         r.set   = [](bool) {};                   // performed via the confirmation
         r.confirm_on_enable = true;
         r.confirm_title     = Lang::t("settings.reset_defaults");
@@ -522,7 +522,7 @@ void SettingsScreen::apply_toggle(int idx, bool value) {
 std::unique_ptr<Screen> SettingsScreen::update(bool& pop) {
     pop = false;
 
-    // While a modal is up, this screen must not act on input — the modal owns it.
+    // While a modal is up, this screen must not act on input - the modal owns it.
     if (Modal::is_active()) return nullptr;
 
     // The Choice picker owns input while open. B cancels (no change); A commits
@@ -557,14 +557,14 @@ std::unique_ptr<Screen> SettingsScreen::update(bool& pop) {
             return r.open ? r.open() : nullptr;
 
         if (r.kind == Row::Kind::Choice) {
-            // Open a list picker rather than cycle in place — a modal-style list
+            // Open a list picker rather than cycle in place - a modal-style list
             // reads far better than blind cycling for anything past two options.
             open_picker(idx);
             return nullptr;
         }
 
         if (r.kind == Row::Kind::Text) {
-            // swkbd is BLOCKING — it hands control to the OS overlay and returns
+            // swkbd is BLOCKING - it hands control to the OS overlay and returns
             // on confirm/cancel. Safe here because this is a button press, never
             // the draw path.
             Keyboard::Options ko;

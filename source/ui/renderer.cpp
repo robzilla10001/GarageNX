@@ -22,7 +22,7 @@ static bool          s_docked   = false;
 
 bool init(const std::string& asset_root) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK) != 0) {
-        SDL_Log("Renderer::init — SDL_Init failed: %s", SDL_GetError());
+        SDL_Log("Renderer::init - SDL_Init failed: %s", SDL_GetError());
         return false;
     }
 
@@ -45,7 +45,7 @@ bool init(const std::string& asset_root) {
 #endif
 
     if (!s_window) {
-        SDL_Log("Renderer::init — SDL_CreateWindow failed: %s", SDL_GetError());
+        SDL_Log("Renderer::init - SDL_CreateWindow failed: %s", SDL_GetError());
         return false;
     }
 
@@ -55,7 +55,7 @@ bool init(const std::string& asset_root) {
     );
 
     if (!s_renderer) {
-        SDL_Log("Renderer::init — SDL_CreateRenderer failed: %s", SDL_GetError());
+        SDL_Log("Renderer::init - SDL_CreateRenderer failed: %s", SDL_GetError());
         return false;
     }
 
@@ -68,18 +68,18 @@ bool init(const std::string& asset_root) {
 
     // Font system
     if (!Font::init(asset_root)) {
-        SDL_Log("Renderer::init — Font::init failed");
+        SDL_Log("Renderer::init - Font::init failed");
         return false;
     }
 
-    SDL_Log("Renderer::init — OK (logical %dx%d)", BASE_WIDTH, BASE_HEIGHT);
+    SDL_Log("Renderer::init - OK (logical %dx%d)", BASE_WIDTH, BASE_HEIGHT);
     return true;
 }
 
 void shutdown() {
     Font::shutdown();
 
-    // Textures belong to s_renderer — free them before it is destroyed.
+    // Textures belong to s_renderer - free them before it is destroyed.
     text_cache_clear();
     if (s_renderer) { SDL_DestroyRenderer(s_renderer); s_renderer = nullptr; }
     if (s_window)   { SDL_DestroyWindow(s_window);     s_window   = nullptr; }
@@ -90,7 +90,7 @@ void shutdown() {
 // ─── Frame lifecycle ──────────────────────────────────────────────────────────
 
 void begin_frame() {
-    // Detect docked state each frame — user may dock/undock mid-session.
+    // Detect docked state each frame - user may dock/undock mid-session.
 #ifdef PLATFORM_SWITCH
     AppletOperationMode mode = appletGetOperationMode();
     s_docked = (mode == AppletOperationMode_Console);
@@ -168,7 +168,7 @@ EvictionPolicy s_evict;
 uint64_t       s_frame = 0;
 
 // Look up or build the texture for these params. Returns nullptr on failure
-// (e.g. empty string or a font/render error) — callers must tolerate that.
+// (e.g. empty string or a font/render error) - callers must tolerate that.
 CachedTex* get_or_build(const std::string& text, int size, int weight,
                         int family, SDL_Color color) {
     if (text.empty()) return nullptr;
@@ -202,7 +202,7 @@ void draw_text(const std::string& text, int size, int weight, int family,
     CachedTex* c = get_or_build(text, size, weight, family, color);
     if (!c) { if (out_w) *out_w = 0; if (out_h) *out_h = 0; return; }
     // clip_w > 0 truncates the drawn width (left-aligned) without a separate
-    // texture — the cached full-width texture is sampled with a source rect.
+    // texture - the cached full-width texture is sampled with a source rect.
     const int draw_w = (clip_w > 0 && clip_w < c->w) ? clip_w : c->w;
     SDL_Rect src{0, 0, draw_w, c->h};
     SDL_Rect dst{x, y, draw_w, c->h};

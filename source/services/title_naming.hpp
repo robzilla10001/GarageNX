@@ -7,14 +7,11 @@
 //
 //     Zelda Breath of the Wild [0100000000010000][BASE][v0].nsp
 //
-// Both directions matter. Listing needs title -> filename; a client then asks for
-// that exact filename back (RETR / GetObject / GET), so we must be able to map
-// filename -> title again. Doing this in one tested place is what stops the two
-// halves drifting: a name we can generate but not parse is a file the user can see
-// and not download.
+// Both directions matter: listing needs title -> filename, and a client asks
+// for that exact filename back (RETR / GetObject / GET), so filename -> title
+// must work too. One tested place stops the halves drifting.
 //
-// Pure and host-testable: no libnx, no ncm calls — it works on an already
-// enumerated Core::Ncm::Title.
+// Pure and host-testable: no libnx, no ncm calls.
 
 #include "core/ncm.hpp"
 
@@ -37,7 +34,7 @@ struct ParsedTitleName {
     Core::Ncm::TitleType type = Core::Ncm::TitleType::Other;
 };
 
-// Inverse of title_to_filename. Only the bracketed fields are parsed — the display
+// Inverse of title_to_filename. Only the bracketed fields are parsed - the display
 // name is decorative and may contain anything, so it is never used for matching.
 ParsedTitleName parse_title_filename(const std::string& filename);
 
@@ -45,7 +42,7 @@ ParsedTitleName parse_title_filename(const std::string& filename);
 // Exposed because Save Data uses the same rule for its per-title folders.
 std::string sanitize_for_filename(const std::string& raw);
 
-// The folder name for a title's save data (no extension — it's a directory).
+// The folder name for a title's save data (no extension - it's a directory).
 std::string title_to_save_dirname(const Core::Ncm::Title& t);
 
 } // namespace Services

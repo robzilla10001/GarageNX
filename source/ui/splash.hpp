@@ -15,7 +15,7 @@ namespace Splash {
 /// lands on a matching backdrop instead of cutting.
 ///
 /// A button press during the hold skips ahead to the fade rather than cutting
-/// abruptly. Silently does nothing if the image is missing — a decorative
+/// abruptly. Silently does nothing if the image is missing - a decorative
 /// asset must never block startup.
 void show(const std::string& asset_root, int hold_ms, int fade_ms);
 

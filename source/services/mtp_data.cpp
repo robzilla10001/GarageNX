@@ -16,7 +16,7 @@ inline uint32_t rd32(const uint8_t* p) {
 // ─── Text conversion ─────────────────────────────────────────────────────────
 // MTP strings are UTF-16LE. Filenames on the SD card are UTF-8 and routinely
 // non-ASCII, so this is a real conversion, not a byte-widening cast. Invalid
-// input is replaced with U+FFFD rather than rejected — a badly-named file must
+// input is replaced with U+FFFD rather than rejected - a badly-named file must
 // not take down the listing.
 std::vector<uint16_t> utf8_to_utf16(const std::string& s) {
     std::vector<uint16_t> out;
@@ -249,7 +249,7 @@ bool build_object_prop_desc(uint16_t code, Writer& w) {
     w.u8(get_set);
 
     // Default value, encoded in `type`. A host reads this by datatype, exactly
-    // as it reads an ObjectPropList element — get the width wrong here and the
+    // as it reads an ObjectPropList element - get the width wrong here and the
     // host desynchronises on the rest of the dataset.
     switch (type) {
         case DataType::UInt16: w.u16(0); break;
@@ -260,7 +260,7 @@ bool build_object_prop_desc(uint16_t code, Writer& w) {
     }
 
     w.u32(0);   // group code: ungrouped
-    w.u8(0);    // form flag: none — and so no form field follows
+    w.u8(0);    // form flag: none - and so no form field follows
     return true;
 }
 

@@ -1,6 +1,6 @@
 // tests/storage_catalog_test.cpp
 //
-// Tests the shared StorageCatalog (source/services/storage_catalog.{hpp,cpp}) —
+// Tests the shared StorageCatalog (source/services/storage_catalog.{hpp,cpp}) -
 // the single definition of storage surfaces every transport consumes. Pure logic,
 // no libnx, so it runs on the host. Guards the anti-drift invariants: the full
 // surface set exists, config gating is correct per-surface, and the NAND safety
@@ -70,7 +70,7 @@ static void test_gating_defaults() {
     // always failed to open. A game card is PHYSICALLY read-only, so exposing it
     // carries none of the risk that keeps NAND (System) off.
     CHECK(StorageCatalog::enabled(Id::Gamecard, c),        "Gamecard on by default");
-    // NAND (System) is still the one surface that must default OFF — the assertion
+    // NAND (System) is still the one surface that must default OFF - the assertion
     // this file most needs to keep.
     CHECK(!StorageCatalog::enabled(Id::NandSystem, c),     "NAND (System) OFF by default");
     CHECK(StorageCatalog::enabled(Id::InstalledTitles, c), "Installed Titles on by default");
@@ -148,7 +148,7 @@ static void test_safety_policy() {
     CHECK(!StorageCatalog::needs_confirmation(*sd), "SD needs no confirm");
     // Save data is deliberately NOT freely writable: restoring a save silently
     // overwrites game progress and is unrecoverable for the player, so writes are
-    // gated behind the same on-device confirmation as NAND. Reads stay free —
+    // gated behind the same on-device confirmation as NAND. Reads stay free -
     // browsing/backing up saves is not affected by the write policy.
     CHECK(!StorageCatalog::writable(*sv), "saves are not freely writable");
     CHECK(StorageCatalog::needs_confirmation(*sv), "save writes need on-device confirm");
@@ -170,7 +170,7 @@ static void test_kinds() {
     std::printf("  ok: kinds and vfs roots are correct\n");
 }
 
-// Which surfaces a write can reach — and the consequence that has now bitten
+// Which surfaces a write can reach - and the consequence that has now bitten
 // twice. MTP's StorageInfo must report REAL capacity for every writable surface,
 // because a host checks FreeSpaceInBytes BEFORE opening a transfer and refuses
 // client-side when the file "does not fit". Save Data and NAND System both
@@ -181,7 +181,7 @@ static void test_kinds() {
 // POLICY and become writable per operation once the user confirms on-device.
 //
 // If a change to the table below makes this fail, the fix is NOT to update the
-// expectation on its own — check that build_storage_info() reports real capacity
+// expectation on its own - check that build_storage_info() reports real capacity
 // for anything that just became writable.
 static void test_writable_surfaces_need_real_capacity() {
     struct Expect { StorageSurface::Id id; bool writable; const char* why; };

@@ -27,7 +27,7 @@ NetworkEditScreen::NetworkEditScreen(int edit_index) : m_edit_index(edit_index) 
     if (edit_index >= 0 && edit_index < static_cast<int>(shares.size()))
         m_draft = shares[edit_index];
     else
-        m_edit_index = -1;   // out of range — treat as a new connection
+        m_edit_index = -1;   // out of range - treat as a new connection
     if (m_draft.protocol.empty()) m_draft.protocol = "smb";
     rebuild();
 }
@@ -67,7 +67,7 @@ void NetworkEditScreen::rebuild() {
         : "(" + Lang::t("network.port_default") + " " + std::to_string(def) + ")";
     add(Action::Port, Lang::t("network.field_port") + ":  " + port_val);
 
-    // Username/domain apply to SMB only — hide them for NFS so the form matches the
+    // Username/domain apply to SMB only - hide them for NFS so the form matches the
     // protocol and there are no fields that quietly do nothing.
     if (is_smb) {
         add(Action::Username, field_row(Lang::t("network.field_username"),
@@ -124,7 +124,7 @@ void NetworkEditScreen::activate(Action a) {
             Keyboard::Options ko;
             ko.header = Lang::t("network.field_path");
             ko.initial_text = m_draft.path;
-            ko.allow_empty = true;   // optional — empty means start at the share root
+            ko.allow_empty = true;   // optional - empty means start at the share root
             std::string v;
             if (Keyboard::get_text(ko, v)) { m_draft.path = v; rebuild(); }
             break;
@@ -191,7 +191,7 @@ std::string NetworkEditScreen::validate() const {
         return "incomplete";
 
     // Name is the chooser identity and the credential-store key; it must be unique.
-    // When editing, a name that matches THIS entry is fine — only a clash with a
+    // When editing, a name that matches THIS entry is fine - only a clash with a
     // DIFFERENT connection is rejected.
     const auto& shares = Config::get().network.shares;
     for (int i = 0; i < static_cast<int>(shares.size()); ++i) {
@@ -269,7 +269,7 @@ void NetworkEditScreen::draw() {
     m_list.draw(x, y, w, h - 36, style);
 
     // The A hint reads "Change" because every row edits a value or performs the
-    // Save/Delete action — none of them "open" anything.
+    // Save/Delete action - none of them "open" anything.
     std::vector<Widgets::ButtonHint> hints = {
         { "A", Lang::t("network.hint_change") },
         { "B", Lang::t("hints.back") },

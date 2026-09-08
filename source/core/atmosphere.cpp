@@ -84,7 +84,7 @@ static void load_all() {
 #ifdef PLATFORM_SWITCH
     load_switch();
 #else
-    // PC stub — pretend we're on Atmosphère for UI development.
+    // PC stub - pretend we're on Atmosphère for UI development.
     s_info.detected            = true;
     s_info.version             = { "1.7.1", true };
     s_info.target_firmware     = { "18.1.0", true };

@@ -1,15 +1,11 @@
 #pragma once
 // source/core/keys.hpp
 // Loads the Switch keyset from sdmc:/switch/prod.keys (and optional title.keys),
-// exposing the specific keys GarageNX needs to decrypt Control NCAs for name/icon
-// resolution and, later, to install/dump titles.
-//
-// We only parse the keys we actually use rather than the entire keyset. The two
-// essential ones for reading Control NCAs are:
-//   - header_key                     (0x20 bytes) — AES-XTS, decrypts NCA header
-//   - key_area_key_application_##     (0x10 bytes) — AES-ECB, decrypts key area
-// Titlekeys (for content using external/ticket crypto) come from title.keys and
-// are looked up by rights ID.
+// exposing the specific keys GarageNX needs to decrypt Control NCAs for
+// name/icon resolution and, later, to install/dump titles. Only the keys in
+// use are parsed: header_key (0x20, AES-XTS, decrypts NCA header) and
+// key_area_key_application_## (0x10, AES-ECB, decrypts key area). Titlekeys
+// come from title.keys, looked up by rights ID.
 
 #include <string>
 #include <array>

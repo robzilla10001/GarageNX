@@ -1,27 +1,24 @@
 // source/install/ncz.cpp
-// NCZ/NSZ decompressor — zstd decompression + AES-CTR re-encryption for NCA install.
+// NCZ/NSZ decompressor - zstd decompression + AES-CTR re-encryption for NCA install.
 //
-// CORRECTNESS MODEL (this is why NSP/XCI worked but NSZ did not):
-//   A registered NCA is identified by its content_id = first 0x10 bytes of the
-//   SHA-256 of the ENTIRE NCA file. NCM (and every downstream integrity check)
-//   only accepts the placeholder if the bytes we write hash back to that id.
-//   NSP/XCI copy the NCA verbatim, so they always match. To make NSZ match we
-//   must reconstruct the ORIGINAL NCA byte-for-byte:
+// CORRECTNESS MODEL (why NSP/XCI worked but NSZ did not): a registered NCA is
+// identified by its content_id = first 0x10 bytes of the SHA-256 of the ENTIRE
+// NCA file, and NCM only accepts the placeholder if the bytes we write hash
+// back to that id. NSP/XCI copy the NCA verbatim; to make NSZ match we must
+// reconstruct the ORIGINAL NCA byte-for-byte:
 //
-//     [0x0000..0x3FFF]  original NCA header  -> written VERBATIM (never patched)
-//     [0x4000..]        original NCA body    -> zstd-decompress, then RE-ENCRYPT
-//                                               each section with its stored key
+//   [0x0000..0x3FFF]  original NCA header  -> written VERBATIM (never patched)
+//   [0x4000..]        original NCA body    -> zstd-decompress, then RE-ENCRYPT
+//                                             each section with its stored key
 //
-//   The body inside an .ncz is stored DECRYPTED (that is what lets it compress).
-//   Re-encryption is therefore ALWAYS required — for titlekey NCAs (rights_id
-//   set) and standard-crypto NCAs alike. The only per-section switch is the
-//   section's own crypto_type: type >= AesCtr(3) is re-encrypted with the
-//   section key/counter, type None(1) is passed through untouched.
+// The body inside an .ncz is stored DECRYPTED (that is what lets it compress),
+// so re-encryption is ALWAYS required. The only per-section switch is the
+// section's crypto_type: >= AesCtr(3) is re-encrypted with the section
+// key/counter, None(1) passes through untouched.
 //
-//   The AES-CTR counter is keyed to the ABSOLUTE NCA offset (offset >> 4),
-//   NOT a section-relative offset. We create one CTR context per section at the
-//   section's absolute start and let it auto-increment across chunk boundaries,
-//   which keeps the keystream correct even when zstd hands us unaligned chunks.
+// The AES-CTR counter is keyed to the ABSOLUTE NCA offset (offset >> 4), not a
+// section-relative offset: one CTR context per section at its absolute start,
+// auto-incrementing across chunk boundaries.
 
 #include "install/ncz.hpp"
 #include "core/keys.hpp"
@@ -136,7 +133,7 @@ uint64_t NczDecompressor::get_decompressed_size(const ReadFn& read_fn,
     // Skip sections.
     uint64_t off = NCZ_NORMAL_SIZE + sizeof(ncz_hdr) + ncz_hdr.total_sections * sizeof(NczSection);
 
-    // Check for block header — it has the decompressed size explicitly.
+    // Check for block header - it has the decompressed size explicitly.
     if (off + sizeof(NczBlockHeader) <= nca_size) {
         NczBlockHeader blk{};
         if (safe_read(read_fn, off, &blk, sizeof(blk)) &&
@@ -409,7 +406,7 @@ std::string NczDecompressor::decompress(
         if (!error.empty()) return error;
     }
 
-    return {};  // success — reconstructed NCA is byte-identical to the original
+    return {};  // success - reconstructed NCA is byte-identical to the original
 }
 
 
@@ -441,7 +438,7 @@ std::vector<uint8_t> NczDecompressor::make_common_ticket(
     if (memcmp(dec.data() + 0x200, "NCA3", 4) != 0 &&
         memcmp(dec.data() + 0x200, "NCA2", 4) != 0) return {};
 
-    // Check rights_id — if zero, no ticket needed.
+    // Check rights_id - if zero, no ticket needed.
     bool has_rights = false;
     for (int i = 0; i < 0x10; ++i) if (dec[0x230+i]) { has_rights = true; break; }
     if (!has_rights) return {};

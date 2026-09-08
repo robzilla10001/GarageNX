@@ -50,7 +50,7 @@ void RateMeter::sample(uint64_t total_bytes) {
         m_prev_bytes = total_bytes;
     }
 
-    // ── Instantaneous (smoothed) rate — windowed at kWindowMs ──────────────
+    // ── Instantaneous (smoothed) rate - windowed at kWindowMs ──────────────
     // First call just establishes the baseline; a rate needs two samples.
     if (!m_primed) {
         m_primed     = true;

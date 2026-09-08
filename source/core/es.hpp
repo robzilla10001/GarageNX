@@ -1,15 +1,10 @@
 #pragma once
 // source/core/es.hpp
-// Retrieves title keys for titlekey-crypto NCAs from the console's eTicket (ES)
-// system. Many installed titles (eShop games, updates) don't use standard
-// key-area crypto; their content key comes from a ticket keyed by the NCA's
-// rights ID. This module queries ES for the common ticket, extracts the
-// encrypted titlekey, and decrypts it with the titlekek for the title's key
-// generation.
-//
+// Retrieves title keys for titlekey-crypto NCAs from the console's eTicket
+// (ES) system: queries ES for the common ticket, extracts the encrypted
+// titlekey, and decrypts it with the titlekek for the title's key generation.
 // Personalized tickets (console-specific, RSA-wrapped) are a separate, heavier
-// path (eTicket device RSA key via SPL) and are handled as a follow-on; this
-// module covers common tickets, which are the majority.
+// path and are not supported here.
 //
 // libnx doesn't expose the ES ticket-listing IPC, so those calls are issued
 // directly via serviceDispatch (command IDs per switchbrew ETicket_services).
@@ -40,7 +35,7 @@ bool get_titlekey(const uint8_t rights_id[0x10], int key_generation,
 
 // Retrieve the raw common ticket AND its certificate chain for a rights ID,
 // straight from the console's ES system (cmd 22/23 GetCommonTicketAndCertificate
-// Size/Data). This is the user's own console data — nothing is embedded. On
+// Size/Data). This is the user's own console data - nothing is embedded. On
 // success, `ticket` and `cert` receive the raw bytes to write into an NSP as
 // "<rights_id>.tik" and "<rights_id>.cert". Returns false if no common ticket
 // exists for the rights ID (e.g. personalized-only, or absent).
@@ -54,7 +49,7 @@ struct TicketRef {
     std::array<uint8_t, 0x10> rights_id{};
     // Bytes 0-7 of a rights ID are the title id, big-endian. That layout is
     // standard, but this codebase derives key generation from the NCA header
-    // rather than the rights ID, so only the title id is claimed here — guessing
+    // rather than the rights ID, so only the title id is claimed here - guessing
     // at the rest would be inventing a fact the code cannot check.
     //
     // The derivation is SELF-VALIDATING in the UI: a correct title id resolves to
@@ -66,7 +61,7 @@ struct TicketRef {
 /// Every common ticket installed on this console.
 ///
 /// Uses the same ES calls the NSP dump path already relies on
-/// (CountCommonTicket / ListCommonTicket), so this adds no new IPC — it exposes
+/// (CountCommonTicket / ListCommonTicket), so this adds no new IPC - it exposes
 /// enumeration that was previously private to the titlekey lookup.
 ///
 /// Returns empty if ES is unavailable or the console has no common tickets;
@@ -74,21 +69,13 @@ struct TicketRef {
 std::vector<TicketRef> list_common_tickets();
 
 // Delete a common ticket from the console's ES store, by rights ID. Issues es
-// IPC command 3 (DeleteTicket, per Switchbrew's ETicket_services page — fetched
-// and confirmed directly against that source, not from memory), using the same
-// raw-input-struct calling convention already proven by GetCommonTicketData /
-// GetCommonTicketAndCertificateSize/Data in this file: the rights ID goes in as
-// 0x10 bytes of raw input data, not a buffer.
+// IPC command 3 (DeleteTicket, per Switchbrew's ETicket_services page), the
+// same raw-input-struct convention proven by GetCommonTicketData in this file.
+// This call has no hardware mileage in this codebase yet - verify against a
+// ticket for something easily reacquired before trusting it broadly.
 //
-// UNLIKE those, this specific call has no hardware mileage in this codebase —
-// the read-side commands have long dump-path use; this write-side one does
-// not. Hardware-verify carefully before relying on it, ideally against a
-// ticket for something easily reacquired (a free eShop demo, or a title you
-// still have the original install file for) before trusting it more broadly.
-//
-// Only ever touches common tickets — this codebase has no personalized-ticket
-// support at all (see the file header comment above). Returns false if the
-// rights ID has no common ticket, or on any IPC failure.
+// Only ever touches common tickets. Returns false if the rights ID has no
+// common ticket, or on any IPC failure.
 bool delete_ticket(const uint8_t rights_id[0x10]);
 
 } // namespace Core::Es

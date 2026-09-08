@@ -5,7 +5,7 @@
 // a request can be answered without mounting anything.
 //
 // The listing and mount halves of save_surface live behind libnx (accounts, fs)
-// and can only be exercised on hardware — per this directory's admission rule
+// and can only be exercised on hardware - per this directory's admission rule
 // they are NOT stubbed here. What IS testable is exactly the part that has to be
 // right for a handle to mean one thing: the prefix, the round trip, and the
 // no-mount classification.
@@ -53,7 +53,7 @@ static void test_prefix_recognition() {
 // mtp_storage_for_path() both identify a surface by a plain prefix compare
 // against vfs_root, and the Saves surface's vfs_root is "save:". A synthetic
 // prefix that began with "save:" would therefore be mistaken for a mounted save
-// path by the WRITE GUARD — which is the difference between default-deny and a
+// path by the WRITE GUARD - which is the difference between default-deny and a
 // confirmation modal pointed at whichever title happens to be mounted.
 //
 // This asserts the property directly rather than trusting the spelling: the
@@ -91,7 +91,7 @@ static void test_round_trip() {
     CHECK(save_synth_rel("savedata:/") == "", "root gives an empty rel");
     CHECK(save_synth_rel("sdmc:/x") == "", "non-synthetic yields no rel");
 
-    // The rel is exactly what sp_split_save() consumes — that shared parser is
+    // The rel is exactly what sp_split_save() consumes - that shared parser is
     // the reason no second decomposition exists to drift from this one.
     const SavePath sp = sp_split_save(save_synth_rel(p));
     CHECK(sp.level == SavePath::Level::Files, "deep path is file level");
@@ -115,7 +115,7 @@ static void test_awkward_names() {
 // The classification that keeps browsing cheap. An MTP host asks for an
 // ObjectInfo for EVERY object it lists; if answering "is this a directory?" for a
 // title folder required a mount, browsing one user's folder would mount and
-// unmount every save on the console — the bulk-churn pattern that has already
+// unmount every save on the console - the bulk-churn pattern that has already
 // crashed this project once. User and title folders are directories by
 // construction, so they must be answerable without touching the mount.
 static void test_no_mount_needed_for_synthesized_levels() {
@@ -152,14 +152,14 @@ static void test_trailing_slash() {
 // raises the on-device confirmation and an Allow performs it), while the levels
 // above a title have no file behind them and are refused with no prompt at all.
 //
-// The pure, testable half of that is which paths are "inside a title" — the same
+// The pure, testable half of that is which paths are "inside a title" - the same
 // split FTP's to_vfs() makes when it returns "" for the synthesized levels.
 static void test_write_levels_match_ftp() {
     // Refused outright, no prompt: nothing here names a file.
     CHECK(sp_split_save(save_synth_rel("savedata:/")).level == SavePath::Level::Users,
-          "storage root is the users level — no title, no prompt");
+          "storage root is the users level - no title, no prompt");
     CHECK(sp_split_save(save_synth_rel("savedata:/Rob")).level == SavePath::Level::Titles,
-          "user folder is the titles level — no title, no prompt");
+          "user folder is the titles level - no title, no prompt");
 
     // Reaches the guard as a real path, so the confirmation names the file.
     const SavePath in_save =
@@ -168,7 +168,7 @@ static void test_write_levels_match_ftp() {
     CHECK(in_save.title == "Zelda [0100000000010000]",
           "the title is carried to the guard, so the mount is the right one");
 
-    // A NEW name inside a title (the SendObjectInfo case) is equally guardable —
+    // A NEW name inside a title (the SendObjectInfo case) is equally guardable -
     // it need not already exist for the destination to be resolvable.
     const SavePath fresh =
         sp_split_save(save_synth_rel("savedata:/Rob/Zelda [0100000000010000]/new.dat"));
@@ -179,18 +179,18 @@ static void test_write_levels_match_ftp() {
     // it, so guarding it directly would default-deny instead of prompting. This
     // is why every mutating path resolves BEFORE it guards.
     CHECK(StorageCatalog::surface_for_vfs("savedata:/Rob/Z [01]/slot.dat") == nullptr,
-          "synthetic form is unguardable — resolve first, then guard");
+          "synthetic form is unguardable - resolve first, then guard");
     std::printf("  ok: write levels match FTP\n");
 }
 
 // THE MOUNT ROOT IS NOT AN OBJECT. A title folder in the display hierarchy,
-// "/Save Data/<User>/<Title>", resolves to exactly "save:/" — perfectly good to
+// "/Save Data/<User>/<Title>", resolves to exactly "save:/" - perfectly good to
 // LIST, which is why browsing a save works, but not a legal target for delete or
 // rename: it is the filesystem, not a file in it.
 //
 // Reported from hardware: deleting a save produced TWO confirmation dialogs, both
 // approved, and the operation failed anyway. That is what an ordinary client does
-// when it deletes a folder — clear the contents, then remove the folder — and the
+// when it deletes a folder - clear the contents, then remove the folder - and the
 // second prompt was asking permission for an rmdir of a mount point, which cannot
 // succeed. A confirmation for something that cannot succeed is worse than none:
 // it teaches people that approving these prompts does nothing.
@@ -204,24 +204,24 @@ static void test_mount_root_is_not_a_target() {
     CHECK(!save_is_mount_root(""),                "empty is not the mount root");
     CHECK(!save_is_mount_root("savedata:/Rob"),   "a synthetic path is not it either");
 
-    // The path a title folder resolves to is exactly the root — which is the
+    // The path a title folder resolves to is exactly the root - which is the
     // whole reason this check has to exist rather than being obvious.
     const SavePath title_folder = sp_split_save("Rob/Zelda [0100000000010000]");
     CHECK(title_folder.level == SavePath::Level::Files, "a title folder is file level");
-    CHECK(title_folder.rest.empty(), "with an empty remainder — i.e. the root itself");
+    CHECK(title_folder.rest.empty(), "with an empty remainder - i.e. the root itself");
 
     // A file INSIDE the save resolves to a rest, so it is NOT the mount root and
     // deletes normally rather than being turned into a wipe. This is the boundary
     // the delete bug hinged on: file -> normal delete, title folder -> wipe.
     const SavePath a_file = sp_split_save("Rob/Zelda [0100000000010000]/slot1.dat");
     CHECK(a_file.level == SavePath::Level::Files, "a file is file level");
-    CHECK(a_file.rest == "slot1.dat", "with a non-empty remainder — a real object");
+    CHECK(a_file.rest == "slot1.dat", "with a non-empty remainder - a real object");
     std::printf("  ok: the save mount root is not a mutation target\n");
 }
 
 // The predicate that decides when the on-device Save Manager STOPS re-labelling.
 // It must match exactly the id-only fallback save_title_labels() emits, and NOT a
-// real game whose name happens to start with "Title" — a false positive there
+// real game whose name happens to start with "Title" - a false positive there
 // pins the screen in a permanent per-frame relabel.
 static void test_unresolved_label_predicate() {
     CHECK(save_label_is_unresolved("Title 0100000000010000"), "the exact id fallback");

@@ -1,7 +1,7 @@
 // tests/ncz_window_test.cpp
 //
-// Off-device harness for Install::NczWindow. Deliberately dependency-free —
-// plain C++17 and asserts, no test framework — because the coding standard bars
+// Off-device harness for Install::NczWindow. Deliberately dependency-free -
+// plain C++17 and asserts, no test framework - because the coding standard bars
 // new third-party dependencies without an approved task, and because NczWindow
 // uses only std::mutex/std::condition_variable and so needs no libnx stub to
 // build. Built by tests/CMakeLists.txt as a standalone host project:

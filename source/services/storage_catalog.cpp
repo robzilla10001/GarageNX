@@ -8,20 +8,16 @@ namespace Services {
 
 using Id = StorageSurface::Id;
 
-// The complete surface table, in display order. This is the ONE place the storage
-// set is defined. Notes on the choices:
-//   - vfs_root uses the libnx mount names the wave work will mount under. SD is
-//     "sdmc:" (already mounted by libnx). NAND user/system, saves, album, and
-//     gamecard get mounted in their respective waves; the names here are the
-//     intended mount points so transports have a stable prefix to key on.
-//   - NAND user + system are ReadOnly + OnDevice: visible and browsable by
-//     default, but any mutation requires an on-device confirmation (the
-//     cross-transport safety model). system is additionally gated off by default
-//     in config (nand_system defaults false).
-//   - Gamecard + InstalledTitles are ReadOnly (you don't write to a gamecard;
-//     Installed Titles is a synthesized view, not a writable tree).
-//   - SdInstall / NandInstall are Install kind: writing a file installs it. They
-//     carry no vfs_root because they are not browsable filesystems.
+// The complete surface table, in display order. This is the ONE place the
+// storage set is defined. Notes on the choices:
+//   - vfs_root uses the libnx mount names; the names here are the intended
+//     mount points so transports have a stable prefix to key on.
+//   - NAND user + system are ReadOnly + OnDevice: browsable by default, but
+//     any mutation requires an on-device confirmation. system is additionally
+//     gated off by default in config (nand_system defaults false).
+//   - Gamecard + InstalledTitles are ReadOnly.
+//   - SdInstall / NandInstall are Install kind: writing a file installs it;
+//     they carry no vfs_root because they are not browsable filesystems.
 static const std::vector<StorageSurface> kSurfaces = {
     { Id::SdCard,          "sd_card",         "SD Card",
       "sdmc:",       StorageKind::Filesystem, Access::ReadWrite, Confirm::None },

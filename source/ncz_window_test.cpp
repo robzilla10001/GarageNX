@@ -1,17 +1,14 @@
 // tests/ncz_window_test.cpp
 //
-// Off-device harness for Install::NczWindow. Deliberately dependency-free —
-// plain C++17 and asserts, no test framework — because the coding standard bars
-// new third-party dependencies without an approved task, and because NczWindow
-// uses only std::mutex/std::condition_variable and so needs no libnx stub to
-// build. Compile and run it directly:
+// Off-device harness for Install::NczWindow. Dependency-free (plain C++17 and
+// asserts) - NczWindow uses only std::mutex/std::condition_variable and needs
+// no libnx stub to build. Compile and run it directly:
 //
 //   g++ -std=c++17 -I../source -fsanitize=thread  -O1 -g ncz_window_test.cpp ../source/install/ncz_window.cpp -o w_tsan && ./w_tsan
 //   g++ -std=c++17 -I../source -fsanitize=address,undefined -O1 -g ncz_window_test.cpp ../source/install/ncz_window.cpp -o w_asan && ./w_asan
 //
 // Caps are deliberately tiny here (KB, not MB) so the ring wraps thousands of
-// times and the prefix/window seam is crossed constantly. The production
-// defaults would hide every one of those transitions behind sheer capacity.
+// times and the prefix/window seam is crossed constantly.
 
 #include "install/ncz_window.hpp"
 

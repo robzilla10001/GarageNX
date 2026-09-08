@@ -35,7 +35,7 @@ std::string create(const std::string& user,
                                             user, title_label,
                                             Core::DateTime::sortable_stamp_now());
 
-    // mkdir does not create intermediates, so build the tree top-down — same
+    // mkdir does not create intermediates, so build the tree top-down - same
     // reason main.cpp's ensure_directories() does.
     {
         std::string acc;
@@ -87,12 +87,12 @@ namespace {
 
 // One sweep, two policies. `stale_only` picks between the automatic schedule and
 // the manual "everything, now". Keeping this single means the two cannot drift on
-// layout, progress reporting, or failure handling — only on which saves they pick.
+// layout, progress reporting, or failure handling - only on which saves they pick.
 int sweep_impl(bool stale_only, int threshold,
                const std::function<void(const AutoProgress&)>& on_progress) {
     AutoProgress prog;
 
-    // Phase 1: enumerate. This is the SLOW step — save_enumerate_all() primes the
+    // Phase 1: enumerate. This is the SLOW step - save_enumerate_all() primes the
     // ncm name cache by blocking, which is what made the sweep look frozen. Tell
     // the UI first so the "please wait" is on screen BEFORE the block, not after.
     prog.phase = AutoPhase::Enumerating;
@@ -100,7 +100,7 @@ int sweep_impl(bool stale_only, int threshold,
 
     // Pass a pump: both sweeps run on the MAIN THREAD, so enumeration must drive
     // the name resolver rather than block on it. The pump redraws the overlay, so
-    // the (genuinely slow) enumerate phase animates instead of freezing — and,
+    // the (genuinely slow) enumerate phase animates instead of freezing - and,
     // critically, the labels come back RESOLVED, because they are about to become
     // backup directory names on disk.
     const std::vector<Services::SaveRef> all = Services::save_enumerate_all(
@@ -141,7 +141,7 @@ int sweep_impl(bool stale_only, int threshold,
 
 int auto_backup_stale(const std::function<void(const AutoProgress&)>& on_progress) {
     const int threshold = Config::get().behavior.save_auto_backup_days;
-    if (threshold <= 0) return 0;                 // feature off — the default
+    if (threshold <= 0) return 0;                 // feature off - the default
     return sweep_impl(/*stale_only=*/true, threshold, on_progress);
 }
 
@@ -214,7 +214,7 @@ bool restore(const std::string& user,
     }
 
     // Refuse an EMPTY backup. Restoring one would delete the save and copy
-    // nothing back, leaving the title with no save at all — and an empty backup
+    // nothing back, leaving the title with no save at all - and an empty backup
     // directory is far more likely to mean an interrupted or damaged backup than
     // a user who genuinely wants to erase their progress. If someone really does
     // want that, deleting the save in the file browser is the honest way to ask
@@ -227,7 +227,7 @@ bool restore(const std::string& user,
     // Resolve the destination via the RESTORE resolver, which recreates the save
     // record if a delete removed it. Plain save_resolve() only matches live
     // saves, so it would fail here for exactly the deleted-then-restore case this
-    // path has to support. The application id comes from the backup's own label —
+    // path has to support. The application id comes from the backup's own label -
     // once the live save is gone, that label is the only place it survives.
     const uint64_t app_id = app_id_from_label(title_label);
     if (app_id == 0) {
@@ -241,7 +241,7 @@ bool restore(const std::string& user,
     }
 
     // ── Delete the existing contents ─────────────────────────────────────────
-    // The save ROOT itself is not removed — "save:" is a mount point, and
+    // The save ROOT itself is not removed - "save:" is a mount point, and
     // removing it would be removing the filesystem rather than its contents.
     bool dst_ok = false;
     std::vector<std::string> existing;

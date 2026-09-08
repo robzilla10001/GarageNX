@@ -93,7 +93,7 @@ static void handle_prod_pair(const std::string& key_lc, const std::string& val) 
         }
         return;
     }
-    // Everything else we don't need for now — ignore silently.
+    // Everything else we don't need for now - ignore silently.
 }
 
 // Parse a keyfile. Each line: "name = hexvalue". Comments (';', '#') and blank
@@ -176,13 +176,13 @@ LoadResult load(const std::string& switch_dir) {
             "sdmc:/switch/prod.keys.";
         result.ok = false;
         result.missing = missing;
-        SDL_Log("Keys::load — incomplete: %s", missing.c_str());
+        SDL_Log("Keys::load - incomplete: %s", missing.c_str());
         return result;
     }
 
     s_available = true;
     result.ok = true;
-    SDL_Log("Keys::load — OK (header_key + %s title keys)",
+    SDL_Log("Keys::load - OK (header_key + %s title keys)",
             std::to_string(s_keys.title_keys.size()).c_str());
     return result;
 }

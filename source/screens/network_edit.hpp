@@ -1,7 +1,7 @@
 #pragma once
 // source/screens/network_edit.hpp
 //
-// On-device editor for a single Browse Network connection — so connections are
+// On-device editor for a single Browse Network connection - so connections are
 // added and changed on the console, never by hand-editing config.json. Fields are
 // entered through the system keyboard; the result is written to
 // Config::network.shares and persisted with the non-destructive Config::save().
@@ -30,7 +30,7 @@ public:
 private:
     // What a selected row does. A parallel vector keeps rows and actions in step
     // even though the row set changes (username/domain show for SMB only, Delete
-    // shows only when editing) — the same pattern file_browser uses for its
+    // shows only when editing) - the same pattern file_browser uses for its
     // context menu.
     enum class Action {
         Name, Protocol, Host, Share, Path, Port, Username, Domain, Save, Delete

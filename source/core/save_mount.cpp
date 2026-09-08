@@ -23,7 +23,7 @@ AccountUid to_uid(uint64_t lo, uint64_t hi) {
     return u;
 }
 
-// Strip characters that cannot appear in a filename — a nickname becomes a
+// Strip characters that cannot appear in a filename - a nickname becomes a
 // directory name on the client's disk.
 std::string sanitize(const std::string& raw) {
     std::string out;
@@ -59,7 +59,7 @@ std::vector<User> list_users(bool* ok) {
         u.uid_lo = uids[i].uid[0];
         u.uid_hi = uids[i].uid[1];
 
-        // A profile we cannot read still gets an entry, named by id — otherwise a
+        // A profile we cannot read still gets an entry, named by id - otherwise a
         // user's saves would be silently unreachable.
         AccountProfile      prof;
         AccountProfileBase  base;
@@ -121,8 +121,8 @@ std::vector<SaveEntry> list_saves(const User& u) {
 std::vector<OrphanCandidateSave> list_all_account_saves() {
     std::vector<OrphanCandidateSave> out;
 #ifdef PLATFORM_SWITCH
-    // Same reader loop as list_saves() above — same open call, same read call,
-    // same FsSaveDataType_Account filter — just no per-user uid filter, and uid
+    // Same reader loop as list_saves() above - same open call, same read call,
+    // same FsSaveDataType_Account filter - just no per-user uid filter, and uid
     // is kept in the result instead of being discarded.
     FsSaveDataInfoReader reader;
     if (R_FAILED(fsOpenSaveDataInfoReader(&reader, FsSaveDataSpaceId_User)))
@@ -192,7 +192,7 @@ void release() {
 
 bool ensure_save_exists(const User& u, uint64_t application_id) {
 #ifdef PLATFORM_SWITCH
-    // If it already mounts, it already exists — cheapest possible check, and it
+    // If it already mounts, it already exists - cheapest possible check, and it
     // avoids asking the OS to create something that is there (some firmwares
     // return an error for that rather than succeeding).
     if (fsdevMountSaveData("save_probe", application_id, to_uid(u.uid_lo, u.uid_hi))
@@ -209,7 +209,7 @@ bool ensure_save_exists(const User& u, uint64_t application_id) {
     // FsSaveDataCreationInfo (size + journal_size + owner). If the Switch build
     // cannot find these, the things to check in order are: the struct field names
     // (application_id vs program_id; save_data_size vs size), and on older libnx
-    // fsCreateSaveDataFileSystemBySystemSaveDataId is NOT the one — that is for
+    // fsCreateSaveDataFileSystemBySystemSaveDataId is NOT the one - that is for
     // system saves. Sizes below are conservative; the OS enforces per-title.
     FsSaveDataAttribute attr = {};
     attr.application_id = application_id;
@@ -251,12 +251,12 @@ bool delete_save_record(uint64_t save_data_id) {
     // as a belt-and-braces guard rather than trust every caller forever.
     release();
 
-    // fsDeleteSaveDataFileSystemBySaveDataSpaceId — confirmed against a real
+    // fsDeleteSaveDataFileSystemBySaveDataSpaceId - confirmed against a real
     // libnx fs.h (line 513: `Result fsDeleteSaveDataFileSystemBySaveDataSpace
     // Id(FsSaveDataSpaceId save_data_space_id, u64 saveID); ///< [2.0.0+]`,
     // exact match to the call below) and separately hardware-verified via
     // Save Manager's own working Delete button. Originally written "on
-    // knowledge" without a header to check against — this replaces that
+    // knowledge" without a header to check against - this replaces that
     // history rather than erasing it: it WAS unverified, it no longer is.
     const Result rc = fsDeleteSaveDataFileSystemBySaveDataSpaceId(
         FsSaveDataSpaceId_User, save_data_id);

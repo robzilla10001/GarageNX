@@ -26,7 +26,7 @@ Core::Ncm::TitleType tag_to_type(const std::string& tag) {
 }
 
 // Longest display name we keep. The bracketed fields plus ".nsp" add ~40 chars, and
-// FAT tops out at 255 — leaving headroom keeps us clear of clients that append
+// FAT tops out at 255 - leaving headroom keeps us clear of clients that append
 // their own suffixes (".part", " (1)") while downloading.
 constexpr size_t kMaxDisplayName = 128;
 
@@ -76,7 +76,7 @@ std::string sanitize_for_filename(const std::string& raw) {
             c == '[' || c == ']';
         out.push_back(illegal ? '_' : (char)c);
     }
-    // Trim trailing dots/spaces — FAT silently drops them, which would make the
+    // Trim trailing dots/spaces - FAT silently drops them, which would make the
     // name we advertise differ from the name the client ends up with.
     while (!out.empty() && (out.back() == '.' || out.back() == ' ')) out.pop_back();
     if (out.size() > kMaxDisplayName) out.resize(kMaxDisplayName);

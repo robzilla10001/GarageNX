@@ -2,7 +2,7 @@
 //
 // Tests the ConfirmationBroker state machine with REAL threads (run under TSan in
 // CI). A worker thread calls ask() and blocks; the "main" thread polls pending()
-// and resolves — mirroring how a transport worker and the UI loop interact.
+// and resolves - mirroring how a transport worker and the UI loop interact.
 //
 // Covers the four behaviours that matter for the NAND safety model:
 //   - happy path: allow and deny both flow back to the worker
@@ -119,7 +119,7 @@ static void test_concurrent_autodeny() {
 // ── Stale resolve is ignored ────────────────────────────────────────────────
 static void test_stale_resolve_ignored() {
     ConfirmationBroker b;
-    // Resolve an id that was never issued — must not corrupt state.
+    // Resolve an id that was never issued - must not corrupt state.
     b.resolve(999, ConfirmResult::Allowed);
     CHECK(!b.has_pending(), "stale resolve on empty broker is a no-op");
 

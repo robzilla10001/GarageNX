@@ -1,8 +1,8 @@
 // source/install/stream_driver.hpp
 //
-// Transport-agnostic driver for a streaming install. This is the KEYSTONE that
-// lets MTP, FTP, and HTTP share one install path instead of copy-pasting the
-// loop (and re-learning the 4c teardown/UAF lessons) three times.
+// Transport-agnostic driver for a streaming install: lets MTP, FTP, and HTTP
+// share one install path instead of copy-pasting the loop (and re-learning the
+// 4c teardown/UAF lessons) three times.
 //
 // The install ENGINE (StreamInstaller: begin/feed/finish/abort) was already
 // transport-agnostic. What was welded to MTP was the DRIVER LOOP around it:
@@ -10,15 +10,15 @@
 //     the transport can't express a 64-bit size (MTP's 32-bit cap),
 //   - overlapping the reads with the placeholder writes (OverlapBuffer),
 //   - the load-bearing teardown ORDER on cancel/error (quiesce the overlap
-//     worker BEFORE abort(), or feed() runs against a freed decompress window —
-//     the cross-thread UAF we chased for six rounds).
+//     worker BEFORE abort(), or feed() runs against a freed decompress window -
+//     the cross-thread UAF chased for six rounds).
 // All of that lives here now, driven by an injected byte source. The transport
-// keeps only what is genuinely its own: framing (e.g. MTP's 12-byte data-
-// container header) and unwedging a half-finished transfer (drain).
+// keeps only framing (e.g. MTP's 12-byte data-container header) and unwedging
+// a half-finished transfer (drain).
 //
-// TESTABILITY: because the byte source, cancel predicate, and drain are all
-// callbacks, the whole driver runs on the host against a synthetic in-memory
-// stream — no USB, no sockets. See tests/stream_driver_test.cpp.
+// TESTABILITY: the byte source, cancel predicate, and drain are all callbacks,
+// so the whole driver runs on the host against a synthetic in-memory stream.
+// See tests/stream_driver_test.cpp.
 
 #pragma once
 
@@ -35,10 +35,10 @@ namespace Install {
 // Wire accounting the driver publishes as bytes are consumed, so a screen can
 // show speed/ETA. The transport owns the atomics; the driver just updates them.
 // (Kept as plain callbacks rather than atomic refs so the core has no threading
-// assumptions of its own — the transport decides how these are stored.)
+// assumptions of its own - the transport decides how these are stored.)
 struct WireSink {
     // Called once when the transfer's true size becomes known (0 = still unknown;
-    // the UI shows "—"). May be called more than once as the estimate refines
+    // the UI shows "-"). May be called more than once as the estimate refines
     // (declared size → container table). Always the best-known total.
     std::function<void(uint64_t size)> set_size = [](uint64_t) {};
     // Called with each chunk of file payload actually consumed (not transport
@@ -95,7 +95,7 @@ enum class DriveResult {
 // initial payload chunk after framing removal.
 //
 // The driver handles size correction, the overlap buffer, the feed loop, and all
-// teardown ordering. It does NOT save logs or reset the installer pointer — the
+// teardown ordering. It does NOT save logs or reset the installer pointer - the
 // transport owns the StreamInstaller's lifetime and does that after this returns.
 DriveResult drive(StreamInstaller& inst,
                   const StreamSource& src,

@@ -16,7 +16,7 @@ bool get_text(const Options& opts, std::string& out) {
     SwkbdConfig kbd;
     Result rc = swkbdCreate(&kbd, 0);
     if (R_FAILED(rc)) {
-        SDL_Log("Keyboard::get_text — swkbdCreate failed: 0x%x", rc);
+        SDL_Log("Keyboard::get_text - swkbdCreate failed: 0x%x", rc);
         return false;
     }
 
@@ -24,7 +24,7 @@ bool get_text(const Options& opts, std::string& out) {
 
     if (!opts.header.empty())
         swkbdConfigSetHeaderText(&kbd, opts.header.c_str());
-    // Guide text is the greyed placeholder shown inside the entry field itself —
+    // Guide text is the greyed placeholder shown inside the entry field itself -
     // the most visible "what am I typing?" hint on the swkbd overlay, which is why
     // a bare header alone can look like an unlabelled box. libnx: swkbdConfigSetGuideText
     // (verify against your installed swkbd.h, like the password flag below).
@@ -42,7 +42,7 @@ bool get_text(const Options& opts, std::string& out) {
 
     // Mask the entry for secrets (SMB passwords). libnx: swkbdConfigSetPasswordFlag
     // takes 1 = hidden, 0 = shown. This is the single libnx call in this change not
-    // cross-checked against a fetched header — confirm it against the installed
+    // cross-checked against a fetched header - confirm it against the installed
     // swkbd.h on first build (it has existed in libnx for years, but verify per the
     // project's API rule rather than trust memory).
     if (opts.password)
@@ -66,7 +66,7 @@ bool get_text(const Options& opts, std::string& out) {
     return true;
 
 #else
-    // PC fallback — read a line from stdin so development flows work.
+    // PC fallback - read a line from stdin so development flows work.
     printf("\n[keyboard] %s", opts.header.c_str());
     if (!opts.initial_text.empty())
         printf(" (default: %s)", opts.initial_text.c_str());

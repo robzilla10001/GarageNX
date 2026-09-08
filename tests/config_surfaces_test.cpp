@@ -2,7 +2,7 @@
 //
 // Pins the per-transport surfaces split and, above all, its MIGRATION.
 //
-// Until this change one block — "mtp" — governed which storage surfaces EVERY
+// Until this change one block - "mtp" - governed which storage surfaces EVERY
 // transport exposed. FTP and HTTP read keys named mtp.*, which is misleading
 // precisely when someone is trying to lock a surface down. Each transport now
 // carries its own Surfaces.
@@ -38,7 +38,7 @@ static int g_checks = 0;
     } while (0)
 
 // Write `j` to a temp file and load it as config. Callers then read
-// Config::get() directly — returning the reference from here trips GCC's
+// Config::get() directly - returning the reference from here trips GCC's
 // -Wdangling-reference, and the zero-warning bar is worth more than the sugar.
 static void load_from(const json& j, const char* name) {
     const std::string path = std::string("/tmp/gnx_cfg_") + name + ".json";
@@ -82,7 +82,7 @@ static void test_legacy_flat_keys_seed_every_transport() {
 }
 
 // A NEW file: each transport has its own "surfaces" block, and they differ.
-// This is the whole point of the split — saves over FTP but not MTP, say.
+// This is the whole point of the split - saves over FTP but not MTP, say.
 static void test_per_transport_blocks_are_independent() {
     json j;
     j["mtp"]["surfaces"]["saves"]        = false;
@@ -95,7 +95,7 @@ static void test_per_transport_blocks_are_independent() {
     const auto& c = Config::get();
 
     CHECK(!c.mtp.surfaces.saves,       "MTP saves off");
-    CHECK(c.ftp.surfaces.saves,        "FTP saves on — independent of MTP");
+    CHECK(c.ftp.surfaces.saves,        "FTP saves on - independent of MTP");
     CHECK(!c.http.surfaces.saves,      "HTTP saves off");
     CHECK(!c.mtp.surfaces.nand_system, "MTP NAND system off");
     CHECK(c.ftp.surfaces.nand_system,  "FTP NAND system on");
@@ -127,14 +127,14 @@ static void test_empty_config_uses_defaults() {
     const auto& c = Config::get();
     CHECK(c.mtp.surfaces.sd_card,      "sd_card defaults on");
     CHECK(c.mtp.surfaces.nand_user,    "nand_user defaults on");
-    CHECK(!c.mtp.surfaces.nand_system, "nand_system defaults OFF — the safety default");
+    CHECK(!c.mtp.surfaces.nand_system, "nand_system defaults OFF - the safety default");
     CHECK(!c.ftp.surfaces.nand_system, "and off for FTP too");
     CHECK(c.mtp.surfaces.gamecard,     "gamecard defaults ON (read-only, mount exists)");
     CHECK(!c.mtp.surfaces.nand_install, "nand_install defaults off");
     std::printf("  ok: empty config uses defaults\n");
 }
 
-// The union used for global decisions — mounting in particular. A mount is
+// The union used for global decisions - mounting in particular. A mount is
 // process-wide, so it must happen if ANY transport exposes the partition;
 // asking one transport's block would leave the device unmounted for a user who
 // enabled it on another, and the folder would appear but refuse to open.
@@ -190,7 +190,7 @@ static void test_round_trip_preserves_split() {
 //    missing from to_json or from_json is silently reset to its default the first
 //    time anything is saved. Enumerated by hand deliberately: a loop over some
 //    reflection helper would pass while proving nothing, and the tedium here is
-//    the point — adding a config field should mean adding a line to this test.
+//    the point - adding a config field should mean adding a line to this test.
 static void test_every_field_round_trips() {
     Config::load("/tmp/gnx_cfg_rt_all.json");
     auto& w = Config::get_mutable();
@@ -229,7 +229,7 @@ static void test_every_field_round_trips() {
     w.http.server_port = 9090; w.http.allow_upload = false;
     w.network.github_token = "ghp_x";
     // Two saved network connections, exercising every NetShare field and both
-    // protocols. NO password is set or expected — the model is prompt-per-session
+    // protocols. NO password is set or expected - the model is prompt-per-session
     // (see Config::NetShare), so config.json must never carry one.
     w.network.shares.clear();
     { Config::NetShare s; s.name = "NAS"; s.protocol = "smb"; s.host = "192.168.1.10";
@@ -294,7 +294,7 @@ static void test_every_field_round_trips() {
 
 // 2. A save must NOT delete what it does not understand. Someone's hand-added
 //    key, or a field written by a newer build, has to survive a user toggling an
-//    unrelated setting — they would have no way to know it had been eaten.
+//    unrelated setting - they would have no way to know it had been eaten.
 static void test_save_preserves_unknown_keys() {
     json j;
     j["mtp"]["surfaces"]["saves"]     = true;
@@ -342,7 +342,7 @@ static void test_save_removes_superseded_legacy_keys() {
 
 // The placeholder-URL migration. A stored key always beats a compile-time default,
 // so correcting the default alone would silently fix nothing for anyone who had
-// already run the app — which is exactly what happened. The migration must rewrite
+// already run the app - which is exactly what happened. The migration must rewrite
 // the placeholder and must NOT touch a URL the user chose.
 static void test_update_url_placeholder_migration() {
     json j;
@@ -352,7 +352,7 @@ static void test_update_url_placeholder_migration() {
           std::string(Config::Defaults::UPDATE_CHECK_URL),
           "the shipped placeholder is replaced with the real URL");
 
-    // A deliberate custom URL survives untouched — the migration is exact-match,
+    // A deliberate custom URL survives untouched - the migration is exact-match,
     // not a heuristic.
     json j2;
     j2["app"]["update_check_url"] = "https://example.invalid/my/own/feed";
@@ -374,7 +374,7 @@ static void test_update_url_placeholder_migration() {
 static void test_save_preserves_key_order() {
     // Build the INPUT with ordered_json too. The test's own `json` alias is
     // nlohmann::json, which is a std::map and would alphabetise these keys before
-    // they ever reached the file — the test would then "pass" while proving
+    // they ever reached the file - the test would then "pass" while proving
     // nothing about what save() did.
     nlohmann::ordered_json j;
     j["zzz_last"]  = 1;      // deliberately anti-alphabetical

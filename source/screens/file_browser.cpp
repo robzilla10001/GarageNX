@@ -53,14 +53,10 @@ static bool is_installable(const std::string& ext) {
     return ext == "nsp" || ext == "xci" || ext == "nsz" || ext == "xcz";
 }
 
-// A SPLIT archive is a DIRECTORY whose name ends in an installable extension and
-// which contains a part named "00". Both halves of that test matter: the name
-// alone would offer Install on any folder someone happened to call "backup.nsp",
-// and the part alone cannot be checked without a name to justify looking.
-//
-// This exists because the dumper now writes split output for titles over 4 GiB
-// (FAT32 cannot hold a single file that large). Without it, a dump completed and
-// then could not be installed — the browser saw a folder and opened it.
+// A SPLIT archive is a DIRECTORY whose name ends in an installable extension
+// and which contains a part named "00" - both halves of the test matter. The
+// dumper writes split output for titles over 4 GiB (FAT32 limit); without this
+// check a completed dump could not be re-installed.
 static bool is_split_archive_dir(const std::string& full_path,
                                  const std::string& name) {
     const size_t dot = name.find_last_of('.');
@@ -181,7 +177,7 @@ std::unique_ptr<Screen> FileBrowserScreen::update(bool& pop) {
         return std::make_unique<FileViewerScreen>(path, mode);
     }
 
-    // Poll active install — blocks other input while running.
+    // Poll active install - blocks other input while running.
     if (m_install_mode != InstallMode::None) {
         poll_install();
         // While installing, all input is swallowed (the install runs to
@@ -289,7 +285,7 @@ std::unique_ptr<Screen> FileBrowserScreen::update(bool& pop) {
             if (e->is_dir()) {
                 pane.cursor_stack.push_back(pane.list.cursor());  // remember where we were
                 // A split archive is a folder, but the user means the archive.
-                // Descending into it would show them "00", "01" — technically
+                // Descending into it would show them "00", "01" - technically
                 // the truth and useless.
                 if (is_split_archive_dir(Fs::join(pane.path, e->name), e->name)) {
                     open_install_menu();
@@ -425,12 +421,8 @@ void FileBrowserScreen::handle_context_action(int action_id) {
             break;
         case ACT_OPEN_TEXT:
         case ACT_OPEN_HEX: {
-            // Handled by pushing a viewer — but update() returns screens, not
-            // this function. Set a pending action the update path can pick up.
-            // Simplest: open directly here is not possible (no return path), so
-            // we stash and let update handle it next frame.
-            // For Milestone 2 we open via the A button; these menu entries are
-            // a convenience. We push through a small pending mechanism:
+            // Viewers are pushed by update(), so stash a pending action for it
+            // to pick up next frame:
             m_pending_view_path = pane.selected_path();
             m_pending_view_hex  = (action_id == ACT_OPEN_HEX);
             break;
@@ -519,7 +511,7 @@ void FileBrowserScreen::do_paste(bool cut) {
                       : Lang::t("file_browser.op_copying");
 
     // Run the copy/move on a worker thread so the UI keeps drawing the progress
-    // overlay instead of freezing — essential now that a source can be a slow
+    // overlay instead of freezing - essential now that a source can be a slow
     // network share, not just the SD card. Mirrors the install worker.
     auto* arg = new PasteThreadArg{ m_clipboard, dest_dir, cut, &m_progress };
 #ifdef PLATFORM_SWITCH
@@ -927,7 +919,7 @@ void FileBrowserScreen::save_install_log() {
         SDL_Log("save_install_log: could not open %s", path.c_str());
         return;
     }
-    std::fprintf(f, "GarageNX install log — %s\n", Core::DateTime::clock_string_now().c_str());
+    std::fprintf(f, "GarageNX install log - %s\n", Core::DateTime::clock_string_now().c_str());
     std::fprintf(f, "Source: %s\n", m_install_path.c_str());
     std::fprintf(f, "Target: %s\n",
                  m_install_storage == Core::Ncm::Storage::SdCard ? "SD card" : "internal (NAND)");

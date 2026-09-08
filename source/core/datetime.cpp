@@ -5,6 +5,10 @@
 #include <cctype>
 #include <cstdio>
 
+#ifdef PLATFORM_SWITCH
+#include <switch.h>
+#endif
+
 namespace Core::DateTime {
 
 DateOrder parse_order(const std::string& s) {
@@ -68,6 +72,20 @@ static bool to_local(std::time_t t, std::tm& out) {
     return true;
 }
 
+// Current unix time. On Switch, prefer the time service directly: newlib's
+// time() returns a snapshot taken once at boot (__boottime + elapsed ticks),
+// so a clock set after startup - e.g. by the launch-time NTP sync - would not
+// show up until the next launch. Falls back to time() if the service read
+// fails.
+std::time_t now_unix() {
+#ifdef PLATFORM_SWITCH
+    u64 t = 0;
+    if (R_SUCCEEDED(timeGetCurrentTime(TimeType_UserSystemClock, &t)))
+        return (std::time_t)t;
+#endif
+    return std::time(nullptr);
+}
+
 std::string clock_string(std::time_t t) {
     std::tm tm;
     if (!to_local(t, tm)) return {};
@@ -76,7 +94,7 @@ std::string clock_string(std::time_t t) {
     return date(tm, order, '/') + "  " + time_of_day(tm, b.time_24h, b.show_seconds);
 }
 
-std::string clock_string_now() { return clock_string(std::time(nullptr)); }
+std::string clock_string_now() { return clock_string(now_unix()); }
 
 std::string log_stamp(std::time_t t) {
     std::tm tm;
@@ -102,8 +120,8 @@ std::string sortable_stamp(std::time_t t) {
     return std::string(buf);
 }
 
-std::string sortable_stamp_now() { return sortable_stamp(std::time(nullptr)); }
+std::string sortable_stamp_now() { return sortable_stamp(now_unix()); }
 
-std::string log_stamp_now() { return log_stamp(std::time(nullptr)); }
+std::string log_stamp_now() { return log_stamp(now_unix()); }
 
 } // namespace Core::DateTime

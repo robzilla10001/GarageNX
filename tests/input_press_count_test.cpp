@@ -7,7 +7,7 @@
 // not 1. That collapse (a bitmask OR losing repeated taps) was the "7 presses ->
 // 5 lines" file-explorer drop.
 //
-// This is a logic mirror, not the shipping code — if input.cpp's counting
+// This is a logic mirror, not the shipping code - if input.cpp's counting
 // changes, this must change with it. It exists to prove the algorithm, which is
 // the part that can be subtly wrong; the SDL glue around it is trivial and
 // hardware-verified separately.

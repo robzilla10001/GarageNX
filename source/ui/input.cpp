@@ -140,15 +140,15 @@ void init() {
     if (SDL_NumJoysticks() > 0) {
         s_joystick = SDL_JoystickOpen(0);
         if (!s_joystick) {
-            SDL_Log("Input::init — SDL_JoystickOpen failed: %s", SDL_GetError());
+            SDL_Log("Input::init - SDL_JoystickOpen failed: %s", SDL_GetError());
         } else {
-            SDL_Log("Input::init — Joystick: %s", SDL_JoystickName(s_joystick));
+            SDL_Log("Input::init - Joystick: %s", SDL_JoystickName(s_joystick));
         }
         // Ensure discrete button events are queued so no press is dropped when a
         // frame stalls (see poll()).
         SDL_JoystickEventState(SDL_ENABLE);
     } else {
-        SDL_Log("Input::init — No joystick found, using keyboard fallback");
+        SDL_Log("Input::init - No joystick found, using keyboard fallback");
     }
 }
 
@@ -165,7 +165,7 @@ bool poll() {
 
     // Discrete button edges from the SDL event queue. Polling the joystick state
     // once per frame (below) drops any press that begins and ends between two
-    // poll() calls — which happens whenever a frame stalls (e.g. reading a file
+    // poll() calls - which happens whenever a frame stalls (e.g. reading a file
     // preview on cursor move). The event queue records every transition, so we
     // OR these in and each rapid tap registers as exactly one press.
     uint32_t event_pressed  = 0;
@@ -183,7 +183,7 @@ bool poll() {
             case SDL_JOYBUTTONDOWN: {
                 const uint32_t m = joy_button_to_mask(event.jbutton.button);
                 event_pressed |= m;
-                // Count each down separately — this is the whole point: two taps
+                // Count each down separately - this is the whole point: two taps
                 // in one (stalled) frame are two presses, not one. Cap at 255.
                 if (m) {
                     const int idx = button_bit_index(m);
@@ -264,7 +264,7 @@ bool poll() {
     s_released = (s_held_prev & ~s_held_curr) | event_released;
 
     // A poll-derived edge (button newly held this frame, or an analog-stick
-    // direction — the stick emits no button events) must count as at least one
+    // direction - the stick emits no button events) must count as at least one
     // press even when the event queue saw nothing. Only bump when the event
     // queue didn't already count this button, so a normal single tap that both
     // the queue and the poll observe stays a count of 1, not 2.

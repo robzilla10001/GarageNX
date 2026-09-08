@@ -27,7 +27,7 @@ std::unique_ptr<Screen> SaveBackupScreen::update(bool& pop) {
 
     // Phase 0: do nothing, so draw() below gets one frame onto the display before
     // the blocking sweep starts. Same reason the automatic sweep waits for the
-    // second loop iteration — otherwise the console sits on the previous screen
+    // second loop iteration - otherwise the console sits on the previous screen
     // with no indication anything is happening.
     if (m_phase == 0) { m_phase = 1; return nullptr; }
 
@@ -48,7 +48,7 @@ std::unique_ptr<Screen> SaveBackupScreen::update(bool& pop) {
             // said "%s" where the code passed an int would be undefined behaviour
             // on a console, triggered by nothing worse than a bad translation.
             // Everywhere else in this codebase the format is a literal and the
-            // translated text is an argument — same rule here.
+            // translated text is an argument - same rule here.
             o.body = std::to_string(m_backed_up) + " " +
                      Lang::t("backup_saves.done_body");
         } else {

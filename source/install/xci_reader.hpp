@@ -7,12 +7,11 @@
 //   0x000  XCI header (0x200 bytes): magic "HEAD", partition table at 0x128
 //   0x200  HFS0 root partition table (lists: "update", "normal", "secure", "logo")
 //   Secure partition contains the installable content as one NSP per meta
-//   (base, update, DLC — same as a standalone NSP from a shop download).
+//   (base, update, DLC - same as a standalone NSP from a shop download).
 //
-// The strategy: open the XCI, locate the Secure HFS0 partition, enumerate its
-// files (which are themselves HFS0-packaged NCAs — effectively inline NSPs).
-// We expose them as a flat list of PfsEntry-compatible records so the installer
-// can treat XCI exactly like NSP.
+// The strategy: locate the Secure HFS0 partition and expose its files (which
+// are themselves HFS0-packaged NCAs - effectively inline NSPs) as a flat list
+// of PfsEntry-compatible records, so the installer treats XCI exactly like NSP.
 //
 // HFS0 on-disk format:
 //   0x00  magic "HFS0"
@@ -53,7 +52,7 @@ public:
     // Read bytes from entry `idx` at `offset_in_entry` into `buf`.
     size_t read(size_t idx, uint64_t offset_in_entry, void* buf, size_t len);
 
-    // Read full content of small entry (tik/cert/cnmt — must be ≤ 1 MB).
+    // Read full content of small entry (tik/cert/cnmt - must be ≤ 1 MB).
     bool read_all(size_t idx, std::vector<uint8_t>& out);
 
 private:

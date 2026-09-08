@@ -31,13 +31,13 @@ struct FirmwareInfo {
     Field device_id;           // SENSITIVE
     Field hiz_charging;        // Hi-Z charging mode bool → "Yes"/"No"
     Field kiosk_mode;          // bool
-    Field serial_reported;     // SENSITIVE — from setsys
-    Field serial_true;         // SENSITIVE — real serial, or a note if blanked
+    Field serial_reported;     // SENSITIVE - from setsys
+    Field serial_true;         // SENSITIVE - real serial, or a note if blanked
     Field prodinfo_blanked;    // "Yes" if exosphere is blanking PRODINFO
     Field language;            // resolved language name
     Field region;              // resolved region name
     Field nickname;            // console nickname (mii/device)
-    Field parental_pin;        // SENSITIVE — may be unavailable
+    Field parental_pin;        // SENSITIVE - may be unavailable
 };
 
 struct HardwareInfo {

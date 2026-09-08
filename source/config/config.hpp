@@ -56,15 +56,11 @@ struct Visibility {
 };
 
 // Which storage surfaces a transport exposes. One instance PER TRANSPORT, so a
-// user can serve saves over FTP without exposing them over MTP, or open NAND on
-// one and not the other.
-//
-// This was a single shared block called `MTP` that FTP and HTTP also read — a
-// key named mtp.* silently governing FTP is the kind of thing that misleads
-// exactly when someone is trying to lock a surface down.
+// user can serve saves over FTP without exposing them over MTP. (Previously a
+// single shared `MTP` block that FTP and HTTP also read.)
 //
 // NOTE for anything that MOUNTS: a mount is global, a toggle is per-transport.
-// A partition must be mounted if ANY transport exposes it — see mount_nand().
+// A partition must be mounted if ANY transport exposes it - see mount_nand().
 struct Surfaces {
     bool sd_card         = true;
     bool nand_user       = true;
@@ -78,8 +74,8 @@ struct Surfaces {
     bool user_storages   = true;
 };
 
-/// True if `id` is exposed by AT LEAST ONE transport. For global decisions —
-/// mounting, service init — that cannot be made per-transport.
+/// True if `id` is exposed by AT LEAST ONE transport. For global decisions -
+/// mounting, service init - that cannot be made per-transport.
 bool any_transport_exposes(bool Surfaces::* field);
 
 struct MTP {

@@ -3,20 +3,17 @@
 //
 // Overlaps a slow producer with a slow consumer.
 //
-// The transfer paths read a chunk from USB, then write it to storage, then read
-// the next — strictly alternating, so the bulk endpoint sits idle for the whole
-// write and the storage sits idle for the whole read. Measured on hardware that
-// costs about half the achievable rate: ~18 MB/s installing versus ~36 MB/s for
-// a plain copy over the same link.
-//
-// This hands the caller one of two page-aligned buffers to fill while a worker
-// thread drains the other, so the two overlap. usb:ds requires page-aligned DMA
-// memory, which is why the buffers are owned here and lent out by pointer
-// rather than copied through.
+// Strictly alternating read-then-write leaves the bulk endpoint idle during the
+// write and the storage idle during the read - measured on hardware at about
+// half the achievable rate (~18 MB/s installing versus ~36 MB/s for a plain
+// copy over the same link). This hands the caller one of two page-aligned
+// buffers to fill while a worker thread drains the other. usb:ds requires
+// page-aligned DMA memory, which is why the buffers are owned here and lent
+// out by pointer rather than copied through.
 //
 // Deliberately transport-agnostic: the consumer is a callback, so the same
 // class serves an NCM placeholder write, an fwrite to the SD card, or a future
-// FTP/HTTP path. Thread primitive follows NetworkService — libnx Thread on
+// FTP/HTTP path. Thread primitive follows NetworkService - libnx Thread on
 // Switch, std::thread on PC.
 
 #include <atomic>
@@ -63,8 +60,8 @@ public:
 
     /// Stop the worker and join it, so no further sink call can begin. Blocks
     /// until any in-flight sink call has returned. Idempotent, and safe on an
-    /// invalid buffer. The destructor calls this; callers tearing down early —
-    /// e.g. before destroying state the sink closes over — call it explicitly so
+    /// invalid buffer. The destructor calls this; callers tearing down early -
+    /// e.g. before destroying state the sink closes over - call it explicitly so
     /// the worker is provably gone first. After quiesce() the buffer accepts no
     /// more work; acquire()/submit()/flush() must not be called.
     void quiesce();

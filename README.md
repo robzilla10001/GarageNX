@@ -6,7 +6,7 @@ GarageNX is an all-in-one homebrew management tool for the Nintendo Switch - an 
 
 Why? DBI has a shady reputation, and the author is notoriously hostile towards non-russian speakers. He has gone so far as to threaten bricking the consoles of anyone using an unofficial translation. I personally have not seen this happen, nor do I know of anyone who has; however, it's a bold enough claim to be taken seriously. It may not be malware in the strictest terms, but it's close enough to make a lot of people feel a particular kind of way. So, in an effort to alleviate those issues, I'm attempting to make a 1 for 1 replacement for DBI. There are other installers out there, with their strengths and weaknesses, but none of them really does exactly what DBI does. While researching what is necessary to make this piece of software work, I've come to realize that there isn't much that DBI does that is unique. Challenging? Sure. There's a lot of work that has gone into this package, I'm not going to pretend that it's not a well thought out, well executed group of tools. But it's not impossible to replicate, and I aim to prove that. And, as the code is not available, I will not be reusing any of the author of DBI's original code; everything is built from the ground up (unless otherwise noted) specifically for this project. I did not go out of my way to reinvent the wheel everywhere; SDL2 is used for rendering and input, and nlohmann/json for config and language parsing. Everything else - including the FTP, HTTP, and MTP network services - is written from scratch, using libnx, ITotalJustice's gists and other open source projects as reference materials. There has been no reverse engineering or disassembly done here: I want absolutely no ties whatsoever to DBI. We appreciate what you've done for the community thus far, but we have it from here. Your services are no longer required.  
 
-> **Status:** Current progress ~90%. Milestone 6 (services) is nearly complete; Only the tools menu remains. See [architecture](https://github.com/robzilla10001/GarageNX/blob/main/docs/GarageNX_Architecture.md).
+> **Status:** 1.0.0a. All planned feature areas are implemented and hardware-tested; see [architecture](docs/ARCHITECTURE.md) for the current state and the few known deferred items.
 
 ---
 
@@ -28,8 +28,8 @@ Planned and in-progress functionality includes:
 - **File browser** - ranger-style three-column navigation with split-pane copy/move, text and hex viewers (paged for large files), and archive peeking (NSP/XCI content listing).
 - **Network browser** - navigate HTTP(S), FTP, and GitHub repositories using the same browser interface.
 - **Title management** - enumerate installed titles; uninstall, move between SD and NAND, reset version requirements, edit metadata, dump, and repack.
-- **Homebrew management** - recursively scan and launch NRO files; automatic forwarder generation.
-- **Maintenance tools** - clean orphaned records, old updates, placeholders, unused tickets, and more; firmware dumping; NTP sync; version manifests.
+- **Homebrew management** - recursively scan and launch NRO files; forwarder generation.
+- **Maintenance tools** - clean orphaned records, old updates, placeholders, unused tickets, firmware dumping, version manifests.
 - **System information** - comprehensive firmware, CFW, hardware, battery, and activity reporting.
 - **Connectivity** - USB-MTP, FTP server, and HTTP server with QR-code network sharing.
 - **Full localization** - drop-in language files; no language is second-class.
@@ -44,12 +44,26 @@ Planned and in-progress functionality includes:
 - `switch-sdl2`, `switch-sdl2_ttf`, `switch-sdl2_image` (via `dkp-pacman`)
 - CMake 3.16+
 
+### Before Building
+Add dependencies/portlibs:
+- From DevKitPro environment:
+  1. git clone https://github.com/robzilla10001/GarageNX.git
+  2. cd GarageNX
+  3. apt install -y git patch make autoconf automake libtool curl
+  4. export PATH="$DEVKITPRO/devkitA64/bin:$PATH"
+  5. mkdir -p build
+  6. cd build
+  7. git clone https://github.com/DarkMatterCore/libusbhsfs
+  8. cd libusbhsfs && make BUILD_TYPE=GPL install
+  9. cd ..
+  10. chmod +x build-net-portlibs.sh
+  11. ./build-net-portlibs.sh
+
 ### Compile
 
 ```bash
-mkdir build && cd build
-cmake .. -DPLATFORM=Switch
-make -j$(nproc)
+cd build
+cmake -- -DPLATFORM=Switch && make -j$(nproc)
 ```
 
 The output `GarageNX.nro` will be in the `build/` directory. Copy it to `sdmc:/switch/GarageNX/GarageNX.nro` on your SD card.
@@ -73,7 +87,7 @@ assets/
   icons/       Application icon (bundled)
 ```
 
-The full architecture reference lives in `docs/` (see `GarageNX_Architecture.md`).
+The architecture reference lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); building the optional SMB/NFS network client is covered in [`docs/BUILDING_NETWORK_CLIENT.md`](docs/BUILDING_NETWORK_CLIENT.md).
 
 ---
 
@@ -87,6 +101,37 @@ The full architecture reference lives in `docs/` (see `GarageNX_Architecture.md`
 4. Drop the file into `sdmc:/switch/GarageNX/lang/` on your device.
 
 GarageNX will detect it on next launch and offer to switch. Contributions of translation files back to this repository are very welcome.
+
+---
+
+## Reference notes
+
+### System Information - Power Role and Power Source
+
+System Information reports two USB power fields that come straight from the console's
+USB Power-Delivery hardware, and their values can look odd side by side. Neither is a
+battery state - they describe the **USB connection**, and they are only meaningful
+while something is plugged into the USB-C port:
+
+- **Power Role** - the console's negotiated role on the USB-C bus:
+  - **Sink** - the console is drawing power from the connected device/charger (the
+    normal state when charging from a USB-PD capable source).
+  - **Source** - the console is *supplying* power to another device (USB OTG).
+  - **Unknown** - no role has been negotiated over the CC line. This is the expected
+    reading on a plain (non-PD) wall charger or USB-A adapter: power flows, but there
+    is no digital contract, so the role is simply never reported. It does **not**
+    indicate a fault.
+- **Power Source** - what kind of charger the controller detects:
+  - **Enough Power** - the source supplies adequate current for normal operation.
+  - **Low Power** - a limited-current source (e.g. an unpowered hub or old USB-A
+    port); charging may be slow or pause during gameplay.
+  - **Not Supported** - the source cannot charge the console.
+  - **None** - nothing is connected.
+
+The commonly-seen **Unknown / Enough Power** pair therefore means: a charger that
+delivers plenty of power is connected, but it is a basic charger that does not speak
+USB-PD, so no bus role was negotiated. If both show **None / Unknown** with a charger
+plugged in, try another cable or charger.
 
 ---
 

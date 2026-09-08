@@ -42,7 +42,7 @@ void TitleTestScreen::run() {
     }
 
     // 3. If keys are available, run the decrypt test on the first real USER
-    //    game — not just the first Application-typed entry. System titles
+    //    game - not just the first Application-typed entry. System titles
     //    (qlaunch, sysmodules, etc.) are also typed "Application" by NCM but
     //    live in the low ID range and use the system key-area category, which
     //    our application-key decryptor doesn't handle. User games start at
@@ -80,7 +80,7 @@ void TitleTestScreen::run() {
             }
         }
     } else {
-        m_test_status = "Keys unavailable — decrypt test skipped.";
+        m_test_status = "Keys unavailable - decrypt test skipped.";
     }
 }
 
@@ -110,7 +110,7 @@ void TitleTestScreen::draw() {
     const int lx = x + Layout::PAD_LG;
 
     // ── Keys status ────────────────────────────────────────────────────────────
-    Widgets::draw_text(lx, cy, "Milestone 4 — Phase A validation",
+    Widgets::draw_text(lx, cy, "Milestone 4 - Phase A validation",
                        Font::Size::Medium, Font::Weight::Bold,
                        Theme::Token::Accent);
     cy += 34;

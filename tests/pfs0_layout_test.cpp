@@ -1,7 +1,7 @@
 // tests/pfs0_layout_test.cpp
 //
 // Pins the on-disk PFS0 layout. Two properties matter most:
-//   1. pfs0_total_size() agrees EXACTLY with pfs0_build().total_size — the first is
+//   1. pfs0_total_size() agrees EXACTLY with pfs0_build().total_size - the first is
 //      what a directory listing advertises, the second is what we actually stream.
 //      A mismatch truncates or overruns every download.
 //   2. The header bytes match the format an installer expects, field for field.
@@ -47,7 +47,7 @@ int main() {
         check(L.header.size() == L.header_size, "header buffer matches header_size");
 
         // The string-table field must cover the padding, so data starts exactly at
-        // header_size — this is the field installers use to find the data region.
+        // header_size - this is the field installers use to find the data region.
         const size_t entries_end = 0x10 + files.size() * 0x18;
         check(rd32(L.header, 8) == (uint32_t)(L.header_size - entries_end),
               "string table field includes padding");

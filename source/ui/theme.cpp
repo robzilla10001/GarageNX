@@ -8,7 +8,7 @@ namespace Theme {
 
 // ─── Color tables ─────────────────────────────────────────────────────────────
 // One entry per Token, ordered to match the Token enum.
-// Adjust values here only — never touch rendering code for color changes.
+// Adjust values here only - never touch rendering code for color changes.
 
 static constexpr int TOKEN_COUNT = static_cast<int>(Token::_Count);
 

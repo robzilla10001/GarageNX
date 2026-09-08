@@ -66,7 +66,7 @@ bool init() {
     const Result rc = usbHsFsInitialize(0);
     if (R_FAILED(rc)) {
         // The common real-world cause is the deprecated fsp-usb sysmodule being
-        // installed — libusbhsfs refuses to coexist with it. Worth logging by rc
+        // installed - libusbhsfs refuses to coexist with it. Worth logging by rc
         // so that is diagnosable rather than "USB just does not work".
         SDL_Log("usb: usbHsFsInitialize rc=0x%08X (fsp-usb running?)", rc);
         g_available = false;
@@ -96,19 +96,12 @@ void refresh() {
     UEvent* ev = usbHsFsGetStatusChangeUserEvent();
     if (!ev) return;
 
-    // Zero timeout: poll, never block. This runs on the main loop, and blocking
-    // here would stall the UI for as long as no drive changed — the mirror-bug
-    // pattern this project has hit twice.
+    // Zero timeout: poll, never block - this runs on the main loop.
     //
     // libnx has NO ueventWait(). Events are waited on through the generic waiter
-    // API — waiterForUEvent() + waitSingle/waitMulti — which is what libusbhsfs's
-    // own example_event does. I originally wrote ueventWait() and DECLARED IT IN
-    // MY OWN STUB, so the guard cheerfully validated a function that does not
-    // exist. See the warning in tools/stubs/switch.h.
-    // waitMulti with ONE waiter, not waitSingle. Both are libnx API, but
-    // libusbhsfs's own example uses waitMulti and I could verify that by reading
-    // it; waitSingle I merely believed in, and believing is what produced the
-    // ueventWait() call this replaced. Prefer the form you can see working.
+    // API (waiterForUEvent + waitMulti), as in libusbhsfs's own example_event.
+    // waitMulti with ONE waiter, not waitSingle: prefer the form you can see
+    // working. See the warning in tools/stubs/switch.h.
     int idx = 0;
     Waiter w = waiterForUEvent(ev);
     if (R_SUCCEEDED(waitMulti(&idx, 0, w))) rebuild();

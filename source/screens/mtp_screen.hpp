@@ -1,8 +1,8 @@
 #pragma once
 // source/screens/mtp_screen.hpp
 // Status screen for the MTP service. Unlike FTP/HTTP there is no address to
-// show and nothing to scan — the host is whatever is on the other end of the
-// USB cable — so this reports connection and session state instead.
+// show and nothing to scan - the host is whatever is on the other end of the
+// USB cable - so this reports connection and session state instead.
 
 #include "screens/screen.hpp"
 #include "core/sleep_inhibit.hpp"
@@ -35,7 +35,7 @@ private:
     // *displayed* figures are latched once per second. Refreshing text every frame
     // makes the numbers strobe unreadably and needlessly churns the text cache;
     // latching keeps them legible without throttling the render loop itself
-    // (throttling the loop would starve input — the whole point of the render fix).
+    // (throttling the loop would starve input - the whole point of the render fix).
     void refresh_latched_stats();
 
     std::unique_ptr<Services::MtpServer> m_server;
@@ -45,7 +45,7 @@ private:
     uint32_t    m_last_latch_ms = 0;
     std::string m_disp_sent  = "0 B";
     std::string m_disp_recv  = "0 B";
-    std::string m_disp_cur   = "—";     // current speed
-    std::string m_disp_avg   = "—";     // average speed (data phase)
-    std::string m_disp_eta   = "—";     // ETA, "—" until wire size known
+    std::string m_disp_cur   = "-";     // current speed
+    std::string m_disp_avg   = "-";     // average speed (data phase)
+    std::string m_disp_eta   = "-";     // ETA, "-" until wire size known
 };

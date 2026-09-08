@@ -2,16 +2,11 @@
 // source/core/record_probe.hpp
 // Diagnostic battery for the NS application-record write IPC (Push/Delete
 // ApplicationRecord), which returns LibnxError_BadInput (0xF601) in our current
-// form. Rather than iterate one guess per build, this runs many permutations in
-// a single build; the UI shows each variant's result so we can identify the one
-// that returns 0x0 in one hardware pass.
-//
-// Each variant tries a different combination of:
-//   - service handle (app-manager interface / raw ns:am2 / raw ns:am)
-//   - command IDs
-//   - input layout (packed struct / separate args)
-// All variants are READ-ONLY-SAFE except the ones that actually push; those are
-// clearly labeled and only run when explicitly selected.
+// form. Runs many permutations in a single build; the UI shows each variant's
+// result so the working combination can be identified in one hardware pass.
+// Variants vary service handle, command IDs, and input layout. All variants
+// are READ-ONLY-SAFE except the ones that actually push; those are clearly
+// labeled and only run when explicitly selected.
 
 #include "core/ncm.hpp"
 #include <string>

@@ -31,7 +31,7 @@ std::string rights_id_hex(const std::array<uint8_t, 0x10>& rid) {
 void TicketsScreen::build_rows() {
     // Resolving title names blocks; drive the resolver rather than waiting on it,
     // and draw while working. Same contract as the Activity Log and the backup
-    // sweep — this runs on the main thread, so it must do the main loop's job.
+    // sweep - this runs on the main thread, so it must do the main loop's job.
     auto pump = [] {
         Renderer::begin_frame();
         TitleBar::draw();
@@ -59,7 +59,7 @@ void TicketsScreen::build_rows() {
     for (const auto& t : m_tickets) {
         Widgets::ListItem it;
         // save_build_label resolves to "<Name> [APPID]", or the id fallback when
-        // the title is not installed — which is common and correct here: a ticket
+        // the title is not installed - which is common and correct here: a ticket
         // can outlive the title it belongs to.
         const std::string label = Services::save_build_label(t.title_id);
         it.label = Services::save_label_is_unresolved(label)

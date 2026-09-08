@@ -29,7 +29,7 @@ void FileViewerScreen::on_enter() {
     m_fp = fopen(m_path.c_str(), "rb");
     if (!m_fp) {
         m_error = true;
-        SDL_Log("FileViewer — cannot open %s", m_path.c_str());
+        SDL_Log("FileViewer - cannot open %s", m_path.c_str());
         return;
     }
 

@@ -2,16 +2,13 @@
 //
 // The pure, SDL-free core of the rendered-text cache: the key that identifies a
 // unique rasterized string, and the eviction policy. Kept separate from the SDL
-// texture handling in renderer.cpp so this logic — the part that can be subtly
-// wrong — is unit-testable on the host (see tests/text_cache_test.cpp).
+// texture handling in renderer.cpp so this logic is unit-testable on the host
+// (see tests/text_cache_test.cpp).
 //
-// WHY THIS EXISTS: List::draw() and the file browser call Font::render() +
-// SDL_CreateTextureFromSurface + SDL_DestroyTexture for every visible row every
-// frame — rasterising and uploading text that never changed, then throwing the
-// texture away. On a busy screen (two panes of file lists) that is 40+
-// rasterise+upload+destroy cycles per frame, dropping the frame rate, which is
-// what makes navigation stutter and drop inputs. Caching the texture by content
-// collapses steady-state cost to one RenderCopy per row.
+// WHY THIS EXISTS: List::draw() and the file browser rasterise and upload text
+// for every visible row every frame - 40+ rasterise+upload+destroy cycles per
+// frame on a busy screen, dropping the frame rate. Caching the texture by
+// content collapses steady-state cost to one RenderCopy per row.
 
 #pragma once
 

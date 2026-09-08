@@ -1,7 +1,7 @@
 #pragma once
 // source/ui/widgets.hpp
 // Reusable UI widget primitives.
-// All widgets draw into the current SDL renderer frame — call inside begin_frame/end_frame.
+// All widgets draw into the current SDL renderer frame - call inside begin_frame/end_frame.
 
 #include <SDL2/SDL.h>
 #include <cstdint>
@@ -16,23 +16,18 @@ namespace Widgets {
 
 // ─── Delayed round-robin navigation ───────────────────────────────────────────
 // Shared cursor-stepping helper used by List and by screens that manage their
-// own cursor (TitleList, TitleDetail action row). When the cursor is already at
-// an edge and the user keeps navigating in that direction, the cursor wraps to
-// the opposite end — but only after `delay_ms` of sustained boundary contact, so
-// a long hold or an accidental extra press that reaches the edge doesn't wrap
-// unintentionally. `step()` returns the new cursor index (0 .. count-1).
+// own cursor. When the cursor is already at an edge and the user keeps
+// navigating in that direction, the cursor wraps to the opposite end - but only
+// after `delay_ms` of sustained boundary contact. `step()` returns the new
+// cursor index (0 .. count-1).
 //
-// delay_ms was 450 and is 300 as of rev 4 — a third off, on the judgement that
-// the original was slower than it needed to be. All three call sites take the
-// default; there is deliberately no per-site override, so this constant is the
-// whole knob.
+// delay_ms was 450 and is 300 as of rev 4. All three call sites take the
+// default; there is deliberately no per-site override.
 //
-// Note the timer is wall-clock from first edge contact, and so is independent of
-// the input layer's repeat state machine. But the wrap only fires on a call
-// where `down`/`up` is true, so it does still need a press to LAND after the
-// delay has elapsed. While the input layer coalesces sub-frame taps (see §16
-// Open Items), wrapping will feel unreliable at the edge no matter what this
-// value is — that is a separate defect and lowering this will not mask it.
+// The timer is wall-clock from first edge contact, independent of the input
+// layer's repeat state machine, but the wrap only fires on a call where
+// `down`/`up` is true. While the input layer coalesces sub-frame taps, wrapping
+// will feel unreliable at the edge - that is a separate defect.
 struct WrapNav {
     int      edge_dir   = 0;   // +1 = armed at bottom, -1 = armed at top, 0 = none
     uint32_t edge_since = 0;   // SDL_GetTicks() when the edge was first reached
@@ -112,7 +107,7 @@ private:
 };
 
 // ─── Toggle widget ────────────────────────────────────────────────────────────
-// A boolean on/off pill — used in Settings.
+// A boolean on/off pill - used in Settings.
 
 /// Draw a toggle at (x, y). Returns the new value if the user pressed A while focused.
 bool draw_toggle(int x, int y, bool value, bool focused);
@@ -158,7 +153,7 @@ int draw_text(int x, int y,
 // ─── QR code ──────────────────────────────────────────────────────────────────
 
 /// Draw a QR code inside a box_px square at (x, y), including the mandatory
-/// 4-module quiet zone. Always rendered dark-on-white regardless of theme —
+/// 4-module quiet zone. Always rendered dark-on-white regardless of theme -
 /// scanners need the contrast and the light margin, so this deliberately does
 /// not use Theme tokens. The module size is floored to a whole pixel and the
 /// result is centred in the box, keeping every module crisp.

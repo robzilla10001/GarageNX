@@ -1,6 +1,6 @@
 #pragma once
 // source/core/storage.hpp
-// SD card and NAND capacity, plus SoC temperature. Fast to query — safe to poll
+// SD card and NAND capacity, plus SoC temperature. Fast to query - safe to poll
 // from the status bar on an interval.
 
 #include <cstdint>

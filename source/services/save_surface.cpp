@@ -1,7 +1,7 @@
 // source/services/save_surface.cpp
 //
 // Lifted from ftp_server.cpp's static helpers, which were the hardware-verified
-// implementation (3d-b). The logic is unchanged — only its home moved, so MTP
+// implementation (3d-b). The logic is unchanged - only its home moved, so MTP
 // consumes the same code rather than a lookalike.
 
 #include "services/save_surface.hpp"
@@ -32,7 +32,7 @@ void savelog(const char* fmt, ...) {
     ::fclose(f);
 }
 
-// "%016llX" of an application id — the part of a title folder name that actually
+// "%016llX" of an application id - the part of a title folder name that actually
 // identifies it, independent of the display name in front of it.
 std::string app_id_hex(uint64_t application_id) {
     char buf[24];
@@ -57,7 +57,7 @@ std::vector<std::string> save_title_labels(const std::string& user, bool block) 
     // Ensure titles are enumerated/resolved before labelling folders.
     // name_for_app() is cache-only by design (it must never do ncm work on a
     // transport thread), so without this the cache is empty unless the user
-    // happened to browse Installed Titles first — and every folder falls back to
+    // happened to browse Installed Titles first - and every folder falls back to
     // "Title <id>".
     //
     // The BLOCKING form is for transport workers, whose wait the main loop can
@@ -148,8 +148,8 @@ bool save_wipe(const std::string& mounted_root) {
 bool save_delete_record(const std::string& user, const std::string& title_label) {
     Core::SaveMount::release();   // the record must not be mounted during deletion
 
-    // Find the (user, save) exactly as save_resolve() does — match the user by
-    // name and the title by the app id embedded in the label — but keep the
+    // Find the (user, save) exactly as save_resolve() does - match the user by
+    // name and the title by the app id embedded in the label - but keep the
     // save_data_id, which is the handle deletion needs.
     for (const auto& u : Core::SaveMount::list_users()) {
         if (u.name != user) continue;
@@ -184,7 +184,7 @@ std::vector<SaveRef> save_enumerate_all(const std::function<void()>& pump) {
 
     if (pump) {
         // MAIN-THREAD caller. installed_titles_list() would block waiting for the
-        // main loop to resolve names — but WE are that loop, so it would wait out
+        // main loop to resolve names - but WE are that loop, so it would wait out
         // the full timeout and hand back id-only labels, which then get written to
         // disk as backup folder names. So do the loop's job instead: drive the
         // resolver directly and let the caller draw between units.

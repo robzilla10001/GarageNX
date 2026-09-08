@@ -3,17 +3,13 @@
 //
 // The main-menu "Back Up Saves" action: back up EVERY live save, now.
 //
-// A screen rather than an inline action because the sweep is synchronous and can
-// take a while — the user needs something on screen before it starts, and a
-// result afterwards. The screen paints a static page, then on its SECOND update
+// A screen rather than an inline action because the sweep is synchronous and
+// can take a while. The screen paints a static page, then on its SECOND update
 // runs the sweep, which blocks and draws its own progress frames through the
-// shared overlay (see ui/backup_overlay.hpp). Waiting for the second update is
-// the same trick main.cpp uses for the automatic sweep, and for the same reason:
-// the first frame has to reach the display before anything blocks it.
+// shared overlay (see ui/backup_overlay.hpp).
 //
-// Distinct from the automatic sweep in ONE respect only — it backs up everything
-// rather than only what is stale. Both share one implementation
-// (Core::SaveBackup::sweep_impl) so they cannot drift apart.
+// Distinct from the automatic sweep in ONE respect only - it backs up
+// everything rather than only what is stale. Both share one implementation.
 
 #include "screens/screen.hpp"
 

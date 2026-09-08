@@ -2,14 +2,14 @@
 //
 // Proves the destruction-order defect behind the MTP cancel crash, and that the
 // fix (a derived destructor that stops the worker before members die) resolves
-// it. This is pure C++/threading semantics — no libnx — so it reproduces the
+// it. This is pure C++/threading semantics - no libnx - so it reproduces the
 // EXACT ordering bug on the host, which the five earlier abort()-level fixes
 // could not, because they were treating symptoms of this.
 //
 // THE BUG: MtpServer : NetworkService, with no ~MtpServer. C++ destroys a
 // derived object as: (1) derived dtor [empty], (2) members, (3) base dtor. The
-// base ~NetworkService is what joins the worker thread. So members — including
-// the unique_ptr<StreamInstaller> the worker is actively using — are destroyed
+// base ~NetworkService is what joins the worker thread. So members - including
+// the unique_ptr<StreamInstaller> the worker is actively using - are destroyed
 // in step 2, BEFORE the worker is joined in step 3. Cross-thread use-after-free.
 //
 // This test models that skeleton and runs it under TSan/ASan: the broken variant
@@ -57,7 +57,7 @@ struct ServiceBase {
         uaf_seen = seen;
         worker = std::thread([this, &w] {
             // Busy until asked to stop, continuously using the member the
-            // derived object owns — exactly what recv_install does with m_install.
+            // derived object owns - exactly what recv_install does with m_install.
             while (!stop_flag.load()) {
                 Worklet* p = w.get();
                 if (p) {
@@ -72,7 +72,7 @@ struct ServiceBase {
         stop_flag.store(true);
         if (worker.joinable()) worker.join();
     }
-    // Base dtor joins LAST — this is the trap when the derived class has no dtor.
+    // Base dtor joins LAST - this is the trap when the derived class has no dtor.
     virtual ~ServiceBase() { stop(); }
 };
 
@@ -101,7 +101,7 @@ struct FixedServer : ServiceBase {
 // The broken variant is expected to exhibit UAF. We do NOT assert it crashes
 // (that is UB and platform-dependent); we assert the FIXED variant is clean over
 // many trials, which is the property that matters. The broken variant is built
-// and exercised so the sanitizers have something to catch — under TSan/ASan a
+// and exercised so the sanitizers have something to catch - under TSan/ASan a
 // clean run of the whole binary is the signal.
 static void test_fixed_server_has_no_teardown_uaf() {
     for (int trial = 0; trial < 200; ++trial) {
@@ -118,11 +118,11 @@ static void test_fixed_server_has_no_teardown_uaf() {
 
 // NOTE on the broken variant: an earlier version of this test also constructed a
 // BrokenServer (no derived dtor) to let the sanitizers observe the race directly.
-// It does — TSan reports a data race in operator delete, which IS the crash — but
+// It does - TSan reports a data race in operator delete, which IS the crash - but
 // running it makes TSan fail the whole suite (exit 66) on an intentional bug,
 // turning ctest red. The race is documented and was confirmed during development;
-// we do not run it by default. The positive assertion below — that the FIXED
-// ordering is clean across many trials under TSan/ASan — is the property the
+// we do not run it by default. The positive assertion below - that the FIXED
+// ordering is clean across many trials under TSan/ASan - is the property the
 // build must guarantee, and it is sufficient.
 
 int main() {

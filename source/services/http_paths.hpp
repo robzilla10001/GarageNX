@@ -1,18 +1,18 @@
 // source/services/http_paths.hpp
 //
-// Pure URL-path model for the HTTP server's install routing — no sockets, no
-// libnx, so it is unit-tested on the host. It mirrors the FTP model (ftp_paths.hpp)
-// so the two transports classify install targets identically:
+// Pure URL-path model for the HTTP server's install routing - no sockets, no
+// libnx, so it is unit-tested on the host. It mirrors the FTP model
+// (ftp_paths.hpp) so the two transports classify install targets identically:
 //
 //   PUT /install/sd/Game.nsz    → install Game.nsz to the SD card
 //   PUT /install/nand/Game.nsz  → install Game.nsz to NAND
 //   PUT /<anything else>        → write a plain file (the original behaviour)
 //
-// Why a distinct prefix ("/install/...") rather than FTP's folder names ("SD
-// Install"): a URL path with spaces has to be percent-encoded, and a client that
-// forgets is a silent mis-route. A slash-delimited ASCII prefix is unambiguous
-// over HTTP and reads naturally in a URL. The TARGET meanings are identical to
-// FTP's; only the spelling suits the transport.
+// Why a distinct prefix ("/install/...") rather than FTP's folder names: a
+// URL path with spaces has to be percent-encoded, and a client that forgets is
+// a silent mis-route. A slash-delimited ASCII prefix is unambiguous over HTTP.
+// The TARGET meanings are identical to FTP's; only the spelling suits the
+// transport.
 
 #pragma once
 
@@ -26,9 +26,9 @@ inline constexpr const char* kHttpInstallSd     = "sd";
 inline constexpr const char* kHttpInstallNand   = "nand";
 
 enum class HttpTarget {
-    Filesystem,   // a normal path — plain file I/O (download / upload)
-    SdInstall,    // PUT under /install/sd   — install to SD card
-    NandInstall,  // PUT under /install/nand — install to NAND
+    Filesystem,   // a normal path - plain file I/O (download / upload)
+    SdInstall,    // PUT under /install/sd   - install to SD card
+    NandInstall,  // PUT under /install/nand - install to NAND
     Invalid,      // an /install/... path that names no valid target
 };
 
@@ -79,7 +79,7 @@ inline void http_split_first(const std::string& path,
 // install target keeps only its leaf, since installs take a single file, not a
 // tree. For Filesystem/Invalid, `leaf` is cleared.
 //
-// A query string (?...) is stripped before classification — install uploads carry
+// A query string (?...) is stripped before classification - install uploads carry
 // no query, and leaving one on would corrupt the leaf filename.
 inline HttpTarget http_classify(const std::string& raw_path, std::string& leaf) {
     leaf.clear();
@@ -93,7 +93,7 @@ inline HttpTarget http_classify(const std::string& raw_path, std::string& leaf) 
     http_split_first(path, first, rest);
     if (first != kHttpInstallPrefix) return HttpTarget::Filesystem;
 
-    // Under /install — the next segment is the target.
+    // Under /install - the next segment is the target.
     std::string target, after;
     http_split_first(rest, target, after);
 

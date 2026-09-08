@@ -3,7 +3,7 @@
 // Text input via the Switch system software keyboard (swkbd).
 // On PC, falls back to a simple stdin read for development.
 //
-// These calls are BLOCKING — they hand control to the OS keyboard overlay and
+// These calls are BLOCKING - they hand control to the OS keyboard overlay and
 // return when the user confirms or cancels. Call them in response to a button
 // press, not inside the render loop's draw phase.
 

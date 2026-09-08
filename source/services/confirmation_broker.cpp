@@ -15,7 +15,7 @@ ConfirmResult ConfirmationBroker::ask(const std::string& transport,
                                       uint32_t timeout_ms) {
     std::unique_lock<std::mutex> lk(m_mtx);
 
-    // Refuse while shut down (teardown in progress) — deny immediately.
+    // Refuse while shut down (teardown in progress) - deny immediately.
     if (m_shut) return ConfirmResult::Denied;
 
     // One at a time: a second request while one is pending is auto-denied.

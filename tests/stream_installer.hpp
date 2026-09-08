@@ -4,7 +4,7 @@
 // Push-based NSP installer for transports that deliver bytes sequentially and
 // cannot seek: MTP/USB today, FTP/HTTP later.
 //
-// Why this exists: Install::install() is pull-based random-access — it reads the
+// Why this exists: Install::install() is pull-based random-access - it reads the
 // CNMT first (which can sit anywhere in the PFS0) and then reads each NCA by
 // offset. A USB stream can only go forwards, so the existing installer cannot
 // drive it directly. Buffering the whole NSP to disk first would defeat the
@@ -79,7 +79,7 @@ public:
     /// True once every entry has been consumed.
     bool complete() const { return m_phase == Phase::Done; }
 
-    /// The container's size as derived from its own entry table — 0 until the
+    /// The container's size as derived from its own entry table - 0 until the
     /// table has arrived, and 0 for formats that cannot express it.
     ///
     /// This is NOT the authority for how much to read, and has not been since
@@ -89,8 +89,8 @@ public:
     /// coincide for PFS0, whose last entry ends at the file's end, which is why
     /// the old inverted rule worked.
     ///
-    /// They do not coincide for XCI, whose trailing padding — an untrimmed image
-    /// is padded to the gamecard capacity — belongs to the transfer but to no
+    /// They do not coincide for XCI, whose trailing padding - an untrimmed image
+    /// is padded to the gamecard capacity - belongs to the transfer but to no
     /// entry. An XCI front-end must therefore report 0 here rather than infer a
     /// length from `secure`: coming up short does not fail an install, it leaves
     /// unread bytes in the endpoint and desyncs the session.
@@ -102,11 +102,11 @@ public:
 private:
     // The collector runs one rule: COLLECT `m_want_len` bytes at absolute offset
     // `m_want_off`, then run `m_step`. Everything between the current position
-    // and `m_want_off` is discarded as it passes — a stream cannot rewind, so
+    // and `m_want_off` is discarded as it passes - a stream cannot rewind, so
     // bytes we do not want are simply dropped.
     //
     // PFS0 is two steps (header, then table) that happen to be contiguous. XCI
-    // is five at scattered offsets — the design note says four, but an HFS0's
+    // is five at scattered offsets - the design note says four, but an HFS0's
     // table length is only knowable once its header has been read, so each of
     // the two partitions costs two collections, not one.
     enum class Phase { Collect, Data, Done, Failed };
@@ -122,9 +122,9 @@ private:
         // `update`. Everything not collected discards itself in Phase::Collect.
         XciHead,          // 0x38 at 0x100: "HEAD" magic, root HFS0 offset at 0x130
         XciRootHeader,    // 0x10 at the root HFS0
-        XciRootTable,     // the partition table — locates `secure`
+        XciRootTable,     // the partition table - locates `secure`
         XciSecureHeader,  // 0x10 at the secure HFS0
-        XciSecureTable,   // the NCA table — the entries we actually install
+        XciSecureTable,   // the NCA table - the entries we actually install
     };
 
     /// Which front-end drives the collector. Chosen from the filename in
@@ -177,7 +177,7 @@ private:
     /// The format-independent tail: sort into stream order, NSZ key
     /// precondition, container size, NCA count, enter Phase::Data. Nothing below
     /// this line knows whether the bytes came from a PFS0 or an XCI's secure
-    /// partition — which is what makes 4c a front-end rather than a rewrite.
+    /// partition - which is what makes 4c a front-end rather than a rewrite.
     /// `container_size` is the front-end's business: exact for PFS0, 0 for XCI.
     bool   finalize_entries(uint64_t container_size);
 
@@ -196,7 +196,7 @@ private:
     void ncz_worker();
     /// Close the window and join the worker. Safe to call when not running, and
     /// idempotent. `graceful` false means abandon (abort) rather than finish.
-    /// ALWAYS joins before the caller touches the placeholder — see abort().
+    /// ALWAYS joins before the caller touches the placeholder - see abort().
     void ncz_join(bool graceful);
 #ifdef PLATFORM_SWITCH
     static void ncz_thread_entry(void* self);
@@ -222,7 +222,7 @@ private:
 
     // Stashed by whichever header step ran. The table step cannot re-read them:
     // the old design kept a header buffer and a table buffer alive at once,
-    // whereas one general blob holds only the collection in flight — by
+    // whereas one general blob holds only the collection in flight - by
     // table-parse time it holds the TABLE, and reading counts out of it would
     // yield plausible garbage rather than an error. Shared by PFS0 and HFS0,
     // whose headers agree in shape: magic, entry count, string-table size.
@@ -243,7 +243,7 @@ private:
 
     // ── NSZ worker state (slice 4b) ──────────────────────────────────────────
     // m_ncz_error is written by the worker and read by the MTP thread only after
-    // ncz_join(), which is a happens-before edge — no lock needed. Everything
+    // ncz_join(), which is a happens-before edge - no lock needed. Everything
     // else here is touched by one thread at a time by the same argument.
     std::unique_ptr<NczWindow> m_ncz_win;
     std::string                m_ncz_error;

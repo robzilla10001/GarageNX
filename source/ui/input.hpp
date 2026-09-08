@@ -2,7 +2,7 @@
 // source/ui/input.hpp
 // Controller state abstraction.
 // Wraps SDL joystick events into named actions with button-repeat support.
-// All UI code reads from this — never from SDL directly.
+// All UI code reads from this - never from SDL directly.
 
 #include <SDL2/SDL.h>
 #include <cstdint>
@@ -33,7 +33,7 @@ enum class Button : uint32_t {
     LStickLeft  = (1 << 16),
     LStickRight = (1 << 17),
     LStickClick = (1 << 18), // R3 equivalent on left stick (unused by default)
-    RStickClick = (1 << 19), // R3 — hex/text view toggle in file viewer
+    RStickClick = (1 << 19), // R3 - hex/text view toggle in file viewer
 };
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
@@ -56,7 +56,7 @@ bool pressed(Button b);
 
 /// How many distinct presses of this button arrived this frame. Usually 0 or 1,
 /// but fast tapping can land two or more button-down events inside a single
-/// (possibly stalled) frame — pressed() collapses those to one, which drops
+/// (possibly stalled) frame - pressed() collapses those to one, which drops
 /// inputs during rapid navigation. Navigation code should consume this count so
 /// N quick taps produce N steps. Counts only discrete down-events, never repeat.
 int press_count(Button b);

@@ -61,7 +61,7 @@ std::string HttpServer::resolve_vfs(const std::string& path) const {
     // Route through the SHARED resolver, exactly as FtpServer::to_vfs does. This
     // used to be `m_prefix + posix`, which hardcoded the SD card and made HTTP the
     // only transport that could not reach Installed Titles, Save Data, NAND or
-    // Album — the catalog existed to prevent precisely that divergence, and HTTP
+    // Album - the catalog existed to prevent precisely that divergence, and HTTP
     // simply never consumed it.
     const std::string posix = resolve_posix(m_prefix, path);
     const auto r = Services::sp_resolve(posix, Config::get().http.surfaces);
@@ -171,7 +171,7 @@ void HttpServer::run() {
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons(m_port);
     if (::bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        set_error("bind() failed — port in use?"); ::close(listen_fd); return;
+        set_error("bind() failed - port in use?"); ::close(listen_fd); return;
     }
     if (::listen(listen_fd, 4) < 0) {
         set_error("listen() failed"); ::close(listen_fd); return;
@@ -236,21 +236,12 @@ void HttpServer::run() {
                     }
                     m_requests.fetch_add(1);
 
-                    // Percent-DECODE before touching the filesystem. A browser
-                    // encodes anything non-trivial in a URL, so "My Game.nsp"
-                    // arrives as "My%20Game.nsp"; resolving that literally looks
-                    // for a file whose name really contains "%20" and 404s.
-                    //
-                    // This was latent while HTTP was curl-only (you type the name
-                    // you meant), and the web UI would have exposed it instantly:
-                    // every file with a space — which is most real title names —
-                    // would fail to download. Decoding happens on the PATH ONLY,
-                    // after any query string is removed.
-                    //
-                    // Routing (UI / API / install) deliberately uses the RAW path:
-                    // those helpers strip the query and decode their own operands,
-                    // so decoding twice here would corrupt a filename containing a
-                    // literal '%'.
+                    // Percent-DECODE the path before touching the filesystem
+                    // ("My%20Game.nsp" must resolve to "My Game.nsp"), after
+                    // any query string is removed. Routing (UI / API / install)
+                    // deliberately uses the RAW path: those helpers decode their
+                    // own operands, and decoding twice would corrupt a filename
+                    // containing a literal '%'.
                     const std::string fs_path =
                         http_percent_decode(http_path_only(path));
 
@@ -282,7 +273,7 @@ void HttpServer::run() {
 
                             if (api == "/api/status") {
                                 // Note: during an install the accept loop is busy
-                                // and cannot reach here — the page knows that and
+                                // and cannot reach here - the page knows that and
                                 // polls only while idle. This answers the
                                 // before/after state and the last result.
                                 const bool inst = m_installing.load();
@@ -334,7 +325,7 @@ void HttpServer::run() {
                         }
 
                         // ── Installed Titles: stream a virtual NSP ────────────
-                        // The same NspStream FTP RETR and MTP GetObject use — one
+                        // The same NspStream FTP RETR and MTP GetObject use - one
                         // builder, three transports, which is what it was extracted
                         // for. Content-Length is known up front (total_size), so a
                         // browser shows a real progress bar and resumeless clients
@@ -498,7 +489,7 @@ void HttpServer::run() {
                             // touching the filesystem: ReadWrite surfaces (SD,
                             // Album) proceed; NAND/Saves block on an on-device
                             // confirmation; ReadOnly and unknown paths are refused.
-                            // Same guard FTP and MTP use — this is what stops a raw
+                            // Same guard FTP and MTP use - this is what stops a raw
                             // PUT from writing a protected surface unconfirmed.
                             if (Services::guard_write("HTTP", "write", vfs_path,
                                     Config::get().http.surfaces)
@@ -595,7 +586,7 @@ void HttpServer::run() {
                             : "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
                               "Delete failed (directory not empty?)\n");
                     } else if (method == "POST") {
-                        // POST /api/mkdir?path=<dir> — create a new folder. Same
+                        // POST /api/mkdir?path=<dir> - create a new folder. Same
                         // guard as any other write. (POST, not PUT, so it can't be
                         // confused with a file upload.)
                         const std::string apip = http_path_only(path);
@@ -637,7 +628,7 @@ void HttpServer::run() {
 }
 
 // JSON envelope helpers. Defined once each so the literal brace characters in
-// this file stay balanced — the syntax guard counts braces without stripping
+// this file stay balanced - the syntax guard counts braces without stripping
 // string literals, and a listing built from inline "{...}" fragments reports a
 // false imbalance. A guard that cries wolf is a guard people stop reading.
 static void json_open(std::string& out)  { out = "{\"entries\":["; }
@@ -651,7 +642,7 @@ static void json_virtual_dir(std::string& out, bool& first, const std::string& n
 }
 
 // The listing the web UI reads. Dispatches on the resolved path kind so every
-// surface FTP and MTP expose is reachable here too — root chooser, the two
+// surface FTP and MTP expose is reachable here too - root chooser, the two
 // synthesized Save Data levels, the synthesized Installed Titles list, and real
 // directories. Mirrors FtpServer's LIST structure deliberately: the two should
 // answer the same question the same way.
@@ -664,7 +655,7 @@ void HttpServer::list_path_json(int fd, const std::string& posix) {
 
     if (r.kind == Services::PathKind::Root) {
         // Pure chooser: the enabled surfaces. Filesystem surfaces are listed only
-        // when their mount is actually available — the shared probe, so an
+        // when their mount is actually available - the shared probe, so an
         // unmounted surface is hidden identically on every transport.
         for (const auto& srf :
              Services::StorageCatalog::enabled_surfaces(Config::get().http.surfaces)) {
@@ -682,7 +673,7 @@ void HttpServer::list_path_json(int fd, const std::string& posix) {
             for (const auto& label : Services::save_title_labels(sp.user))
                 json_virtual_dir(out, first, label);
         } else {
-            // Inside a mounted save — a real directory.
+            // Inside a mounted save - a real directory.
             const std::string vfs = Services::save_resolve(sp);
             if (!vfs.empty()) { json_close(out); list_dir_json(fd, posix, vfs); return; }
         }
@@ -730,7 +721,7 @@ bool HttpServer::http_install(int cfd, HttpTarget target, const std::string& lea
         dest, Core::Keys::get(), m_install_progress);
     m_installing.store(true);
 
-    // Content-Length is the exact WIRE size — cleaner than FTP, which declares
+    // Content-Length is the exact WIRE size - cleaner than FTP, which declares
     // none. Passing it as the declared size with exact=true lets the driver run
     // the ETA off a real total from the first byte instead of recovering the size
     // from the container table.
@@ -773,7 +764,7 @@ bool HttpServer::http_install(int cfd, HttpTarget target, const std::string& lea
     wire.set_size = [this](uint64_t sz) { m_wire_size.store(sz); };
     wire.add_recv = [this](uint64_t n)  { m_wire_recv.fetch_add(n); };
 
-    // The body bytes already read alongside the headers are the FirstChunk — the
+    // The body bytes already read alongside the headers are the FirstChunk - the
     // driver feeds them before pulling more from the socket, so nothing is lost.
     // They were counted against `remaining` only if they came from the socket;
     // these came from the header read, so subtract them from remaining now.
@@ -811,7 +802,7 @@ void HttpServer::save_install_log(const std::string& filename, bool ok) {
     ::mkdir(dir.c_str(), 0777);
     FILE* f = ::fopen((dir + "/http_install.log").c_str(), "a");
     if (!f) return;
-    std::fprintf(f, "GarageNX HTTP install — %s : %s\n",
+    std::fprintf(f, "GarageNX HTTP install - %s : %s\n",
                  filename.c_str(), ok ? "OK" : "FAILED");
     ::fclose(f);
 #else

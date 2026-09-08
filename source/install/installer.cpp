@@ -4,21 +4,16 @@
 // NCM install pipeline mirrors move_title (M4, hardware-validated):
 //   GeneratePlaceHolderId → CreatePlaceHolder → WritePlaceHolder (streamed) →
 //   Register → ncmContentMetaDatabaseSet → ncmContentMetaDatabaseCommit
+// No PushApplicationRecord: the meta-DB write alone is sufficient for HOS to
+// enumerate and launch the title.
 //
-// No PushApplicationRecord call: the meta-DB write alone is sufficient for HOS
-// to enumerate and launch the installed title, confirmed by M4 move testing.
-// (NS records are auto-populated when NCM has content + a committed meta entry.)
+// The CNMT is inside a .cnmt.nca: decrypt the NCA header (AES-XTS) to find the
+// section offset, decrypt the section (AES-CTR), parse the CNMT to build the
+// NcmContentMetaKey and content list for placeholder creation and registration.
 //
-// CNMT NCA decryption: the CNMT is inside a .cnmt.nca file in the container.
-// We decrypt the NCA header (AES-XTS, header_key) to find the section offset,
-// decrypt the section (AES-CTR), then parse the raw CNMT structure to build the
-// NcmContentMetaKey and content list. This tells us each NCA's content_id, type,
-// and size — which we need for placeholder creation and meta-DB registration.
-//
-// Ticket install: if a .tik is present, we call ES ImportTicket (cmd 1). This
-// is required for titlekey-crypto titles to be launchable. We use a hand-rolled
-// IPC dispatch (same pattern as es.cpp: raw serviceDispatch on the "es" service;
-// NO NX_SERVICE_ASSUME_NON_DOMAIN because ES is a domain service, unlike ns).
+// A .tik is installed via ES ImportTicket (cmd 1, hand-rolled IPC as in
+// es.cpp - no NX_SERVICE_ASSUME_NON_DOMAIN, ES is a domain service). Required
+// for titlekey-crypto titles to be launchable.
 
 #include "install/installer.hpp"
 #include "install/ncz.hpp"
@@ -65,7 +60,7 @@ struct CnmtHeader {
 struct CnmtContentRecord {
     uint8_t  hash[0x20];       // SHA-256 of the NCA (also the content_id)
     uint8_t  content_id[0x10];
-    uint8_t  size_le[6];       // u48 LE — use a helper to decode
+    uint8_t  size_le[6];       // u48 LE - use a helper to decode
     uint8_t  content_type;     // NcmContentType values
     uint8_t  id_offset;
 };
@@ -96,7 +91,7 @@ struct ParsedCnmt {
 
 // Read the CNMT section from a decrypted NCA section blob.
 // The CNMT is the first file in the plain section data (no inner filesystem
-// for Meta NCAs — the section data IS the CNMT directly, starting at offset 0).
+// for Meta NCAs - the section data IS the CNMT directly, starting at offset 0).
 static ParsedCnmt parse_cnmt_bytes(const uint8_t* data, size_t len) {
     ParsedCnmt out;
     if (len < sizeof(CnmtHeader)) return out;
@@ -108,7 +103,7 @@ static ParsedCnmt parse_cnmt_bytes(const uint8_t* data, size_t len) {
     out.key.type         = (NcmContentMetaType)hdr->meta_type;
     out.key.install_type = NcmContentInstallType_Full;
 
-    // Store the raw CNMT bytes — passed directly to ncmContentMetaDatabaseSet.
+    // Store the raw CNMT bytes - passed directly to ncmContentMetaDatabaseSet.
     // This is the PackagedContentMeta format NCM expects; we never reconstruct it.
     out.raw_bytes.assign(data, data + len);
 
@@ -137,7 +132,7 @@ static ParsedCnmt parse_cnmt_bytes(const uint8_t* data, size_t len) {
     }
 
     out.ok = true;
-    SDL_Log("Installer: CNMT parsed — title_id=%016llX version=%u type=0x%02X count=%u raw=%zu",
+    SDL_Log("Installer: CNMT parsed - title_id=%016llX version=%u type=0x%02X count=%u raw=%zu",
             (unsigned long long)out.key.id, out.key.version,
             (unsigned)out.key.type, (unsigned)out.infos.size(), len);
     return out;
@@ -289,8 +284,8 @@ bool content_id_from_name(const std::string& name, NcmContentId& out) {
 }
 
 // ── ES ticket import ──────────────────────────────────────────────────────────
-// ES is a domain service — do NOT use NX_SERVICE_ASSUME_NON_DOMAIN.
-// Cmd 1: ImportTicket(ticket_buf, cert_buf) — no return value.
+// ES is a domain service - do NOT use NX_SERVICE_ASSUME_NON_DOMAIN.
+// Cmd 1: ImportTicket(ticket_buf, cert_buf) - no return value.
 static Result es_import_ticket(Service* es, const void* tik, size_t tik_size,
                                 const void* cert, size_t cert_size) {
     return serviceDispatch(es, 1,
@@ -306,7 +301,7 @@ static Result es_import_ticket(Service* es, const void* tik, size_t tik_size,
 }
 
 // A minimal certificate chain placeholder if the NSP lacks a .cert entry.
-// ImportTicket needs a cert buffer even if empty — pass a zeroed 0x700 block.
+// ImportTicket needs a cert buffer even if empty - pass a zeroed 0x700 block.
 static std::vector<uint8_t> make_empty_cert(size_t size = 0x700) {
     return std::vector<uint8_t>(size, 0);
 }
@@ -320,7 +315,7 @@ bool install(std::vector<ContentEntry> contents,
              bool contents_preregistered) {
     // Do NOT reset a Progress we did not start. When StreamInstaller calls here,
     // this log already contains the only record of the transfer that just
-    // happened — entry sizes, decompressed sizes, registrations. reset() clears
+    // happened - entry sizes, decompressed sizes, registrations. reset() clears
     // log_lines under the mutex, and what survives is this function narrating a
     // no-op over content the caller already installed. See installer.hpp.
     if (!contents_preregistered) progress.reset();
@@ -353,7 +348,7 @@ bool install(std::vector<ContentEntry> contents,
         }
         c.cnmt_nca_name = ce->name;
         c.cnmt_nca_size = ce->size;
-        SDL_Log("Installer: CNMT parsed — title_id=%016llX version=%u type=%u ncas=%zu",
+        SDL_Log("Installer: CNMT parsed - title_id=%016llX version=%u type=%u ncas=%zu",
                 (unsigned long long)c.key.id, c.key.version,
                 (unsigned)c.key.type, c.infos.size());
         cnmts.push_back(std::move(c));
@@ -578,22 +573,14 @@ bool install(std::vector<ContentEntry> contents,
 
     // ── 5. Write meta-DB record for every CNMT ─────────────────────────────
     // Based on Sphaira/yati RegisterNcasAndPushRecord (hardware-validated):
-    //
-    // Blob = NcmContentMetaHeader
-    //      + extended_header (raw bytes from CNMT, exact size from header)
-    //      + NcmContentInfo for the CNMT NCA itself (type=Meta, first entry)
-    //      + NcmContentInfo[] for all other NCAs from the CNMT content list
-    //
-    // meta_header.content_count = infos.size() + 1 (the +1 is the CNMT NCA)
-    // meta_header.storage_id = 0 (always zeroed before writing)
-    //
-    // No ncmExit/ncmInitialize — that corrupts other titles by causing NCM
-    // to reload stale data and Remove the wrong entries.
-    // No Remove before Set — RemoveInstalledNcas (via ListContentInfo) handles
-    // cleanup of old entries cleanly.
-    //
-    // The extended_header bytes come from the raw CNMT binary. We read them
-    // from raw_bytes at: sizeof(CnmtHeader) .. sizeof(CnmtHeader)+ext_hdr_size
+    // blob = NcmContentMetaHeader + extended_header (raw bytes from the CNMT,
+    // exact size from header) + NcmContentInfo for the CNMT NCA (type=Meta,
+    // first entry) + NcmContentInfo[] for the remaining NCAs.
+    // content_count = infos.size() + 1; storage_id = 0.
+    // No ncmExit/ncmInitialize (corrupts other titles via stale NCM data); no
+    // Remove before Set (RemoveInstalledNcas handles old-entry cleanup).
+    // extended_header is read from raw_bytes at
+    // sizeof(CnmtHeader) .. sizeof(CnmtHeader)+ext_hdr_size.
 
     progress.stage = "registering meta";
     progress.push_log("Registering title metadata...");
@@ -603,7 +590,7 @@ bool install(std::vector<ContentEntry> contents,
         // ── Parse NcmContentInfo list from CNMT PackagedContentInfo records ──
         // PackagedContentInfo (0x38): hash[0x20] + content_id[0x10] + size[6] + type + id_offset
         // NcmContentInfo     (0x18):              content_id[0x10] + size[5] + attr + type + id_offset
-        // Sphaira reads infos via ListContentInfo from the gamecard NCM DB —
+        // Sphaira reads infos via ListContentInfo from the gamecard NCM DB -
         // we parse them from raw_bytes (same data, just from the CNMT binary).
 
         if (cnmt.raw_bytes.size() < sizeof(CnmtHeader)) {
@@ -783,11 +770,11 @@ bool install(std::vector<ContentEntry> contents,
 
         serviceClose(&ns_srv);
 
-        // On [6.0.0+], the ns application record alone isn't enough — qlaunch also
+        // On [6.0.0+], the ns application record alone isn't enough - qlaunch also
         // needs a launch version registered with avm (Application Version Manager),
         // or the title won't surface on the HOME menu even though the record exists.
         // This is the step Sphaira/yati do and GarageNX was missing. (cnmt.key.version
-        // is the version of the content just installed — the base's version.)
+        // is the version of the content just installed - the base's version.)
         if (hosversionAtLeast(6, 0, 0)) {
             if (R_SUCCEEDED(avmInitialize())) {
                 avmPushLaunchVersion(app_id, cnmt.key.version);
@@ -798,7 +785,7 @@ bool install(std::vector<ContentEntry> contents,
 
     // Trigger NS to synchronize its application record list with the meta-DB.
     {
-        // First verify NCM responds correctly to GetContentIdByType — the exact
+        // First verify NCM responds correctly to GetContentIdByType - the exact
         // call NS makes when scanning. If this fails, NS rejects the title.
         {
             NcmContentMetaDatabase scan_db;
@@ -929,16 +916,14 @@ bool install(std::vector<ContentEntry> contents,
 
     // ── 7. Ticket install ─────────────────────────────────────────────────────
     // A titlekey NCA keeps its rights_id, so HOS needs a ticket to obtain the
-    // titlekey at launch. Without a usable ticket the title verifies (hash + sig
-    // OK) but won't boot ("titlekey cannot be initialized", surfaced as fatal
-    // 2123-0011). Rules, mirroring the working NSP path:
-    //   * container has a COMMON .tik      -> import it VERBATIM with its real
-    //     cert (its titlekey is already titlekek-encrypted and console-agnostic,
-    //     and it is validly signed, so no sig patch is needed — exactly like NSP).
-    //   * container has a PERSONALISED .tik -> rebuild it into a common ticket
-    //     using the raw NCZ section titlekey (falls back to verbatim if we can't).
-    //   * container has NO .tik            -> fabricate a common ticket per
-    //     titlekey NCA from its NCZ section key.
+    // titlekey at launch; without one the title verifies but won't boot
+    // (fatal 2123-0011). Rules, mirroring the working NSP path:
+    //   * COMMON .tik      -> import verbatim with its real cert (titlekek-
+    //     encrypted, console-agnostic, validly signed - no sig patch needed).
+    //   * PERSONALISED .tik -> rebuild into a common ticket using the raw NCZ
+    //     section titlekey (verbatim fallback).
+    //   * NO .tik          -> fabricate a common ticket per titlekey NCA from
+    //     its NCZ section key.
     // Import failures are surfaced, never silently dropped.
 
     const ContentEntry* tik_entry  = nullptr;
@@ -1019,7 +1004,7 @@ bool install(std::vector<ContentEntry> contents,
                                      ? tik_data[body + 0x141] : 0xFF;
 
             if (key_type == 0 /* Common */) {
-                // Already common — import verbatim, exactly like NSP.
+                // Already common - import verbatim, exactly like NSP.
                 progress.stage = "importing ticket";
                 attempted_ticket = true;
                 tik_rc = import_ticket(tik_data, cert_data, "common-verbatim");

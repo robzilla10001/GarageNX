@@ -2,7 +2,7 @@
 //
 // Tests the pure FTP install-path classifier (source/services/ftp_paths.hpp).
 // This decides whether a STOR writes a file or drives an install, and where the
-// virtual install folders appear in a listing — logic that must be exactly right
+// virtual install folders appear in a listing - logic that must be exactly right
 // for parity, and that is fully host-testable because it touches no sockets.
 
 #include "services/ftp_paths.hpp"
@@ -51,7 +51,7 @@ static void test_sd_card_maps_to_filesystem() {
 
 static void test_bare_path_is_invalid() {
     std::string rel;
-    // A path NOT under any storage root must be Invalid — this is what stops the
+    // A path NOT under any storage root must be Invalid - this is what stops the
     // SD contents from leaking into the root listing.
     CHECK(ftp_classify("/games/x.nsp", rel) == FtpTarget::Invalid,
           "bare path (no storage root) is Invalid");

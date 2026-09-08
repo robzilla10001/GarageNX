@@ -1,25 +1,20 @@
 #pragma once
 // source/screens/settings_screen.hpp
 //
-// ONE parameterized settings screen, built from a row list — the same choice
-// SubMenuScreen made for submenus, and for the same reason: a screen per section
-// would be six near-identical classes that drift apart the first time one of them
-// gets a fix.
+// ONE parameterized settings screen, built from a row list - a screen per
+// section would be six near-identical classes that drift apart the first time
+// one of them gets a fix.
 //
-// Round 1 handles the two row kinds that need no text entry: Toggle and Submenu.
-// Number and string rows (ports, credentials, SSID) arrive with the software
-// keyboard in round 2 — see the roadmap. Adding them is a new Kind and a new
-// branch, not a new screen.
+// Round 1 handles the two row kinds that need no text entry: Toggle and
+// Submenu. Number and string rows (ports, credentials, SSID) arrive with the
+// software keyboard in round 2 - see the roadmap.
 //
 // ── Persistence ──────────────────────────────────────────────────────────────
-// A row writes straight into Config::get_mutable() and marks the settings dirty.
-// The write to DISK happens in on_exit(), only when dirty.
-//
-// Note that push() calls on_exit() on the parent screen, so this is really "flush
-// pending changes at any navigation boundary", not "save when the user leaves
-// settings". That is the safer reading anyway: a change cannot be lost by an
-// unexpected exit, and Config::save() is non-destructive, so an extra write costs
-// nothing but a file rewrite.
+// A row writes straight into Config::get_mutable() and marks the settings
+// dirty; the write to DISK happens in on_exit(), only when dirty. Note that
+// push() calls on_exit() on the parent screen, so this is really "flush pending
+// changes at any navigation boundary" - the safer reading: a change cannot be
+// lost by an unexpected exit, and an extra Config::save() costs nothing.
 
 #include "screens/screen.hpp"
 #include "ui/widgets.hpp"
@@ -44,14 +39,14 @@ public:
         // Submenu
         std::function<std::unique_ptr<Screen>()> open;
 
-        // Choice — opens a list picker. Used where a handful of fixed values reads
+        // Choice - opens a list picker. Used where a handful of fixed values reads
         // better than free entry.
         std::function<int()>    choice_get;
         std::function<void(int)> choice_set;
         std::vector<int>         choice_values;
         std::vector<std::string> choice_labels;
 
-        // Text — opens the system keyboard (swkbd). The keyboard is BLOCKING: it
+        // Text - opens the system keyboard (swkbd). The keyboard is BLOCKING: it
         // hands control to the OS overlay and returns on confirm/cancel, which is
         // why it is only ever invoked from a button press and never from draw().
         std::function<std::string()>            text_get;
@@ -60,7 +55,7 @@ public:
         int         text_max_len = 255;
         bool        text_allow_empty = true;
 
-        // Number — numeric keyboard, clamped to [num_min, num_max]. Clamping is
+        // Number - numeric keyboard, clamped to [num_min, num_max]. Clamping is
         // done here rather than trusted to the entry, because a port of 0 or 99999
         // is accepted by the keyboard and only fails much later at bind() time.
         std::function<int()>    num_get;
@@ -70,7 +65,7 @@ public:
         std::string num_suffix;            // e.g. "s" for seconds
 
         /// Turning this ON requires an on-device confirmation. Turning it OFF
-        /// never does — removing access is not the dangerous direction.
+        /// never does - removing access is not the dangerous direction.
         /// This row is the "reset everything" action rather than a setting. It
         /// borrows the Toggle kind's confirmation machinery but performs a reset
         /// instead of setting a value.
@@ -104,7 +99,7 @@ private:
     // In-screen picker for Choice rows. A list-select is a different shape from
     // the shared confirm/cancel Modal (it returns a chosen index, needs list
     // navigation), so rather than overload Modal and every call site, Choice rows
-    // open this self-contained overlay — the same in-screen-selection approach the
+    // open this self-contained overlay - the same in-screen-selection approach the
     // Save Manager uses. -1 = no picker open.
     int              m_picker_row = -1;
     Widgets::List    m_picker_list;

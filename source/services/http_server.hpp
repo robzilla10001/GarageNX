@@ -1,6 +1,6 @@
 #pragma once
 // source/services/http_server.hpp
-// Clean-room HTTP server (HTTP/1.1 subset) built directly on BSD sockets — no
+// Clean-room HTTP server (HTTP/1.1 subset) built directly on BSD sockets - no
 // external httpd/libmicrohttpd dependency. Runs on the NetworkService worker thread.
 // Supports GET (file download, directory listing as JSON) and PUT (upload) with
 // path traversal clamping to the root directory.
@@ -22,8 +22,8 @@ public:
 
     // CRITICAL, and learned the hard way on both MTP and FTP: stop() (which joins
     // the worker thread) MUST run before any member is destroyed. Otherwise C++
-    // destroys members first — including m_install, which the worker may be inside
-    // during an install — and only then runs the base ~NetworkService that joins
+    // destroys members first - including m_install, which the worker may be inside
+    // during an install - and only then runs the base ~NetworkService that joins
     // the worker. That is a cross-thread use-after-free; cancelling a transfer
     // crashed FTP and MTP with a Data Abort @ 0x0 until each got this one-liner.
     // Applied here PROACTIVELY the moment HTTP gained the same install member,
@@ -58,7 +58,7 @@ private:
     std::atomic<uint64_t> m_bytes_sent{0};
     std::atomic<uint64_t> m_bytes_recv{0};
 
-    // Install state — same shape as FtpServer, so the shared StreamDriver and its
+    // Install state - same shape as FtpServer, so the shared StreamDriver and its
     // teardown discipline are reused, not re-implemented.
     std::atomic<uint64_t> m_wire_size{0};
     std::atomic<uint64_t> m_wire_recv{0};

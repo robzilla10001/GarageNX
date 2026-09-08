@@ -1,7 +1,7 @@
 #pragma once
 // source/ui/layout.hpp
 // Shared layout constants and region definitions.
-// All screens reference these — no magic numbers in rendering code.
+// All screens reference these - no magic numbers in rendering code.
 
 namespace Layout {
 

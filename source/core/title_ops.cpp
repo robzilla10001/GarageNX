@@ -18,7 +18,7 @@ Result delete_application_completely(uint64_t application_id) {
 
 #ifdef PLATFORM_SWITCH
     // nsDeleteApplicationCompletely removes the base application, all of its
-    // updates and DLC, and the application record — the same operation the OS
+    // updates and DLC, and the application record - the same operation the OS
     // uses when you delete a game from the HOME menu. This is the safe path:
     // it can't leave orphaned content or a dangling record the way manual
     // per-NCA ncm deletion can.
@@ -37,7 +37,7 @@ Result delete_application_completely(uint64_t application_id) {
         char buf[96];
         snprintf(buf, sizeof(buf), "Delete failed (0x%08X)", rc);
         r.message = buf;
-        SDL_Log("TitleOps::delete — nsDeleteApplicationCompletely(%016llX) "
+        SDL_Log("TitleOps::delete - nsDeleteApplicationCompletely(%016llX) "
                 "failed: 0x%08X", (unsigned long long)application_id, rc);
     }
 #else
@@ -71,7 +71,7 @@ static NcmContentMetaKey make_meta_key(const Core::Ncm::Title& t) {
 
 // Copy one NCA from src storage to dst storage via the placeholder/register
 // pipeline. Registers under the SAME content id (we don't modify content, so the
-// id — which is the content hash — is unchanged). Returns true on success.
+// id - which is the content hash - is unchanged). Returns true on success.
 static bool copy_nca(NcmContentStorage* src, NcmContentStorage* dst,
                      const NcmContentId& content_id, uint64_t size,
                      Core::TitleOps::MoveProgress& progress) {
@@ -132,7 +132,7 @@ Result move_title(const Core::Ncm::Title& title, MoveProgress& progress) {
 
 #ifdef PLATFORM_SWITCH
     // A game card cannot be a MOVE source. Moving means copy-then-delete, and
-    // the delete half would target read-only cartridge content — the ternary
+    // the delete half would target read-only cartridge content - the ternary
     // below would happily accept GameCard and pick SD as the destination, which
     // looks reasonable right up to the point where it tries to remove content
     // from a physical card. Copying FROM a card is "install", a different
@@ -238,7 +238,7 @@ Result move_title(const Core::Ncm::Title& title, MoveProgress& progress) {
     }
 
     // ── Phase 3: push the application record so the title resolves on dst ────────
-    // (ns records are storage-agnostic — the record already exists for this
+    // (ns records are storage-agnostic - the record already exists for this
     // application, but we push/refresh to ensure the content-storage record
     // points at the new location. For a straight base/patch/DLC move the existing
     // record + the dst meta entry are sufficient; we refresh defensively.)
@@ -262,7 +262,7 @@ Result move_title(const Core::Ncm::Title& title, MoveProgress& progress) {
         return r;
     }
 
-    // ── Phase 4: destination is complete — NOW remove the source ────────────────
+    // ── Phase 4: destination is complete - NOW remove the source ────────────────
     // Only reached when every NCA + the meta are safely on the destination.
     progress.stage = "removing source";
     for (s32 i = 0; i < written; ++i) {

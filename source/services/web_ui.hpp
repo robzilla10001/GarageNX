@@ -3,35 +3,23 @@
 //
 // The GarageNX web front-end, embedded in the binary as a single string.
 //
-// EMBEDDED, NOT SERVED FROM DISK, deliberately. The page must work when the SD
-// card is being browsed, rewritten, or is the very thing an install is writing
-// to — reading UI assets off the same card the app is mutating invites a UI that
-// breaks exactly when it is needed. It also means no romfs dependency and no
-// "asset missing" failure mode: if GarageNX runs, its web UI runs.
+// EMBEDDED, NOT SERVED FROM DISK, deliberately: the page must work while the SD
+// card is being browsed or written, with no romfs dependency and no "asset
+// missing" failure mode - if GarageNX runs, its web UI runs.
 //
 // One file, no external requests: no CDN fonts, no frameworks, no analytics. A
-// homebrew console UI must work on a LAN with no internet, and a page that
-// silently reaches out to the network is the wrong shape for a tool that browses
-// a private device.
+// homebrew console UI must work on a LAN with no internet.
 //
-// ── The progress design, and why it is what it is ────────────────────────────
-// HttpServer runs a STRICTLY SERIAL accept loop: one connection, handled inline,
-// then the next. During an install the loop is inside http_install() for minutes,
-// so a browser polling a server-side progress endpoint would have its connection
-// sit unanswered in the listen backlog until the install finished — a progress
-// bar that updates only once the thing it tracks is over.
-//
-// So live transfer progress comes from the BROWSER's own XMLHttpRequest upload
-// events, which need no server round-trip. For a streaming install this is an
-// honest measure rather than a convenient one: the console consumes bytes as it
-// receives them, so TCP backpressure means "bytes the console has accepted" is
-// very close to "bytes the console has installed". /api/status is polled while
-// IDLE (before and after) for install state and the last result.
-//
-// Making the server concurrent would allow true mid-install server-side stats,
-// but it would put a second thread near the install object whose destruction
-// order took real device crashes to get right (~HttpServer{stop()}). That is not
-// a trade worth making for a progress bar; it is noted as future work instead.
+// ── The progress design ───────────────────────────────────────────────────
+// HttpServer runs a STRICTLY SERIAL accept loop; during an install the loop is
+// inside http_install() for minutes, so a browser polling a server-side progress
+// endpoint would wait in the listen backlog until the install finished. Live
+// transfer progress therefore comes from the BROWSER's own XMLHttpRequest upload
+// events, which need no server round-trip - and for a streaming install TCP
+// backpressure means "bytes the console has accepted" is very close to "bytes
+// the console has installed". /api/status is polled while IDLE for install
+// state and the last result. Making the server concurrent is noted as future
+// work; not worth a second thread near the install object for a progress bar.
 
 namespace Services {
 
@@ -178,8 +166,8 @@ inline constexpr const char* kWebUiHtml = R"HTMLDOC(<!DOCTYPE html>
         <div class="stats">
           <span><b id="pct">0%</b></span>
           <span>Sent <b id="sent">0</b> / <b id="total">0</b></span>
-          <span>Speed <b id="speed">—</b></span>
-          <span>ETA <b id="eta">—</b></span>
+          <span>Speed <b id="speed">-</b></span>
+          <span>ETA <b id="eta">-</b></span>
         </div>
       </div>
       <div id="result"></div>
@@ -208,13 +196,13 @@ var picked = null;
 var xhr = null;
 
 function h(n) {
-  if (n === null || n === undefined) return "—";
+  if (n === null || n === undefined) return "-";
   var u = ["B","KB","MB","GB","TB"], i = 0, v = Number(n);
   while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
   return (i === 0 ? v.toFixed(0) : v.toFixed(1)) + " " + u[i];
 }
 function hms(s) {
-  if (!isFinite(s) || s < 0) return "—";
+  if (!isFinite(s) || s < 0) return "-";
   s = Math.round(s);
   var m = Math.floor(s / 60), r = s % 60;
   if (m >= 60) { var hh = Math.floor(m / 60); m %= 60;
@@ -289,7 +277,7 @@ function load(p) {
         } else {
           // encodeURI (not encodeURIComponent) so '/' survives as a separator.
           // Without this a filename containing '#' truncates the URL at the
-          // fragment and '?' becomes a query — both silently fetch the wrong
+          // fragment and '?' becomes a query - both silently fetch the wrong
           // thing, and both occur in real title names.
           html += "<li><span class='ico'>&#128196;</span><span class='nm'>" +
                   "<a href='" + esc(encodeURI(full)) + "' download>" +
@@ -326,7 +314,7 @@ function load(p) {
               else { r.text().then(function (t) {
                 alert("Delete failed (HTTP " + r.status + ").\n" + (t || "").trim()); }); }
             })
-            .catch(function () { alert("Delete failed — connection lost."); });
+            .catch(function () { alert("Delete failed - connection lost."); });
         };
       }
 
@@ -335,7 +323,7 @@ function load(p) {
       document.getElementById("fsbar").style.display = (CWD === "/") ? "none" : "";
     })
     .catch(function (err) {
-      out.innerHTML = "<div class='err'>Could not list this folder — " +
+      out.innerHTML = "<div class='err'>Could not list this folder - " +
                       esc(err.message) + "</div>";
     });
 }
@@ -405,7 +393,7 @@ goEl.onclick = function () {
       lastT = now; lastB = e.loaded;
       document.getElementById("speed").textContent = h(speed) + "/s";
       document.getElementById("eta").textContent =
-        speed > 0 ? hms((e.total - e.loaded) / speed) : "—";
+        speed > 0 ? hms((e.total - e.loaded) / speed) : "-";
     }
   };
 
@@ -414,7 +402,7 @@ goEl.onclick = function () {
     var ok = xhr2ok(this.status);
     res.className = "on " + (ok ? "ok" : "err");
     res.textContent = ok
-      ? "Install complete — " + picked.name
+      ? "Install complete - " + picked.name
       : "Install failed (HTTP " + this.status + "). " +
         (this.responseText || "").trim();
     if (ok) { fill.style.width = "100%";
@@ -450,7 +438,7 @@ document.getElementById("newdir").onclick = function () {
       else { r.text().then(function (t) {
         alert("Could not create folder (HTTP " + r.status + ").\n" + (t || "").trim()); }); }
     })
-    .catch(function () { alert("Could not create folder — connection lost."); });
+    .catch(function () { alert("Could not create folder - connection lost."); });
 };
 
 var upFile = document.getElementById("upfile");
@@ -464,7 +452,7 @@ upFile.onchange = function () {
   ux.open("PUT", encodeURI(dest));            // plain file write, NOT an install
   ux.upload.onprogress = function (e) {
     if (e.lengthComputable)
-      upStat.textContent = "Uploading " + f.name + " — " +
+      upStat.textContent = "Uploading " + f.name + " - " +
         (100 * e.loaded / e.total).toFixed(0) + "%";
   };
   ux.onload = function () {
@@ -472,14 +460,14 @@ upFile.onchange = function () {
     else upStat.textContent = "Upload failed (HTTP " + this.status + "). " +
                               (this.responseText || "").trim();
   };
-  ux.onerror = function () { upStat.textContent = "Upload failed — connection lost."; };
+  ux.onerror = function () { upStat.textContent = "Upload failed - connection lost."; };
   ux.send(f);
   upFile.value = "";                          // allow re-picking the same file
 };
 
 /* ── Idle status poll ────────────────────────────────────────────────────────
    Polled only when NOT uploading. The server handles one connection at a time,
-   so during an install it cannot answer — the live numbers above come from the
+   so during an install it cannot answer - the live numbers above come from the
    browser's own upload events instead. */
 function poll() {
   if (xhr) return;

@@ -41,17 +41,16 @@ struct TitlePlay {
     bool        valid            = false; // false = pdm had nothing for this title
 };
 
-/// Play statistics for every INSTALLED title that pdm has a record for, sorted by
-/// playtime descending.
+/// Play statistics for every INSTALLED title that pdm has a record for, sorted
+/// by playtime descending.
 ///
-/// LIMITATION, stated rather than hidden: this enumerates installed titles, so a
-/// game that was played and then deleted has statistics pdm still holds but this
-/// list will not show. Enumerating pdm's own title set needs the play-log save
-/// archive that summary() documents as out of reach.
+/// LIMITATION, stated rather than hidden: this enumerates installed titles, so
+/// a game that was played and then deleted has statistics pdm still holds but
+/// this list will not show.
 ///
-/// `pump`, when supplied, marks the caller as being on the MAIN THREAD: title-name
-/// resolution is driven rather than blocked on, and pump is called between units
-/// so the caller can draw. Same contract as Services::save_enumerate_all().
+/// `pump`, when supplied, marks the caller as being on the MAIN THREAD: pump is
+/// called between units so the caller can draw. Same contract as
+/// Services::save_enumerate_all().
 std::vector<TitlePlay> title_play_stats(const std::function<void()>& pump = nullptr);
 
 } // namespace Core::Activity

@@ -1,7 +1,7 @@
 // tests/stream_driver_test.cpp
 //
 // Proves the transport-agnostic StreamDriver (the keystone) on the host, using a
-// synthetic in-memory PFS0 as the byte source — no USB, no sockets. This is the
+// synthetic in-memory PFS0 as the byte source - no USB, no sockets. This is the
 // whole point of the extraction: the driver loop that used to be welded inside
 // MtpServer::recv_install can now be exercised deterministically off-device.
 //

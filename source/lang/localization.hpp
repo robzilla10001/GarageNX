@@ -17,7 +17,7 @@ struct LanguageInfo {
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
 
-/// Set the baseline (bundled) language directory — e.g. "romfs:/lang".
+/// Set the baseline (bundled) language directory - e.g. "romfs:/lang".
 /// This directory MUST contain a complete en.json. Loaded once at startup and
 /// used as the permanent fallback for every key. Call this first.
 void set_baseline_dir(const std::string& dir);

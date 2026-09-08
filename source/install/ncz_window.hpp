@@ -4,46 +4,28 @@
 // Adapts a push-only byte stream (MTP/USB, later FTP/HTTP) to the pull-by-offset
 // ReadFn that NczDecompressor requires. Slice 4b.
 //
-// Why this is not a pipe. NczDecompressor does not consume its input
-// sequentially; it reads by absolute offset, and it reads the NCZ header region
-// more than once and out of order:
-//   get_decompressed_size(): reads NczHeader at 0x4000, then the optional
-//       NczBlockHeader, then seeks BACK to offset 0 for 0xC00 bytes of NCA
-//       header. StreamInstaller must call this before CreatePlaceHolder, since
-//       the placeholder is sized to the decompressed NCA.
-//   decompress(): re-reads the whole region again from scratch — offset 0 for
-//       0x4000, 0x4000 again, the section table, block header, block sizes —
-//       then sniffs 4 bytes of zstd magic at compressed_start and re-reads from
-//       compressed_start for real.
-// A plain producer/consumer pipe cannot serve that without rewinding.
+// Why this is not a pipe. NczDecompressor reads by absolute offset and re-reads
+// the NCZ header region more than once, out of order (get_decompressed_size()
+// then decompress() both walk offset 0..compressed_start). A plain
+// producer/consumer pipe cannot serve that without rewinding.
 //
-// The shape that does work: retain a bounded PREFIX of the entry in RAM and
-// serve every re-read from it, then serve everything above the prefix from a
-// sliding window that blocks until the producer has pushed that far.
+// The shape that works: retain a bounded PREFIX of the entry in RAM and serve
+// every re-read from it, then serve everything above the prefix from a sliding
+// window that blocks until the producer has pushed that far. The re-read region
+// ends at compressed_start; for a 14 GiB NCA at the typical 1 MB block exponent
+// that is ~74 KB, and the pathological small-block case ~3.6 MB. kDefaultPrefix
+// is 8 MB so every real container clears it with margin, and a read that
+// escapes the prefix fails loudly rather than silently returning wrong bytes.
 //
-// Sizing the prefix. The re-read region ends at compressed_start:
-//     0x4000 + sizeof(NczHeader) + 0x40 * total_sections
-//            + sizeof(NczBlockHeader) + 4 * total_blocks
-// For a 14 GiB NCA at the typical 1 MB block exponent (0x14) that is ~74 KB.
-// The pathological case is a small block exponent: 16 KB blocks over 14 GiB give
-// ~3.6 MB of block_sizes. kDefaultPrefix is 8 MB so every real container clears
-// it with margin, and a read that escapes the prefix fails loudly rather than
-// silently returning wrong bytes. Sizing the prefix exactly would mean parsing
-// the NCZ header here, duplicating ncz.cpp; a bounded over-allocation is the
-// cheaper and less brittle trade.
-//
-// Read contract. ncz.cpp's safe_read() is `fn(off, buf, len) == len` — it does
+// Read contract. ncz.cpp's safe_read() is `fn(off, buf, len) == len` - it does
 // NOT loop on short reads. read() therefore returns a short count ONLY at
 // end-of-stream or on failure, and must serve a request that straddles the
-// prefix/window seam in a single call. A ~1 MB block read crossing the 8 MB
-// mark does exactly that, so the seam is a normal case, not an edge case.
+// prefix/window seam in a single call.
 //
 // Threading. Producer (MTP thread) calls push()/finish(); consumer (the
 // decompression thread) calls read(). Both block on each other and both wake on
-// abort(). Sync is std::mutex/std::condition_variable — no libnx — following
-// OverlapBuffer, which uses the same primitives unguarded on both targets and is
-// hardware-validated. This class needs no PLATFORM_SWITCH guard and builds and
-// tests off-device unchanged.
+// abort(). Sync is std::mutex/std::condition_variable - no libnx, following
+// OverlapBuffer (hardware-validated). Builds and tests off-device unchanged.
 
 #include <condition_variable>
 #include <cstddef>

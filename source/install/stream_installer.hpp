@@ -5,29 +5,26 @@
 // Push-based NSP installer for transports that deliver bytes sequentially and
 // cannot seek: MTP/USB today, FTP/HTTP later.
 //
-// Why this exists: Install::install() is pull-based random-access — it reads the
-// CNMT first (which can sit anywhere in the PFS0) and then reads each NCA by
-// offset. A USB stream can only go forwards, so the existing installer cannot
-// drive it directly. Buffering the whole NSP to disk first would defeat the
-// point: the 4 GiB FAT32 file ceiling is precisely why stream install exists.
+// Why this exists: Install::install() is pull-based random-access, but a USB
+// stream can only go forwards, and buffering the whole NSP to disk first would
+// defeat the point (the 4 GiB FAT32 file ceiling is precisely why stream
+// install exists).
 //
-// How it works, and why install() is reused rather than reimplemented:
+// How it works, reusing install() rather than reimplementing it:
 //   1. Parse the PFS0 header/table as it arrives, so every entry's byte range
 //      is known before its data shows up.
 //   2. Stream each NCA straight into an NCM placeholder and register it the
 //      moment its last byte lands. Nothing is staged on the filesystem.
 //   3. Tee the small entries (.cnmt.nca, .tik, .cert) into RAM as they pass.
-//   4. finish() hands the entry list to the *existing, hardware-validated*
+//   4. finish() hands the entry list to the existing, hardware-validated
 //      install(), with the small entries served from RAM. Every NCA hits
-//      install()'s "already registered -> skip" path and is never read, so
-//      meta registration and ticket import run exactly as they do for a local
-//      NSP. install() itself is untouched.
+//      install()'s "already registered -> skip" path, so meta registration
+//      and ticket import run exactly as for a local NSP.
 //
 // Slice 4b adds NSZ: an .ncz entry cannot be written through as it arrives,
-// because NczDecompressor pulls by offset (and re-reads the header region) while
-// USB pushes. Such an entry is fed to an NczWindow while a worker thread pulls
-// through it and decompresses into the placeholder. See ncz_window.hpp for why a
-// pipe cannot serve that, and end_entry()/abort() below for the join ordering.
+// because NczDecompressor pulls by offset while USB pushes. Such an entry is
+// fed to an NczWindow while a worker thread pulls through it and decompresses
+// into the placeholder. See ncz_window.hpp and end_entry()/abort() below.
 
 #include "core/keys.hpp"
 #include "core/ncm.hpp"
@@ -80,21 +77,16 @@ public:
     /// True once every entry has been consumed.
     bool complete() const { return m_phase.load(std::memory_order_relaxed) == Phase::Done; }
 
-    /// The container's size as derived from its own entry table — 0 until the
+    /// The container's size as derived from its own entry table - 0 until the
     /// table has arrived, and 0 for formats that cannot express it.
     ///
-    /// This is NOT the authority for how much to read, and has not been since
-    /// Option C: a host-declared 64-bit size (SendObjectPropList) outranks it,
-    /// and this demotes to a cross-check that logs disagreements. The host's
-    /// number describes the TRANSFER; this one describes its CONTENTS. They
-    /// coincide for PFS0, whose last entry ends at the file's end, which is why
-    /// the old inverted rule worked.
-    ///
-    /// They do not coincide for XCI, whose trailing padding — an untrimmed image
-    /// is padded to the gamecard capacity — belongs to the transfer but to no
-    /// entry. An XCI front-end must therefore report 0 here rather than infer a
-    /// length from `secure`: coming up short does not fail an install, it leaves
-    /// unread bytes in the endpoint and desyncs the session.
+    /// NOT the authority for how much to read: a host-declared 64-bit size
+    /// (SendObjectPropList) outranks it, and this demotes to a cross-check that
+    /// logs disagreements. The host's number describes the TRANSFER; this one
+    /// describes its CONTENTS. They coincide for PFS0 but not for XCI, whose
+    /// trailing padding (untrimmed images are padded to gamecard capacity)
+    /// belongs to the transfer but to no entry - an XCI front-end must report 0
+    /// here rather than infer a length from `secure`.
     uint64_t container_size() const { return m_container_size.load(std::memory_order_relaxed); }
 
     bool ok() const { return m_phase.load(std::memory_order_relaxed) != Phase::Failed; }
@@ -103,11 +95,11 @@ public:
 private:
     // The collector runs one rule: COLLECT `m_want_len` bytes at absolute offset
     // `m_want_off`, then run `m_step`. Everything between the current position
-    // and `m_want_off` is discarded as it passes — a stream cannot rewind, so
+    // and `m_want_off` is discarded as it passes - a stream cannot rewind, so
     // bytes we do not want are simply dropped.
     //
     // PFS0 is two steps (header, then table) that happen to be contiguous. XCI
-    // is five at scattered offsets — the design note says four, but an HFS0's
+    // is five at scattered offsets - the design note says four, but an HFS0's
     // table length is only knowable once its header has been read, so each of
     // the two partitions costs two collections, not one.
     enum class Phase { Collect, Data, Done, Failed };
@@ -123,9 +115,9 @@ private:
         // `update`. Everything not collected discards itself in Phase::Collect.
         XciHead,          // 0x38 at 0x100: "HEAD" magic, root HFS0 offset at 0x130
         XciRootHeader,    // 0x10 at the root HFS0
-        XciRootTable,     // the partition table — locates `secure`
+        XciRootTable,     // the partition table - locates `secure`
         XciSecureHeader,  // 0x10 at the secure HFS0
-        XciSecureTable,   // the NCA table — the entries we actually install
+        XciSecureTable,   // the NCA table - the entries we actually install
     };
 
     /// Which front-end drives the collector. Chosen from the filename in
@@ -178,7 +170,7 @@ private:
     /// The format-independent tail: sort into stream order, NSZ key
     /// precondition, container size, NCA count, enter Phase::Data. Nothing below
     /// this line knows whether the bytes came from a PFS0 or an XCI's secure
-    /// partition — which is what makes 4c a front-end rather than a rewrite.
+    /// partition - which is what makes 4c a front-end rather than a rewrite.
     /// `container_size` is the front-end's business: exact for PFS0, 0 for XCI.
     bool   finalize_entries(uint64_t container_size);
 
@@ -197,7 +189,7 @@ private:
     void ncz_worker();
     /// Close the window and join the worker. Safe to call when not running, and
     /// idempotent. `graceful` false means abandon (abort) rather than finish.
-    /// ALWAYS joins before the caller touches the placeholder — see abort().
+    /// ALWAYS joins before the caller touches the placeholder - see abort().
     void ncz_join(bool graceful);
 #ifdef PLATFORM_SWITCH
     static void ncz_thread_entry(void* self);
@@ -210,7 +202,7 @@ private:
     // Written by the feed path (which runs on the OverlapBuffer worker thread
     // during an overlapped install) and read on the main thread via complete()/
     // ok(). Atomic so those cross-thread accesses are race-free; relaxed ordering
-    // is sufficient — it is a status flag, not a lock guarding other data.
+    // is sufficient - it is a status flag, not a lock guarding other data.
     std::atomic<Phase> m_phase{Phase::Collect};
     std::string m_error;
     std::string m_filename;
@@ -219,10 +211,10 @@ private:
 
     // Same cross-thread shape as m_phase above: written once by finalize_entries()
     // on the feed path (main thread for a direct feed, the OverlapBuffer worker
-    // thread for an overlapped one — see stream_driver.cpp's "late size discovery"
+    // thread for an overlapped one - see stream_driver.cpp's "late size discovery"
     // check, which reads this every loop iteration from the main thread while the
     // worker thread can be mid-finalize_entries()). Atomic so that read/write pair
-    // is race-free; relaxed is sufficient for the same reason as m_phase — it's a
+    // is race-free; relaxed is sufficient for the same reason as m_phase - it's a
     // published value, not a lock guarding other data.
     std::atomic<uint64_t> m_container_size{0}; // known once the table is parsed
 
@@ -235,7 +227,7 @@ private:
 
     // Stashed by whichever header step ran. The table step cannot re-read them:
     // the old design kept a header buffer and a table buffer alive at once,
-    // whereas one general blob holds only the collection in flight — by
+    // whereas one general blob holds only the collection in flight - by
     // table-parse time it holds the TABLE, and reading counts out of it would
     // yield plausible garbage rather than an error. Shared by PFS0 and HFS0,
     // whose headers agree in shape: magic, entry count, string-table size.
@@ -251,7 +243,7 @@ private:
     bool                     m_entry_open = false;
     // Set the first time abort() runs; makes every later abort() a no-op. The
     // cancel sites call abort() then reset(), and ~StreamInstaller() calls it
-    // again — a double abort re-entered ncm and caused the 2168-0002 fatal.
+    // again - a double abort re-entered ncm and caused the 2168-0002 fatal.
     std::atomic<bool>        m_aborted{false};
     bool                     m_entry_skip = false;   // NCA already registered
 
@@ -260,7 +252,7 @@ private:
 
     // ── NSZ worker state (slice 4b) ──────────────────────────────────────────
     // m_ncz_error is written by the worker and read by the MTP thread only after
-    // ncz_join(), which is a happens-before edge — no lock needed. Everything
+    // ncz_join(), which is a happens-before edge - no lock needed. Everything
     // else here is touched by one thread at a time by the same argument.
     std::unique_ptr<NczWindow> m_ncz_win;
     std::string                m_ncz_error;

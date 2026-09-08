@@ -5,34 +5,20 @@
 //
 // ── Why this exists ──────────────────────────────────────────────────────────
 // A Switch save filesystem is journalled: writes are discarded at unmount unless
-// fsdevCommitDevice() runs. So every mutation of a save path must be followed by a
-// commit, and "must be followed by" was, until now, a thing fourteen call sites
-// each remembered separately across four files.
-//
-// That is not a rule, it is a hope, and it has failed twice already:
-//   * FileBrowserScreen went its whole life without committing — correct, because
-//     it only ever saw SD and NAND — until the Save Manager pointed it at
-//     "save:/" and an on-device delete started silently reverting.
-//   * Writing THIS header found two more that were still live: do_new_dir() and
-//     do_new_file() create a folder/file in the active pane and never commit, so
-//     making a folder inside a save quietly vanished at unmount.
-//
-// Fourteen call sites remembering independently is a bug waiting for the
-// fifteenth. These wrappers make the commit part of the operation instead, and
-// tests/save_commit_discipline_test.cpp mechanically fails the build if a raw
-// Fs:: mutation reappears in a file that can see save paths.
+// fsdevCommitDevice() runs. Every mutation of a save path must be followed by a
+// commit, and fourteen call sites each remembering that separately has already
+// failed twice (an on-device delete that silently reverted; new folder/file
+// inside a save that vanished at unmount). These wrappers make the commit part
+// of the operation, and tests/save_commit_discipline_test.cpp mechanically
+// fails the build if a raw Fs:: mutation reappears in a file that can see save
+// paths.
 //
 // ── Using them ───────────────────────────────────────────────────────────────
-// Call SaveWrite::* instead of Fs::* for any mutation whose path COULD be a save.
-// The commit is a no-op (returning success) on every other surface, so there is no
-// need to know in advance which surface you are on — which is the entire point,
-// since that is exactly the thing callers get wrong.
-//
-// If a mutation genuinely cannot touch a save — writing a log file to a fixed SD
-// path, say — call Fs:: directly and mark the line with a trailing
+// Call SaveWrite::* instead of Fs::* for any mutation whose path COULD be a
+// save; the commit is a no-op on every other surface. If a mutation genuinely
+// cannot touch a save, call Fs:: directly and mark the line with a trailing
 //     // NOT-A-SAVE: <reason>
-// comment. The discipline test accepts that marker and rejects anything else, so
-// the exemption is explicit and reviewable rather than silent.
+// comment - the discipline test accepts that marker and rejects anything else.
 
 #include "core/fs.hpp"
 #include "services/save_surface.hpp"
@@ -84,7 +70,7 @@ inline bool remove_many(const std::vector<std::string>& paths, Fs::Progress& pro
     return ok && committed;
 }
 
-/// Commit after a write this module did not perform — a streamed upload, or any
+/// Commit after a write this module did not perform - a streamed upload, or any
 /// sequence that wrote through a FILE* it owns. Call once the bytes are down.
 inline bool after_write(const std::string& path) {
     return save_commit_if_save_path(path);

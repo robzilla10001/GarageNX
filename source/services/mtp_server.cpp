@@ -44,7 +44,7 @@ constexpr uint32_t kStorageNandUser    = 0x00050001;
 constexpr uint32_t kStorageNandSystem  = 0x00060001;
 constexpr uint32_t kStorageTitles      = 0x00070001;
 constexpr uint32_t kStorageSaves       = 0x00080001;
-// Gamecard was missing from this list for the whole project — harmless while
+// Gamecard was missing from this list for the whole project - harmless while
 // nothing mounted the surface, and immediately visible as "FTP/HTTP show the card,
 // MTP does not" the moment it did. FTP and HTTP iterate the catalog generically and
 // so gained the surface for free; MTP maps wire ids by hand and had to be told.
@@ -59,7 +59,7 @@ bool is_install_storage(uint32_t id) {
     return id == kStorageSdInstall || id == kStorageNandInstall;
 }
 
-// Map an MTP wire storage id (stable, cached by PC clients — must NOT change) to
+// Map an MTP wire storage id (stable, cached by PC clients - must NOT change) to
 // the shared StorageCatalog surface it represents.
 bool mtp_id_to_surface(uint32_t wire_id, StorageSurface::Id& out) {
     switch (wire_id) {
@@ -103,7 +103,7 @@ uint32_t mtp_storage_for_path(const std::string& vfs_path) {
     // Save objects are interned under their own synthetic prefix, and must be
     // matched BEFORE the catalog loop: they belong to the Saves surface even
     // though they are not "save:/..." paths. (The prefix cannot collide with the
-    // "save:" mount root — see save_surface.hpp — but checking first keeps the
+    // "save:" mount root - see save_surface.hpp - but checking first keeps the
     // intent explicit rather than relying on that.)
     if (Services::save_is_synthetic(vfs_path)) return kStorageSaves;
     for (const auto& s : Services::StorageCatalog::all()) {
@@ -120,7 +120,7 @@ uint32_t mtp_storage_for_path(const std::string& vfs_path) {
 // Resolve an interned path to the concrete path a READ should use. Real paths
 // pass through unchanged; a synthetic save path mounts its (user, title) through
 // the shared choke point first. Returns "" when the object cannot be read as a
-// file — an unresolvable save, or one of the synthesized folder levels.
+// file - an unresolvable save, or one of the synthesized folder levels.
 std::string readable_path(const std::string& interned) {
     if (!Services::save_is_synthetic(interned)) return interned;
     if (Services::save_synth_is_synthesized_dir(interned)) return std::string();
@@ -144,7 +144,7 @@ bool MtpServer::storage_enabled(uint32_t id) const {
 
     // Enabled is not the same as MOUNTED. MTP used to stop at the config check,
     // so a surface whose device was missing got advertised in GetStorageIDs and
-    // then failed enumeration — the host reports "could not get object handles"
+    // then failed enumeration - the host reports "could not get object handles"
     // and the user has a storage they cannot open. FTP always probed and simply
     // hid it. Same catalog, same config, two behaviours; now one.
     const StorageSurface* s = StorageCatalog::find(sid);
@@ -158,7 +158,7 @@ std::vector<uint8_t> MtpServer::build_device_info() const {
     w.u16(100);                       // Standard version 1.00
     w.u32(6);                         // VendorExtensionID: MTP
     w.u16(100);                       // VendorExtensionVersion
-    // VendorExtensionDesc — hosts key off this. Advertising "android.com" tells
+    // VendorExtensionDesc - hosts key off this. Advertising "android.com" tells
     // gvfs/libmtp we support the Android MTP i/o extensions (partial reads), which
     // is what makes it OPEN files in place instead of refusing and forcing a copy.
     // Without this string, gvfs marks the mount copy-only and never even issues a
@@ -176,7 +176,7 @@ std::vector<uint8_t> MtpServer::build_device_info() const {
         Op::SendObjectInfo, Op::SendObject, Op::DeleteObject,
         Op::GetDevicePropDesc, Op::GetDevicePropValue,
         // MTP 1.1. A host uses SendObjectPropList only if we claim it here, and
-        // libmtp reaches it via GetObjectPropsSupported — advertising 0x9808
+        // libmtp reaches it via GetObjectPropsSupported - advertising 0x9808
         // alone leaves it unreachable. Together they are the only way an object
         // of 4 GiB or more gets a truthful size: SendObjectInfo cannot express
         // one. Both routes converge on arm_incoming_object().
@@ -186,7 +186,7 @@ std::vector<uint8_t> MtpServer::build_device_info() const {
         Op::SetObjectPropValue,
         Op::SendObjectPropList,
     });
-    w.au16({});                       // EventsSupported — none yet
+    w.au16({});                       // EventsSupported - none yet
     w.au16({Mtp::Prop::DeviceFriendlyName});   // DevicePropertiesSupported
     w.au16({});                       // CaptureFormats
     w.au16({});                       // PlaybackFormats
@@ -206,7 +206,7 @@ std::vector<uint8_t> MtpServer::build_storage_info(uint32_t storage_id) const {
         const bool nand = (storage_id == kStorageNandInstall);
         const Core::Storage::SpaceInfo sp = nand ? Core::Storage::nand_user()
                                                  : Core::Storage::sd_card();
-        w.u16(0x0003);                     // StorageType: FixedRAM — not removable media
+        w.u16(0x0003);                     // StorageType: FixedRAM - not removable media
         w.u16(0x0002);                     // FilesystemType: GenericHierarchical
         w.u16(0x0000);                     // AccessCapability: read-write (hosts refuse to write otherwise)
         w.u64(sp.total_bytes);
@@ -251,30 +251,19 @@ std::vector<uint8_t> MtpServer::build_storage_info(uint32_t storage_id) const {
     }
 
     if (storage_id == kStorageSaves) {
-        // Three-level synthesized surface: the top two levels are accounts and
-        // titles, and only a title folder has a real filesystem behind it — and
-        // then only while it is the one mounted slot.
+        // Three-level synthesized surface: only a title folder has a real
+        // filesystem behind it (while it is the one mounted slot).
         //
-        // FREE SPACE MUST BE REAL, and this is the one field that cannot be
-        // copied from Installed Titles. A host checks FreeSpaceInBytes BEFORE it
-        // opens a transfer, and refuses client-side if the file does not fit —
-        // "there is not enough space on the destination" for a 553-byte save,
-        // with no request ever reaching us and nothing to see in a wire log.
-        // Advertising 0 is only truthful for a surface that can NEVER be written;
-        // Save Data can be, once the on-device confirmation is satisfied.
+        // FREE SPACE MUST BE REAL: a host checks FreeSpaceInBytes BEFORE it
+        // opens a transfer and refuses client-side if the file does not fit.
+        // Advertising 0 is only truthful for a surface that can never be
+        // written; Save Data can be, once the on-device confirmation is
+        // satisfied. NAND (User) is the pattern to copy - read-only by POLICY,
+        // writable per operation after confirmation - and saves live in the
+        // NAND user partition, so those capacity figures are the honest ones.
         //
-        // NAND (User) is the pattern to copy here, not Installed Titles: it is
-        // the other surface that is read-only by POLICY yet writable per
-        // operation after a confirmation, and its writes are hardware-verified.
-        // So: same AccessCapability (read-only is a hint to the host; the actual
-        // gate is the write guard plus the modal) and the same real capacity
-        // figures. Saves live in the NAND user partition, so those figures are
-        // the honest ones.
-        //
-        // CAVEAT worth knowing: a Switch save has its own per-title quota, far
-        // smaller than the partition. One number in StorageInfo cannot express
-        // that, so an oversized write still fails mid-transfer rather than being
-        // refused up front. Better than refusing everything.
+        // CAVEAT: a Switch save has its own per-title quota, far smaller than
+        // the partition; an oversized write still fails mid-transfer.
         const Core::Storage::SpaceInfo sp = Core::Storage::nand_user();
         const StorageSurface* s = StorageCatalog::find(StorageSurface::Id::Saves);
         w.u16(0x0003);                    // StorageType: FixedRAM
@@ -295,7 +284,7 @@ std::vector<uint8_t> MtpServer::build_storage_info(uint32_t storage_id) const {
                                                : StorageSurface::Id::NandSystem;
         const StorageSurface* s = StorageCatalog::find(sid);
         // BOTH partitions report real capacity. System used to report a default
-        // SpaceInfo{} — zero total, zero free — described as "unknown capacity",
+        // SpaceInfo{} - zero total, zero free - described as "unknown capacity",
         // but zero free is not read by a host as "unknown": it is read as FULL.
         // A host checks FreeSpaceInBytes BEFORE opening a transfer and refuses
         // client-side, so every confirmed write to NAND System would have failed
@@ -319,8 +308,8 @@ std::vector<uint8_t> MtpServer::build_storage_info(uint32_t storage_id) const {
         // A game card is REMOVABLE and physically READ-ONLY.
         //
         // Capacity is reported as 0/0 deliberately. There is no statvfs for the
-        // gamecard mount, and the alternative — borrowing the SD card's figures,
-        // which is what the fallback below used to do — would be a lie a host
+        // gamecard mount, and the alternative - borrowing the SD card's figures,
+        // which is what the fallback below used to do - would be a lie a host
         // acts on. Zero FREE space is exactly right here: it is what stops a host
         // from opening a write it cannot complete. (Contrast NAND System, where
         // zero free was a BUG precisely because that surface is writable through
@@ -330,7 +319,7 @@ std::vector<uint8_t> MtpServer::build_storage_info(uint32_t storage_id) const {
         w.u16(0x0002);                    // FilesystemType: GenericHierarchical
         w.u16(0x0001);                    // AccessCapability: READ-ONLY
         w.u64(0);                         // MaxCapacity: unknown
-        w.u64(0);                         // FreeSpaceInBytes: none — it is read-only
+        w.u64(0);                         // FreeSpaceInBytes: none - it is read-only
         w.u32(0xFFFFFFFF);
         w.str(s ? s->display : "Game Card");
         w.str("GAMECARD");
@@ -408,7 +397,7 @@ std::vector<uint8_t> MtpServer::build_object_info(uint32_t handle) const {
         // A user folder or a title folder is a directory BY CONSTRUCTION, so it
         // is answered without mounting anything. That matters: a host asks for an
         // ObjectInfo for every object it lists, and mounting to answer would
-        // mount and unmount every save on the console just to browse one folder —
+        // mount and unmount every save on the console just to browse one folder -
         // the bulk-churn pattern the single-slot design exists to avoid.
         if (Services::save_synth_is_synthesized_dir(*p)) {
             is_dir = true;
@@ -475,7 +464,7 @@ std::vector<uint8_t> MtpServer::build_object_info(uint32_t handle) const {
 
 // Stream a data container whose payload is a file. The container header
 // declares the total length up front, then the payload follows across as many
-// bulk transfers as it takes — so reading a 4 GiB file never needs a 4 GiB
+// bulk transfers as it takes - so reading a 4 GiB file never needs a 4 GiB
 // buffer.
 bool MtpServer::send_stream_data(uint16_t code, uint32_t tid,
                                  Core::NspStream::Source& src) {
@@ -656,7 +645,7 @@ bool MtpServer::recv_file_data(const std::string& vfs_path, uint64_t expected) {
     // Join the worker BEFORE fclose(). The sink closes over `f`; flush() waits
     // for in-flight work but does not stop the worker, so without this the
     // worker's thread object and fclose() are only ordered by the destructor,
-    // which runs at scope exit — after fclose(). quiesce() makes the ordering
+    // which runs at scope exit - after fclose(). quiesce() makes the ordering
     // explicit rather than incidental. Same lesson as recv_install's cancel
     // path (2347-0018), lower stakes here because this path has no early cancel
     // branch, but the same class of bug if one is ever added.
@@ -685,7 +674,7 @@ void MtpServer::save_install_log(const std::string& filename, bool ok) {
                            + "/" + Core::DateTime::log_stamp_now() + "_mtp.log";
     FILE* f = std::fopen(path.c_str(), "wb");
     if (!f) return;
-    std::fprintf(f, "GarageNX MTP stream install — %s\n",
+    std::fprintf(f, "GarageNX MTP stream install - %s\n",
                  Core::DateTime::clock_string_now().c_str());
     std::fprintf(f, "Source: %s\nResult: %s\n\n", filename.c_str(), ok ? "SUCCESS" : "FAILED");
     for (const auto& line : m_install_progress.log_snapshot())
@@ -697,8 +686,8 @@ void MtpServer::save_install_log(const std::string& filename, bool ok) {
 }
 
 // Refuse an install and leave a trace. MTP can only answer the host with a bare
-// response code — libmtp turns that into "Could not send object info", which
-// says nothing about why — so the reason has to be recorded on this side or it
+// response code - libmtp turns that into "Could not send object info", which
+// says nothing about why - so the reason has to be recorded on this side or it
 // is lost. reset() first: m_install_progress may still hold the previous
 // install's lines, and a rejection log stapled to an unrelated transfer's
 // history is worse than none.
@@ -707,7 +696,7 @@ void MtpServer::reject_install(const std::string& filename, const std::string& r
     m_install_progress.push_log("Rejected: " + filename);
     m_install_progress.push_log(reason);
     m_install_progress.message = reason;
-    SDL_Log("MTP: rejected %s — %s", filename.c_str(), reason.c_str());
+    SDL_Log("MTP: rejected %s - %s", filename.c_str(), reason.c_str());
     save_install_log(filename, false);
 }
 
@@ -756,19 +745,13 @@ void MtpServer::arm_incoming_object(uint32_t storage, uint32_t parent, uint16_t 
         }
 
         // An XCI is the one container whose length we cannot recover from its
-        // own contents. A PFS0's last entry ends at the file's end, so
-        // container_size() corrects a saturated 32-bit size as soon as the
-        // header lands; a gamecard image continues past `secure` into padding
+        // own contents: a gamecard image continues past `secure` into padding
         // that belongs to the transfer but to no entry, so StreamInstaller
-        // reports 0 and there is nothing to correct with. Without an exact
-        // size the data phase has no bound: recv_install would read until the
-        // host happened to send a ZLP, and a session that desyncs is worse
-        // than a transfer that is refused.
-        //
-        // size_exact is false only when the host saturated at 0xFFFFFFFF, so
-        // this refuses exactly the >= 4 GiB XCIs from hosts that never sent
-        // SendObjectPropList. A smaller XCI over plain SendObjectInfo still
-        // carries an exact size and is fine. This is what Option C bought.
+        // reports 0 and there is nothing to correct with. Without an exact size
+        // the data phase has no bound, and a session that desyncs is worse than
+        // a transfer that is refused. size_exact is false only when the host
+        // saturated at 0xFFFFFFFF, so this refuses exactly the >= 4 GiB XCIs
+        // from hosts that never sent SendObjectPropList.
         if (is_xci && !size_exact) {
             reject_install(filename,
                 "an XCI of 4 GiB or more needs an exact 64-bit size, which this "
@@ -779,7 +762,7 @@ void MtpServer::arm_incoming_object(uint32_t storage, uint32_t parent, uint16_t 
         }
 
         // Keys live in a singleton that must be load()ed before get()
-        // is valid — a service thread gets nothing for free. Check here
+        // is valid - a service thread gets nothing for free. Check here
         // rather than after the data phase, so a keyless console fails
         // instantly instead of eating a multi-GB transfer first.
         if (!Core::Keys::available()) {
@@ -803,19 +786,13 @@ void MtpServer::arm_incoming_object(uint32_t storage, uint32_t parent, uint16_t 
 
     // ── Save Data ────────────────────────────────────────────────────────────
     // Mirrors FTP exactly. A write INSIDE a title's save resolves to the mounted
-    // "save:/..." path and then goes through the guard, which raises the on-device
-    // confirmation (Saves is ReadOnly + Confirm::OnDevice) and performs the write
-    // if the user allows it. A write at the storage root, or inside one of the
-    // synthesized levels, has no title behind it and is refused outright with NO
-    // prompt — which is also what FTP does: to_vfs() returns "" for those levels
-    // and the command answers 550 without asking anyone anything.
+    // "save:/..." path and then goes through the guard, which raises the
+    // on-device confirmation. A write at the storage root or inside one of the
+    // synthesized levels is refused outright with NO prompt (no title behind it).
     //
-    // RESOLVING BEFORE GUARDING IS THE WHOLE POINT. save_resolve() mounts the
-    // title named in the synthetic path, so the guard classifies — and the user
-    // confirms — the save the write will actually land in. Guarding the synthetic
-    // path instead would default-deny (no surface claims that prefix), and
-    // guarding a bare "save:/" derived from the storage root would confirm against
-    // whichever save happened to be mounted from the last browse.
+    // RESOLVING BEFORE GUARDING IS THE WHOLE POINT: save_resolve() mounts the
+    // title named in the synthetic path, so the guard classifies - and the user
+    // confirms - the save the write will actually land in.
     std::string save_parent_synth;   // non-empty => this is a Save Data write
     {
         const std::string* sparent = (parent != Mtp::kRootParent && parent != 0)
@@ -834,11 +811,11 @@ void MtpServer::arm_incoming_object(uint32_t storage, uint32_t parent, uint16_t 
     std::string dir;
     if (!save_parent_synth.empty()) {
         // Mounts the named title, then hands back its concrete path. Empty means
-        // the parent was a user folder or an unknown title — refuse, no prompt.
+        // the parent was a user folder or an unknown title - refuse, no prompt.
         dir = Services::save_resolve_synth(save_parent_synth);
         if (dir.empty()) { send_response(Rc::AccessDenied, tid); return; }
     } else if (parent == Mtp::kRootParent || parent == 0) {
-        // Root of the TARGET storage — not always the SD card. Hardcoding "sdmc:/"
+        // Root of the TARGET storage - not always the SD card. Hardcoding "sdmc:/"
         // meant a write aimed at another storage's root silently landed on SD.
         dir = "sdmc:/";
         StorageSurface::Id sid;
@@ -916,7 +893,7 @@ void MtpServer::drain_data(uint64_t remaining) {
 }
 
 // Stream an NSP arriving over USB straight into NCM. Nothing touches the
-// filesystem, so a title larger than 4 GiB installs fine to a FAT32 card — the
+// filesystem, so a title larger than 4 GiB installs fine to a FAT32 card - the
 // bytes go from the bulk endpoint into a placeholder and never exist as a file.
 bool MtpServer::recv_install(uint32_t storage_id, const std::string& filename,
                              uint64_t size, bool size_exact) {
@@ -944,7 +921,7 @@ bool MtpServer::recv_install(uint32_t storage_id, const std::string& filename,
         m_install.reset(); m_installing.store(false); return false;
     }
 
-    // Wire accounting for the screen's average/ETA. This is the install path —
+    // Wire accounting for the screen's average/ETA. This is the install path -
     // the case that actually wants an ETA. (recv_file_data(), the plain file-copy
     // path, has its own copy of this; an install never goes through it.) Reset
     // the per-object received counter; the size is published below once payload
@@ -954,8 +931,8 @@ bool MtpServer::recv_install(uint32_t storage_id, const std::string& filename,
 
     // ── Drive the install via the transport-agnostic StreamDriver ────────────
     // MTP-specific work stays here: read the first transfer and strip the 12-byte
-    // data-container header. Everything after — size correction, overlap buffer,
-    // feed loop, and the load-bearing teardown order — lives in Install::drive(),
+    // data-container header. Everything after - size correction, overlap buffer,
+    // feed loop, and the load-bearing teardown order - lives in Install::drive(),
     // shared with the (upcoming) FTP and HTTP install paths.
     size_t got = 0;
     if (!ep_read(m_buf, m_buf_size, &got, 10000000000ULL)) { m_install->abort(); m_install.reset(); m_installing.store(false); return false; }
@@ -1101,7 +1078,7 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             // hardcoded lines, and adding Gamecard meant touching FOUR separate
             // places: the id constant, mtp_id_to_surface(), surface_to_mtp_id()
             // and this. I updated three and missed this one, which is why the card
-            // showed on FTP and HTTP and not here — the same class of miss as the
+            // showed on FTP and HTTP and not here - the same class of miss as the
             // round before, in a list I had just written a lesson about.
             //
             // Deriving the list removes the fourth place permanently: a surface
@@ -1176,7 +1153,7 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             } else if (c.param[0] == kStorageSaves) {
                 // Three levels: users, that user's titles, then the real save.
                 // Only the third has a filesystem behind it, and reaching it
-                // mounts that (user, title) — see save_surface.hpp. Every entry
+                // mounts that (user, title) - see save_surface.hpp. Every entry
                 // is interned under the "savedata:/" prefix so a handle names a
                 // specific title's file and cannot be confused with the same
                 // leaf name in another title's save.
@@ -1316,7 +1293,7 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
         }
 
         case Op::GetPartialObject: {
-            // params: handle, offset, maxbytes. Reads a byte range — this is what
+            // params: handle, offset, maxbytes. Reads a byte range - this is what
             // hosts (e.g. Linux gvfs/MTP) use to OPEN a file in place rather than
             // downloading the whole thing, so without it "open" fails and the user
             // must copy the file out first. The response's final parameter is the
@@ -1388,7 +1365,7 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             r.u32(comp_size);              // ObjectCompressedSize
             r.u16(d16);                    // ThumbFormat
             // ThumbCompressedSize, ThumbPixWidth, ThumbPixHeight,
-            // ImagePixWidth, ImagePixHeight, ImageBitDepth — exactly six.
+            // ImagePixWidth, ImagePixHeight, ImageBitDepth - exactly six.
             for (int i = 0; i < 6; i++) r.u32(d32);
             r.u32(d32);                    // ParentObject (host echo; we trust the param)
             r.u16(d16);                    // AssociationType
@@ -1398,7 +1375,7 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             if (!r.ok() || filename.empty()) { send_response(Rc::InvalidParameter, tid); break; }
 
             // ObjectCompressedSize is u32. A host reports 0xFFFFFFFF for
-            // anything >= 4 GiB, so the value is only meaningful below that —
+            // anything >= 4 GiB, so the value is only meaningful below that -
             // which is exactly why SendObjectPropList exists.
             arm_incoming_object(storage, parent, fmt, filename, comp_size,
                                 comp_size != 0xFFFFFFFFu, tid);
@@ -1444,7 +1421,7 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             // Params: property code, object format. A host asks this about EVERY
             // property GetObjectPropsSupported named, to learn its datatype
             // before it can encode a value. libmtp abandons the whole send if
-            // one fails — "could not get property description" — so this is a
+            // one fails - "could not get property description" - so this is a
             // hard obligation created by the answer above, not an extra.
             if (c.nparams < 1) { send_response(Rc::InvalidParameter, tid); break; }
             Writer w;
@@ -1460,7 +1437,7 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
         case Op::GetObjectPropValue: {
             // Params: object handle, property code. Return that ONE property's
             // value in its declared datatype. This is what gvfs/libmtp call for
-            // every object to learn its size and name — 261 times in the wire log.
+            // every object to learn its size and name - 261 times in the wire log.
             // Without it we returned OperationNotSupported for each, so the host
             // never learned file sizes and rendered every file BLANK, never even
             // issuing a read. The datatypes MUST match build_object_prop_desc()
@@ -1473,7 +1450,7 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             // the same reason: the synthesized levels answer without mounting,
             // the real ones resolve through the shared choke point. Getting this
             // wrong here (not in GetObjectInfo) is what made every file render
-            // blank the last time — gvfs reads size through THIS path.
+            // blank the last time - gvfs reads size through THIS path.
             const bool pv_is_save = Services::save_is_synthetic(*pv);
             const bool pv_save_synth = pv_is_save &&
                                        Services::save_synth_is_synthesized_dir(*pv);
@@ -1536,7 +1513,7 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
         case Op::SetObjectPropValue: {
             // Params: object handle, property code; the new value arrives in a data
             // phase. This is how hosts RENAME over MTP (libmtp sets ObjectFileName)
-            // — without it clients report "no known way of setting metadata" and
+            // - without it clients report "no known way of setting metadata" and
             // rename fails even though the descriptor advertises the property as
             // settable.
             if (c.nparams < 2) { send_response(Rc::InvalidParameter, tid); break; }
@@ -1565,7 +1542,7 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
                     send_response(Rc::InvalidParameter, tid); break;
                 }
                 // For a save object the guard and the rename both work on the
-                // MOUNTED path, while the HANDLE keeps its synthetic key — the
+                // MOUNTED path, while the HANDLE keeps its synthetic key - the
                 // handle must keep naming (user, title, leaf), not a bare
                 // "save:/..." that means something else once another title mounts.
                 const bool sp_is_save = Services::save_is_synthetic(sp_old);
@@ -1639,7 +1616,7 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
         }
 
         case Op::SendObject: {
-            // Must be preceded by SendObjectInfo or SendObjectPropList — the
+            // Must be preceded by SendObjectInfo or SendObjectPropList - the
             // spec has no other way to know where the bytes belong. Both arm the
             // same m_pending_* state; they differ only in whether the declared
             // size can be trusted at or above 4 GiB.
@@ -1655,7 +1632,7 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             // A Save Data destination is re-resolved here, because this is a
             // SEPARATE command from the SendObjectInfo that armed it. A client is
             // free to browse another title in between, which remounts the single
-            // save slot and would leave `dest` — a bare "save:/..." path — aimed
+            // save slot and would leave `dest` - a bare "save:/..." path - aimed
             // inside a different game's save. Re-resolving from the synthetic key
             // re-establishes the (user, title) this object names.
             //
@@ -1686,7 +1663,7 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             if (!p) { send_response(Rc::InvalidObjectHandle, tid); break; }
             const std::string path = *p;   // copy: path_for points into m_paths
 
-            // A save object is guarded by its MOUNTED path, not its handle key —
+            // A save object is guarded by its MOUNTED path, not its handle key -
             // resolving first mounts the title the handle names, so the guard
             // classifies and the user confirms the file that will actually be
             // deleted. Same order as FTP's DELE (to_vfs, then guard_write). An
@@ -1783,7 +1760,7 @@ bool MtpServer::add_endpoints() {
         .bInterfaceNumber   = 0,
         .bAlternateSetting  = 0,
         .bNumEndpoints      = 3,
-        .bInterfaceClass    = USB_CLASS_IMAGE,   // 6 — what makes hosts load their MTP/PTP driver
+        .bInterfaceClass    = USB_CLASS_IMAGE,   // 6 - what makes hosts load their MTP/PTP driver
         .bInterfaceSubClass = 0x01,              // Still Image Capture
         .bInterfaceProtocol = 0x01,              // PTP
         .iInterface         = 0,
@@ -1898,7 +1875,7 @@ bool MtpServer::usb_init() {
     dev.bMaxPacketSize0 = 0x09;   // SuperSpeed encodes EP0 size as a power of two
     if (R_FAILED(usbDsSetUsbDeviceDescriptor(UsbDeviceSpeed_Super, &dev))) { set_error("device descriptor (SS) failed"); return false; }
 
-    // Binary Object Store — required for the host to negotiate SuperSpeed.
+    // Binary Object Store - required for the host to negotiate SuperSpeed.
     const u8 bos[0x16] = {
         0x05, USB_DT_BOS, 0x16, 0x00, 0x02,
         0x07, USB_DT_DEVICE_CAPABILITY, 0x02, 0x02, 0x00, 0x00, 0x00,

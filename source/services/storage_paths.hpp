@@ -3,7 +3,7 @@
 // Catalog-driven path resolution shared by every transport. Given a transport-
 // neutral absolute path of the form  /<Storage Display Name>/<rest...>  this maps
 // it to the concrete libnx VFS path  <vfs_root>/<rest...>  for whichever enabled
-// StorageCatalog surface matches the first path component — or reports that the
+// StorageCatalog surface matches the first path component - or reports that the
 // path is the root chooser, an install target, a title-query surface, or invalid.
 //
 // This generalizes what ftp_paths.hpp did for FTP's three hardcoded folders: the
@@ -21,12 +21,12 @@
 namespace Services {
 
 enum class PathKind {
-    Root,          // "/" — the chooser; list the enabled storage folders
-    StorageRoot,   // "/<Storage>" exactly — the top of one surface
-    Filesystem,    // "/<Storage>/rest" under a Filesystem surface — real file I/O
-    Install,       // under an Install surface — writing installs
-    TitleQuery,    // under a TitleQuery surface (Installed Titles) — synthesized
-    SaveData,      // under Save Data — THREE levels: <User>/<Title>/<file...>.
+    Root,          // "/" - the chooser; list the enabled storage folders
+    StorageRoot,   // "/<Storage>" exactly - the top of one surface
+    Filesystem,    // "/<Storage>/rest" under a Filesystem surface - real file I/O
+    Install,       // under an Install surface - writing installs
+    TitleQuery,    // under a TitleQuery surface (Installed Titles) - synthesized
+    SaveData,      // under Save Data - THREE levels: <User>/<Title>/<file...>.
                    //   The first two are synthesized (accounts, then that user's
                    //   titles); only the third is a real mount. `rel` holds the
                    //   part after "/Save Data/" and the caller decomposes it,
@@ -63,7 +63,7 @@ inline bool sp_is_root(const std::string& posix) {
 
 // Find an ENABLED surface whose display name matches `name` exactly. Returns
 // nullptr if no enabled surface matches (disabled surfaces are invisible, so a
-// path into one resolves to Invalid — a client can't reach a disabled storage).
+// path into one resolves to Invalid - a client can't reach a disabled storage).
 inline const StorageSurface* sp_find_enabled_by_name(const std::string& name,
                                                      const Config::Surfaces& cfg) {
     for (const auto& s : StorageCatalog::all()) {
@@ -125,7 +125,7 @@ inline ResolvedPath sp_resolve(const std::string& posix, const Config::Surfaces&
 // ─── Save Data decomposition ──────────────────────────────────────────────────
 //
 // Splits the `rel` of a PathKind::SaveData result into its three levels. Pure
-// string work — no mounting, no libnx — so the level logic is host-testable and
+// string work - no mounting, no libnx - so the level logic is host-testable and
 // the transports only have to act on the answer.
 struct SavePath {
     enum class Level {

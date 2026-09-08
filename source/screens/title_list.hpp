@@ -1,6 +1,6 @@
 #pragma once
 // source/screens/title_list.hpp
-// Milestone 4 Phase B — the installed-titles browser.
+// Milestone 4 Phase B - the installed-titles browser.
 //
 // Shows one row per user application (icon + name + version + size + storage).
 // Names and icons are resolved up front by decrypting each app's Control NCA,

@@ -7,12 +7,7 @@
 // Protocol marshalling lives in mtp_data.{hpp,cpp} (unit-tested off-device);
 // this file owns the USB transport and operation dispatch.
 //
-// Slice 1: enumerate and expose storages. Slice 2: browse (object handles,
-// info, file reads). Slice 3: write — create/upload/delete. Install storages
-// land in slice 4.
-//
-// Reuses NetworkService purely for its thread lifecycle — the base carries no
-// network-specific API, only start/stop/status/last_error.
+// Reuses NetworkService purely for its thread lifecycle.
 
 #include "services/service_manager.hpp"
 #include "install/stream_installer.hpp"
@@ -36,13 +31,13 @@ public:
 
     // CRITICAL: stop() (which joins the worker thread) MUST run before any member
     // is destroyed. Without this destructor, C++ destroys members first and the
-    // base ~NetworkService (which calls stop()) LAST — so m_install would be torn
+    // base ~NetworkService (which calls stop()) LAST - so m_install would be torn
     // down while the worker thread is still inside recv_install using it. That is
     // a cross-thread use-after-free: the worker runs abort() on a half-destroyed
     // installer while the UI thread's ~unique_ptr runs abort() too. It presented
     // as the MTP cancel crash (Data Abort at 0x0; the 2168-0002 in the report is a
     // stale result register, the real Exception Type is Data Abort). Joining here,
-    // before members die, is the actual fix — the abort() guard/reorder/atomics
+    // before members die, is the actual fix - the abort() guard/reorder/atomics
     // were treating symptoms of this ordering bug.
     ~MtpServer() override { stop(); }
 
@@ -60,11 +55,11 @@ public:
     uint64_t bytes_sent()     const { return m_bytes_sent.load(); }
     uint64_t bytes_recv()     const { return m_bytes_recv.load(); }
 
-    // Declared wire size of the current incoming transfer, from SendObjectInfo —
+    // Declared wire size of the current incoming transfer, from SendObjectInfo -
     // i.e. the compressed (.nsz/.xcz) size actually crossing USB, which is the
     // correct ETA denominator. NSZ/XCZ decompress on-device, so installed bytes
     // exceed wire bytes; an ETA against installed size would run fast then stall.
-    // Reads 0 when no size has been declared yet (ETA should show "—" until then).
+    // Reads 0 when no size has been declared yet (ETA should show "-" until then).
     uint64_t current_wire_size() const { return m_wire_size.load(); }
     // Wire bytes received for the current transfer so far. Resets to 0 at the
     // start of each object. ETA = (current_wire_size - current_wire_recv) / rate.
@@ -133,7 +128,7 @@ private:
 
     // ── Install storages ─────────────────────────────────────────────────────
     // Writing an NSP to one of these streams it straight into NCM rather than
-    // onto the filesystem — no staging file, so the FAT32 4 GiB ceiling never
+    // onto the filesystem - no staging file, so the FAT32 4 GiB ceiling never
     // applies. m_install is live only between SendObjectInfo and SendObject.
     bool  storage_enabled(uint32_t storage_id) const;
     /// `size_exact` distinguishes a 64-bit size the host actually declared
@@ -144,7 +139,7 @@ private:
 
     /// Arm m_pending_* for an incoming object and answer the host. Shared by
     /// SendObjectInfo and SendObjectPropList: those operations differ only in
-    /// HOW the host declares an object — a fixed dataset vs a property list —
+    /// HOW the host declares an object - a fixed dataset vs a property list -
     /// not in what we do about it. Keeping one body means the install gate
     /// cannot drift between the two routes and leave one of them open.
     void  arm_incoming_object(uint32_t storage, uint32_t parent, uint16_t fmt,
@@ -160,7 +155,7 @@ private:
     /// Refuse an install before the data phase and leave a trace of WHY.
     /// save_install_log() is otherwise only reached from recv_install(), so a
     /// SendObjectInfo rejection used to push its reason into m_install_progress
-    /// and then discard it unread — the host sees a bare PTP response code and
+    /// and then discard it unread - the host sees a bare PTP response code and
     /// the user sees nothing at all. Always use this instead of a raw push_log
     /// when refusing in the SendObjectInfo handler.
     void reject_install(const std::string& filename, const std::string& reason);

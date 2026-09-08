@@ -3,7 +3,7 @@
 // The shared ETA formatter used by the MTP, FTP and HTTP status screens.
 //
 // This was two byte-identical file-local copies before HTTP needed a third. It is
-// pure, and its whole job is boundary behaviour — rollover at 60s and 3600s, and
+// pure, and its whole job is boundary behaviour - rollover at 60s and 3600s, and
 // refusing to print numbers that are technically true but useless. Those are
 // exactly the cases you cannot check by glancing at a console during a transfer.
 
@@ -46,7 +46,7 @@ static void test_minute_rollover() {
 static void test_hour_rollover() {
     CHECK(UI::format_eta(3600) == "1h 00m", "exactly one hour");
     CHECK(UI::format_eta(7500) == "2h 05m", "hours with padded minutes");
-    // Above an hour, seconds are dropped deliberately — they are noise at that
+    // Above an hour, seconds are dropped deliberately - they are noise at that
     // scale and would make the column jitter every frame.
     CHECK(UI::format_eta(3659) == "1h 00m", "seconds not shown past an hour");
     std::printf("  ok: hour rollover\n");

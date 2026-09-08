@@ -9,17 +9,17 @@
 //
 // Build: see tests/CMakeLists.txt. Runs on the host, no libnx, no device.
 //
-// SCOPE — read before adding to this file.
+// SCOPE - read before adding to this file.
 //   IN:  the XCI header, both HFS0 layers, locating `secure`, the collector's
 //        forward-skip over the signature and the update/normal partitions,
 //        container_size()'s must-be-zero rule, malformed-input rejection,
 //        and the table bounds that keep a hostile image from exhausting memory.
-//   OUT: anything NCZ, for the same reason the PFS0 suite gives — ncz.cpp's
+//   OUT: anything NCZ, for the same reason the PFS0 suite gives - ncz.cpp's
 //        !PLATFORM_SWITCH branch stubs the decompressor, so an .ncz entry here
 //        exercises a stub. The XCZ test below asserts a REFUSAL (no keys) and
 //        nothing about decompression.
 //   OUT: finish(). It calls Install::install(), which is a link stub that
-//        aborts — meta registration is hardware work. See link_stubs.cpp.
+//        aborts - meta registration is hardware work. See link_stubs.cpp.
 
 #include "core/keys.hpp"
 #include "core/ncm.hpp"
@@ -189,7 +189,7 @@ static const std::vector<FakeEntry> kNcas = {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 // The core claim: a gamecard image parses, and the NCAs found are the ones in
-// `secure`. Passing at chunk size 1 is the strongest single statement here —
+// `secure`. Passing at chunk size 1 is the strongest single statement here -
 // every collection boundary, and the skip across the signature and the
 // update/normal partitions, is then crossed one byte at a time.
 static void test_xci_parses_at_every_chunk_size() {
@@ -210,7 +210,7 @@ static void test_xci_parses_at_every_chunk_size() {
 // THE rule of slice 4c. A PFS0's last entry ends at the file's end, so its table
 // yields an exact size. A gamecard image does not: it continues past `secure`
 // into padding that belongs to the transfer but to no entry. Reporting a size
-// derived from the entries would come up short — which does not fail an install,
+// derived from the entries would come up short - which does not fail an install,
 // it leaves unread bytes in the endpoint and desyncs the session.
 static void test_container_size_is_zero_for_xci() {
     uint64_t secure_abs = 0;
@@ -272,7 +272,7 @@ static void test_forward_skips_land_exactly() {
         CHECK(feed_in_chunks(r.inst, v, 13), "feed with an awkward chunk size");
         CHECK(r.inst.ok() && r.inst.complete(), "skip landed on the secure header exactly");
     }
-    // A root HFS0 that does not sit at the usual 0x200 must work too — the
+    // A root HFS0 that does not sit at the usual 0x200 must work too - the
     // offset at 0x130 is the authority, not the convention.
     {
         XciOpts o;
@@ -308,7 +308,7 @@ static void test_format_is_chosen_from_the_name() {
 }
 
 // An XCZ is an XCI whose secure partition holds .ncz files. It needs no XCI-side
-// support at all — classification is by name, and the key precondition in
+// support at all - classification is by name, and the key precondition in
 // finalize_entries() is shared. This asserts the REFUSAL only; decompression is
 // stubbed on this platform (see the scope note above).
 static void test_xcz_without_keys_is_refused_at_the_table() {
@@ -330,7 +330,7 @@ static void test_xcz_without_keys_is_refused_at_the_table() {
     CHECK(r.inst.error().find("prod.keys") != std::string::npos, "error names the missing keys");
     // The noun IS asserted, though, and deliberately. Both formats reach this
     // refusal by the same route, so it is easy to write one that says NSZ to
-    // everyone — and this string is the entire explanation a user gets. Someone
+    // everyone - and this string is the entire explanation a user gets. Someone
     // installing an XCZ being told about NSZ reads as a bug in us.
     CHECK(r.inst.error().find("XCZ") != std::string::npos, "refusal names XCZ, not NSZ");
     CHECK(r.inst.error().find("NSZ") == std::string::npos, "and does not mention NSZ at all");
@@ -414,7 +414,7 @@ static void test_wild_root_offsets_are_refused() {
 
 // count and string-table size are host-supplied and feed straight into an
 // allocation. Unbounded, a hostile or corrupt image reserves gigabytes and takes
-// the process out via bad_alloc — a crash, on a console, from a bad file.
+// the process out via bad_alloc - a crash, on a console, from a bad file.
 static void test_hostile_table_sizes_cannot_exhaust_memory() {
     {   // implausible file count
         uint64_t secure_abs = 0;

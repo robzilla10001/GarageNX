@@ -2,13 +2,13 @@
 // source/install/ncz.hpp
 // NCZ/NSZ section-based zstd decompression for NCA install.
 //
-// An .ncz is a single NCA whose ENCRYPTED body has been decrypted (so it will
-// compress) and then zstd-compressed. An .nsz / .xcz is just an NSP / XCI whose
-// .nca entries have been replaced with these .ncz entries — so "NSZ" is NOT a
-// zipped NSP; each NCA is transformed individually.
+// An .ncz is a single NCA whose encrypted body has been decrypted (so it will
+// compress) and then zstd-compressed. An .nsz/.xcz is just an NSP/XCI whose
+// .nca entries have been replaced with .ncz entries - each NCA is transformed
+// individually.
 //
 // On-disk NCZ layout:
-//   [0x0000..0x3FFF] : original NCA header (0x4000 bytes) — unmodified
+//   [0x0000..0x3FFF] : original NCA header (0x4000 bytes) - unmodified
 //   [0x4000..0x4007] : ncz::Header { u64 magic, u64 total_sections }
 //   [0x4008..]       : Section[total_sections] (0x40 bytes each):
 //                        u64 offset, u64 size, u64 crypto_type, u64 padding,
@@ -17,22 +17,17 @@
 //   [data region]    : zstd stream(s) of the DECRYPTED NCA body (from 0x4000 on)
 //
 // Reconstructing the installable NCA:
-//   1. Write the 0x4000 header VERBATIM. It is part of the SHA-256 that defines
-//      content_id, so it must not be altered (no distribution-bit patch, no
-//      crypto conversion) or the reconstructed NCA won't match its id.
+//   1. Write the 0x4000 header VERBATIM - it is part of the SHA-256 that
+//      defines content_id.
 //   2. zstd-decompress the body.
-//   3. RE-ENCRYPT it. The body is stored DECRYPTED for BOTH titlekey NCAs
-//      (rights_id set) and standard-crypto NCAs, so re-encryption is always
-//      required. It is applied per-section: crypto_type >= AesCtr(3) is CTR
-//      re-encrypted with the section's key/counter; crypto_type None(1) passes
-//      through. The CTR counter is keyed to the ABSOLUTE NCA offset (offset>>4),
-//      one context per section, auto-incrementing across chunks.
+//   3. RE-ENCRYPT it (the body is stored decrypted for both titlekey and
+//      standard-crypto NCAs). Per-section: crypto_type >= AesCtr(3) is CTR
+//      re-encrypted with the section's key/counter, keyed to the ABSOLUTE NCA
+//      offset (offset>>4); crypto_type None(1) passes through.
 //
 // The result is byte-identical to the original NCA, so SHA-256 == content_id
-// and NCM accepts it — exactly like a verbatim NSP/XCI install.
-//
-// Titlekey NCAs keep their rights_id, so a matching ticket must be installed
-// (use the container's .tik, or make_common_ticket() when none is present).
+// and NCM accepts it. Titlekey NCAs keep their rights_id, so a matching ticket
+// must be installed (the container's .tik, or make_common_ticket()).
 
 #include "core/keys.hpp"
 #include <cstdint>
@@ -42,7 +37,7 @@
 
 namespace Install {
 
-// ReadFn matches the definition in installer.hpp — callbacks bound to container readers.
+// ReadFn matches the definition in installer.hpp - callbacks bound to container readers.
 using ReadFn = std::function<size_t(uint64_t offset_in_entry, void* buf, size_t len)>;
 using WriteCallback = std::function<bool(uint64_t nca_offset, const uint8_t* data, size_t size)>;
 

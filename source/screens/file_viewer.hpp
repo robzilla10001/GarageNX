@@ -1,6 +1,6 @@
 #pragma once
 // source/screens/file_viewer.hpp
-// Paged file viewer — text and hex modes. Loads the file in chunks so large
+// Paged file viewer - text and hex modes. Loads the file in chunks so large
 // files never blow the memory budget or hard-lock the device.
 //
 // Text mode: reads UTF-8, wraps to the view width, pages by screenful.

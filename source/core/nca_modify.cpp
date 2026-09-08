@@ -1,14 +1,10 @@
 // source/core/nca_modify.cpp
-// Ticket-less NCA header conversion. Given a decrypted NCA header that uses
-// titlekey crypto, produce a modified header that uses standard key-area crypto:
-//   1. Write the decrypted titlekey into key-area slot 2 (the body key slot).
-//   2. Re-encrypt the key area with key_area_key_application[crypto_type] (ECB).
-//   3. Clear the rights ID (16 zero bytes).
-//   4. Leave crypto_type/crypto_type2 as-is (they already select the generation;
-//      standard crypto is implied once the rights ID is zero and the key area
-//      holds a valid key).
-//   5. Re-encrypt the 0xC00 header region with header_key (AES-XTS, Nintendo
-//      tweak) so it can be written back into the NSP.
+// Ticket-less NCA header conversion: given a decrypted NCA header that uses
+// titlekey crypto, produce one that uses standard key-area crypto - write the
+// decrypted titlekey into key-area slot 2, re-encrypt the key area with
+// key_area_key_application[crypto_type] (ECB), clear the rights ID, leave
+// crypto_type/crypto_type2 as-is, and re-encrypt the 0xC00 header region with
+// header_key (AES-XTS, Nintendo tweak).
 //
 // Reference: nxdumptool keys.c generateEncryptedNcaKeyAreaWithTitlekey +
 // hactool nca header handling.
@@ -61,7 +57,7 @@ bool convert_to_ticketless(uint8_t* decrypted_header /*0xC00, in-place plaintext
     if (keygen < 0 || keygen >= Core::Keys::MAX_KEY_GENERATION) return false;
 
     if (!keys.has_kaek_application[keygen]) {
-        SDL_Log("NcaModify — missing key_area_key_application_%02x", keygen);
+        SDL_Log("NcaModify - missing key_area_key_application_%02x", keygen);
         return false;
     }
 

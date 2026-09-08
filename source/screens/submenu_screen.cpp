@@ -43,7 +43,7 @@ std::unique_ptr<Screen> SubMenuScreen::update(bool& pop) {
         if (idx < 0 || idx >= static_cast<int>(m_items.size())) return nullptr;
 
         // Dispatch through the shared activator. A leaf that sets pop (an exit or
-        // power action) must propagate that pop up so the app actually exits —
+        // power action) must propagate that pop up so the app actually exits -
         // popping only THIS submenu would just return to the main menu. So we
         // return the child screen if any; if the action set pop, we keep it set.
         bool child_pop = false;

@@ -2,7 +2,7 @@
 // source/core/fs.hpp
 // Filesystem abstraction over POSIX. Works with libnx device-prefixed paths
 // (sdmc:/, romfs:/) and standard PC paths. All browser file operations go
-// through this — never call POSIX directly from UI code.
+// through this - never call POSIX directly from UI code.
 //
 // Long-running operations (copy, move, recursive delete) run through the
 // FileOp interface with progress reporting so the UI thread never blocks.
@@ -67,10 +67,18 @@ uint64_t file_size(const std::string& path);
 // These complete quickly and can be called directly on the UI thread.
 
 bool make_directory(const std::string& path);
+// Create a directory AND every missing parent. make_directory() maps to a
+// single mkdir()/fsFsCreateDirectory(), which creates only the final component:
+// make_directory("sdmc:/a/b/c") fails whenever "sdmc:/a/b" does not exist yet.
+// Any caller about to write under a multi-level path it does not control (the
+// firmware dump's dumps/firmware/<version>/) must use this instead - the
+// single-level version there aborted every firmware dump attempt on SD cards
+// that had never had a firmware dump succeed.
+bool make_directory_recursive(const std::string& path);
 bool create_empty_file(const std::string& path);
 bool rename(const std::string& from, const std::string& to);
 bool remove_file(const std::string& path);
-bool remove_directory_recursive(const std::string& path);  // can be slow — see FileOp
+bool remove_directory_recursive(const std::string& path);  // can be slow - see FileOp
 
 // ─── Conflict resolution ──────────────────────────────────────────────────────
 
@@ -120,7 +128,7 @@ struct Progress {
 using ConflictResolver = std::function<Conflict(const std::string& dest_path)>;
 
 /// Copy a file or directory (recursive) from src to dst_dir.
-/// Runs synchronously on the calling thread — callers should run it on a worker.
+/// Runs synchronously on the calling thread - callers should run it on a worker.
 /// Updates `progress` throughout. Returns true on success.
 bool copy(const std::string& src,
           const std::string& dst_dir,

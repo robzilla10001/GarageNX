@@ -3,15 +3,14 @@
 //
 // Per-title play statistics: what has been played, for how long, how often.
 //
-// NOT the aggregate summary shown on the System Information screen. Those totals
-// are documented in core/activity.cpp as unreliable (the pdm event stream includes
-// system-applet churn and predates the RTC being set) and report N/A rather than
-// fabricate. Per-title figures come from a different query, addressed directly by
-// application id, and are the numbers other homebrew activity tools show.
+// NOT the aggregate summary shown on the System Information screen - those
+// totals are documented in core/activity.cpp as unreliable and report N/A.
+// Per-title figures come from a different query, addressed directly by
+// application id.
 //
-// Gathering blocks briefly — it resolves title names and then queries pdm once per
-// installed title — so it runs on the SECOND update with a progress frame, the
-// same shape as the save backup sweep.
+// Gathering blocks briefly (title-name resolution + one pdm query per installed
+// title), so it runs on the SECOND update with a progress frame, the same shape
+// as the save backup sweep.
 
 #include "screens/screen.hpp"
 #include "core/activity.hpp"

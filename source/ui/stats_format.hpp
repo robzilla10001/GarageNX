@@ -2,18 +2,12 @@
 // source/ui/stats_format.hpp
 //
 // Shared formatting for the transport status screens (MTP / FTP / HTTP).
+// format_eta() existed as byte-identical copies in mtp_screen.cpp and
+// ftp_screen.cpp; this is the one implementation.
 //
-// format_eta() existed twice — once in mtp_screen.cpp and once in
-// ftp_screen.cpp — as byte-identical file-local copies. Adding HTTP would have
-// made three. Two identical copies are not a bug yet; they are a bug waiting for
-// the first person to fix one of them, and this codebase has already paid for
-// that lesson more than once (the "<Name> [APPID]" save label, the mount probe
-// that FTP had and MTP did not).
-//
-// Pure — no SDL, no libnx — so it is host-tested rather than eyeballed on a
-// console, which for a function whose whole job is boundary behaviour (negative,
-// absurd, zero, rollover at 60s and 3600s) is the difference between knowing and
-// hoping.
+// Pure - no SDL, no libnx - so it is host-tested rather than eyeballed on a
+// console; its whole job is boundary behaviour (negative, absurd, zero,
+// rollover at 60s and 3600s).
 
 #include <cstdio>
 #include <string>

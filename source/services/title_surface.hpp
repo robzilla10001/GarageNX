@@ -6,13 +6,10 @@
 //
 //     /Installed Titles/Zelda [0100000000010000][BASE][v0].nsp
 //
-// Nothing here exists on disk. The listing is synthesized from ncm, and (from 3c)
-// reading one of these files streams a PFS0 built on the fly from the title's NCAs.
-// That is what makes "dump a title over FTP" work the way DBI does it.
-//
-// Enumeration is CACHED. Listing costs ncm queries, and a client may re-list a
-// directory repeatedly while browsing; the cache is invalidated whenever the title
-// database is marked dirty (install/delete), so it cannot go stale silently.
+// Nothing here exists on disk. The listing is synthesized from ncm, and reading
+// one of these files streams a PFS0 built on the fly from the title's NCAs.
+// Enumeration is CACHED and invalidated whenever the title database is marked
+// dirty (install/delete).
 
 #include "core/ncm.hpp"
 
@@ -29,17 +26,13 @@ struct VirtualEntry {
     bool        is_dir = false;
 };
 
-// A snapshot of the current Installed Titles listing.
-//
-// Returned BY VALUE deliberately. The main loop rebuilds the underlying vector as
-// names resolve; handing a transport a reference to it meant the transport could
-// iterate the vector while the main thread cleared and refilled it — a use-after-
-// free across threads. A snapshot costs one copy per listing and removes the race
-// entirely. An empty result means "nothing enumerated yet", not an error, so a
-// client sees an empty folder rather than a broken one.
+// A snapshot of the current Installed Titles listing, returned BY VALUE
+// deliberately: the main loop rebuilds the underlying vector as names resolve,
+// and handing a transport a reference would risk a cross-thread use-after-free.
+// An empty result means "nothing enumerated yet", not an error.
 std::vector<VirtualEntry> installed_titles_list();
 
-// Resolve a wire filename back to the title it names. False if no such title —
+// Resolve a wire filename back to the title it names. False if no such title -
 // which is the correct answer for a stale filename a client cached before an
 // uninstall.
 bool installed_titles_find(const std::string& filename, Core::Ncm::Title& out);
@@ -49,16 +42,11 @@ bool installed_titles_find(const std::string& filename, Core::Ncm::Title& out);
 // call), and marks the work wanted so installed_titles_tick() advances it over
 // the following frames.
 //
-// This exists because installed_titles_list() BLOCKS the caller until the main
-// loop has ticked the work forward — which is correct for a transport worker (the
-// loop keeps running) but a deadlock-shaped stall for a MAIN-THREAD caller: the
-// loop cannot tick while the main thread is parked inside this call, so it waits
-// out the full timeout and returns unresolved names. Symptom: the on-device Save
-// Manager took ~10s on the first browse after boot and showed id-only names, then
-// was instant on re-entry because the cache had warmed meanwhile.
-//
-// A main-thread caller uses this and its OWN per-frame redraw to fill names in,
-// exactly as the screen already does for its own list — never installed_titles_list().
+// installed_titles_list() BLOCKS until the main loop has ticked the work
+// forward - correct for a transport worker, but a deadlock-shaped stall for a
+// MAIN-THREAD caller (the loop cannot tick while the main thread is parked
+// inside the call). A main-thread caller uses this and its OWN per-frame redraw
+// to fill names in - never installed_titles_list().
 std::vector<VirtualEntry> installed_titles_request_nonblocking();
 
 // Display names resolved so far, for the id-labelling path. True once enumeration
@@ -66,7 +54,7 @@ std::vector<VirtualEntry> installed_titles_request_nonblocking();
 // the list immediately and re-label as resolution progresses.
 bool installed_titles_enumerated();
 
-// True once there is NO name-resolution work left — enumeration finished AND every
+// True once there is NO name-resolution work left - enumeration finished AND every
 // title has been through the resolver. This is the signal a main-thread caller
 // needs when it must have final names before doing something irreversible with
 // them (naming a backup directory, say), because "enumerated" alone is true while
@@ -82,7 +70,7 @@ bool installed_titles_names_resolved();
 // Name resolution decrypts a Control NCA and opens ncm sessions; the on-device
 // title screen has always done one per frame, and doing them all at once from a
 // transport worker thread crashed the console. Transports therefore never resolve
-// names themselves — they read what this has filled in, falling back to id-based
+// names themselves - they read what this has filled in, falling back to id-based
 // names for anything not yet done, so listing is always immediate and safe.
 void installed_titles_tick();
 
@@ -94,7 +82,7 @@ void installed_titles_tick();
 uint64_t installed_titles_exact_size(const std::string& filename);
 
 // Display name for an APPLICATION id, from names already resolved by the main
-// loop. Returns "" if unknown (not yet resolved, or no such title) — callers fall
+// loop. Returns "" if unknown (not yet resolved, or no such title) - callers fall
 // back to showing the raw id. Cache-only: never triggers ncm work, so it is safe to
 // call from a transport thread while listing.
 std::string installed_titles_name_for_app(uint64_t application_id);

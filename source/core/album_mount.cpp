@@ -27,7 +27,7 @@ bool mount_album() {
         return false;
     }
 
-    // Mount it as "album:". fsdev takes ownership of `fs` — it closes it on
+    // Mount it as "album:". fsdev takes ownership of `fs` - it closes it on
     // unmount and even if the mount call itself fails, so we must NOT fsFsClose
     // it ourselves. Device name must be <=31 chars, no trailing colon.
     if (fsdevMountDevice("album", fs) == -1) {

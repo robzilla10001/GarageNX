@@ -39,7 +39,7 @@ std::string content_id_hex(const NcmContentId& id) {
 }
 
 // True (and fills rights_id) if this NCA uses titlekey crypto. Requires decrypting
-// the NCA header, so it is done once per content at open() time — never per read.
+// the NCA header, so it is done once per content at open() time - never per read.
 // Parse a rights id out of an ALREADY-READ encrypted NCA header. Split from the
 // read so both storage paths share it: gamecard content cannot be read through
 // NCM (2002-2964), so its header arrives from the mounted secure partition
@@ -77,20 +77,13 @@ public:
 
     // Read `n` bytes of one content at `off`.
     //
-    // GAME CARD CONTENT CANNOT BE READ THROUGH NCM. ncmContentStorageReadContentIdFile
-    // fails on NcmStorageId_GameCard with 2002-2964 (FS, unsupported operation) —
-    // and it fails while ncmContentStorageGetSizeFromContentId on the SAME storage
-    // and the SAME content id SUCCEEDS. That asymmetry is the tell: the storage
-    // handle is fine and the content id is real; that one accessor is simply not
-    // implemented for cartridges.
-    //
-    // The content is readable as an ordinary FILE on the card's mounted secure
-    // partition, which GarageNX already mounts as "gamecard:". So for gamecard
-    // titles we open <content_id>.nca there and read it directly. Every other
-    // storage keeps the NCM path unchanged.
-    //
-    // The handle is cached because a dump reads one content in many chunks;
-    // reopening per chunk would be pointless syscalls.
+    // GAME CARD CONTENT CANNOT BE READ THROUGH NCM: ncmContentStorageRead-
+    // ContentIdFile fails on NcmStorageId_GameCard with 2002-2964 (unsupported
+    // operation) even though GetSizeFromContentId on the same id succeeds. The
+    // content is readable as an ordinary file on the card's mounted secure
+    // partition ("gamecard:", already mounted), so for gamecard titles we open
+    // <content_id>.nca there directly. The handle is cached because a dump
+    // reads one content in many chunks.
     bool read_content(void* out, size_t n, const NcmContentId& id, uint64_t off) {
         if (m_storage_id != NcmStorageId_GameCard)
             return R_SUCCEEDED(ncmContentStorageReadContentIdFile(
@@ -186,7 +179,7 @@ public:
                 s64 sz = 0;
                 // Log the FIRST size failure too. If sizes fail, the read was
                 // never going to work and the cause is the storage/handle, not
-                // the read call — that distinction is the whole point of logging
+                // the read call - that distinction is the whole point of logging
                 // both.
                 if (R_FAILED(ncmContentStorageGetSizeFromContentId(&m_cs, &sz, &ci.content_id)))
                     continue;
@@ -245,7 +238,7 @@ public:
                 }
                 m_note = "ticket + cert included";
             } else {
-                m_note = "TITLEKEY TITLE WITH NO TICKET — may not install";
+                m_note = "TITLEKEY TITLE WITH NO TICKET - may not install";
                 SDL_Log("NspStream: titlekey title but no ticket found");
             }
         }
@@ -281,7 +274,7 @@ public:
         }
 
         // Data region: find which content covers m_pos. Linear from a remembered
-        // cursor, since reads are sequential — no rescanning from the start.
+        // cursor, since reads are sequential - no rescanning from the start.
         while (m_cursor < m_contents.size()) {
             const uint64_t start = m_layout.data_offsets[m_cursor];
             const uint64_t end   = start + m_contents[m_cursor].size;
@@ -296,7 +289,7 @@ public:
                     const ::Result rc = read_content(out, n, c.id, rel) ? 0 : 1;
                     if (R_FAILED(rc)) {
                         // The caller only ever saw "NCA read failed" with no
-                        // Result, which is unusable for diagnosis — a gamecard
+                        // Result, which is unusable for diagnosis - a gamecard
                         // dump failing on its FIRST read could be the storage,
                         // the content id, the offset, or the length, and the rc
                         // distinguishes them immediately. Logged ONCE per stream

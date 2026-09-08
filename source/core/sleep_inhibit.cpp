@@ -19,7 +19,7 @@ constexpr uint32_t kReportIntervalMs = 15000;
 
 void set_inhibited(bool on) {
 #ifdef PLATFORM_SWITCH
-    // Two DIFFERENT mechanisms, both needed — confirmed on hardware:
+    // Two DIFFERENT mechanisms, both needed - confirmed on hardware:
     //
     //   appletSetAutoSleepDisabled       stops the console AUTO-SLEEPING.
     //   appletSetIdleTimeDetectionExtension

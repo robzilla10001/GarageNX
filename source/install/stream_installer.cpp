@@ -40,19 +40,19 @@ constexpr size_t kPfs0EntrySize  = 0x18;
 constexpr size_t   kHfs0HeaderSize = 0x10;
 constexpr size_t   kHfs0EntrySize  = 0x40;
 constexpr uint64_t kXciMagicOff    = 0x100;   // "HEAD"
-constexpr size_t   kXciHeadLen     = 0x38;    // 0x100..0x137 — magic at +0, root offset at +0x30
+constexpr size_t   kXciHeadLen     = 0x38;    // 0x100..0x137 - magic at +0, root offset at +0x30
 constexpr size_t   kXciRootOffAt   = 0x30;    // 0x130, relative to the collection at 0x100
 constexpr uint32_t kMaxHfs0Files   = 1024;    // matches XciReader::parse_hfs0
 
 // A string table holds `count` NUL-terminated names and nothing else, so it
-// cannot legitimately exceed count * (255 + 1) — 255 being the conventional
+// cannot legitimately exceed count * (255 + 1) - 255 being the conventional
 // filename ceiling, and every name that actually appears here (a 32-hex NCA id
 // plus a suffix, or a partition name like "secure") far shorter than that.
 //
 // Both entry counts are already bounded above, so deriving the string table's
 // bound from the count bounds the whole allocation. Without it a host-chosen
 // string-table size of 0xFFFFFFFF reserves 4 GiB and takes the process out via
-// bad_alloc — a crash, on a console, from a bad file. Deriving rather than
+// bad_alloc - a crash, on a console, from a bad file. Deriving rather than
 // picking a flat constant means a three-file container gets a three-file bound.
 constexpr uint32_t kMaxNameBytes = 256;
 
@@ -109,7 +109,7 @@ bool StreamInstaller::begin(const std::string& filename, uint64_t total_size) {
         (m_storage == Core::Ncm::Storage::SdCard ? "SD card" : "internal (NAND)"));
 
     // Arm the first collection. A stream carries no format marker before its
-    // first bytes, so the front-end is chosen from the name — the MTP gate has
+    // first bytes, so the front-end is chosen from the name - the MTP gate has
     // already established that the extension is one we accept. An unrecognised
     // name falls to PFS0, which then fails on the magic, exactly as before.
     m_format = format_from_name(filename);
@@ -137,7 +137,7 @@ bool StreamInstaller::begin(const std::string& filename, uint64_t total_size) {
 
 bool StreamInstaller::want(uint64_t off, size_t len, Step step) {
     // A stream cannot rewind. Asking for bytes that have already gone past is a
-    // caller bug — a step that computed an offset wrongly — not a runtime
+    // caller bug - a step that computed an offset wrongly - not a runtime
     // condition, so it is refused here rather than silently mis-collected.
     if (off < m_pos)
         return fail("Internal: collector asked to rewind to an earlier offset");
@@ -201,7 +201,7 @@ bool StreamInstaller::parse_pfs0_table() {
     const uint32_t sts      = m_str_size;
     const size_t   names_at = (size_t)count * kPfs0EntrySize;
 
-    // Data begins right after the header, entry table and string table — which
+    // Data begins right after the header, entry table and string table - which
     // is exactly where this collection ends.
     const uint64_t data_start = m_want_off + m_want_len;
 
@@ -246,7 +246,7 @@ bool StreamInstaller::parse_pfs0_table() {
 //
 // Offsets follow xci_reader.cpp's parse(), which is hardware-validated. Note
 // that the root HFS0 offset is at 0x130 and NOT at 0x120, which is the gamecard
-// IV — an unreferenced struct in xci_reader.cpp documented 0x120 for a long
+// IV - an unreferenced struct in xci_reader.cpp documented 0x120 for a long
 // time; slice 4c deleted it. If you are checking this against a reference,
 // check it against parse(), not against anything's field list.
 
@@ -278,7 +278,7 @@ bool StreamInstaller::parse_hfs0_header(Step table_step, const char* what) {
     if (m_ent_count == 0 || m_ent_count > kMaxHfs0Files)
         return fail(std::string("XCI: implausible file count in the ") + what + " partition");
 
-    // As on the PFS0 path — see kMaxNameBytes.
+    // As on the PFS0 path - see kMaxNameBytes.
     if (m_str_size > (uint64_t)m_ent_count * kMaxNameBytes)
         return fail(std::string("XCI: implausible string table size in the ") + what + " partition");
 
@@ -340,7 +340,7 @@ bool StreamInstaller::parse_xci_root_table() {
         return fail("XCI: no 'secure' partition in the root HFS0");
 
     // secure->abs_off is already absolute and >= root_data_start >= m_pos, so
-    // this is always a forward seek — update/normal, if they precede it,
+    // this is always a forward seek - update/normal, if they precede it,
     // discard themselves in Phase::Collect.
     m_secure_abs = secure->abs_off;
     m_progress.push_log("XCI: " + std::to_string(parts.size()) +
@@ -361,7 +361,7 @@ bool StreamInstaller::parse_xci_secure_table() {
     // the file's end, so its table yields an exact size; a gamecard image
     // continues past `secure` into padding that belongs to the transfer but to
     // no entry. Inferring a length from the entries would come up short, which
-    // does not fail an install — it leaves unread bytes in the endpoint and
+    // does not fail an install - it leaves unread bytes in the endpoint and
     // desyncs the session. The host's declared size is the only authority, and
     // the MTP gate refuses an XCI whose size the host cannot declare exactly.
     return finalize_entries(0);
@@ -372,12 +372,12 @@ bool StreamInstaller::parse_xci_secure_table() {
 
 bool StreamInstaller::finalize_entries(uint64_t container_size) {
     // The stream can only go forwards, so the entries must be walked in the
-    // order their bytes actually arrive — the table is not required to be sorted.
+    // order their bytes actually arrive - the table is not required to be sorted.
     std::sort(m_entries.begin(), m_entries.end(),
               [](const StreamEntry& a, const StreamEntry& b) { return a.abs_off < b.abs_off; });
 
     // .ncz entries are handled by the NczWindow path in begin_entry(); the 4a
-    // blanket rejection is gone. Keys are NOT ambient — an NSZ cannot be
+    // blanket rejection is gone. Keys are NOT ambient - an NSZ cannot be
     // decompressed without them, so refuse up front rather than partway through
     // a multi-gigabyte transfer.
     bool has_ncz = false;
@@ -387,17 +387,17 @@ bool StreamInstaller::finalize_entries(uint64_t container_size) {
         // has_header_key on the keyset we were HANDED, rather than the global
         // Core::Keys::available(): that predicate answers for whatever load()
         // last cached, which is not necessarily this reference. header_key is
-        // the actual precondition — get_decompressed_size() decrypts the NCA
+        // the actual precondition - get_decompressed_size() decrypts the NCA
         // header to recover the size for a stream NCZ.
         //
         // Name the container the user actually sent. Both formats reach here
-        // by the same route — a compressed entry with no key to read it — but
+        // by the same route - a compressed entry with no key to read it - but
         // a message that says NSZ to someone installing an XCZ reads as a bug
         // in us, and this text is the only thing they will see.
         const char* what = (m_format == Format::Xci) ? "XCZ" : "NSZ";
         const std::string why = Core::Keys::requirement_message();
         return fail(why.empty()
-            ? std::string(what) + " install needs prod.keys (header_key) — none are loaded"
+            ? std::string(what) + " install needs prod.keys (header_key) - none are loaded"
             : std::string(what) + " install needs prod.keys: " + why);
     }
 
@@ -438,7 +438,7 @@ bool StreamInstaller::begin_entry() {
         } else if (e.is_ncz) {
             // The placeholder must be sized to the DECOMPRESSED NCA, which is
             // only knowable after get_decompressed_size() has read the NCZ
-            // header — and not a byte of it has arrived yet. So creation moves
+            // header - and not a byte of it has arrived yet. So creation moves
             // to the worker, which blocks in NczWindow::read() until it has
             // enough. Nothing is created on this thread for an .ncz entry.
             char lb[160];
@@ -490,7 +490,7 @@ bool StreamInstaller::write_entry(const uint8_t* data, size_t len) {
 #endif
 
     // The small entries are what install() will read back from RAM. For a
-    // .cnmt.ncz these are the COMPRESSED bytes — correct, because finish() sets
+    // .cnmt.ncz these are the COMPRESSED bytes - correct, because finish() sets
     // ce.is_ncz and install() decompresses it on the way in, exactly as it does
     // for a local NSZ. It needs random access, and RAM gives it that.
     if (e.is_cnmt_nca || e.is_tik || e.is_cert)
@@ -644,7 +644,7 @@ bool StreamInstaller::finish() {
     if (m_have_cs) { ncmContentStorageClose(&m_cs); m_have_cs = false; }
 #endif
 
-    // contents_preregistered: every large NCA is already in NCM — this call has
+    // contents_preregistered: every large NCA is already in NCM - this call has
     // only metadata and tickets left. It also stops install() from resetting
     // m_progress and erasing the log of the transfer we just completed.
     return install(std::move(contents), m_storage, m_keys, m_progress, true);
@@ -655,23 +655,23 @@ void StreamInstaller::abort() {
     // m_install->abort()) and, ultimately, whichever thread destroys the
     // installer (~StreamInstaller calls abort()). The real cross-thread safety
     // comes from ~MtpServer joining the worker before members are destroyed
-    // (see mtp_server.hpp) — that is what stops the two aborts overlapping. The
+    // (see mtp_server.hpp) - that is what stops the two aborts overlapping. The
     // guard and ordering below make abort() correct and idempotent regardless.
     //
     // Thread teardown always runs and is NOT guarded: ncz_join() must close the
     // worker's Thread handle on every call or a cancelled NSZ leaks a kernel
     // handle. ncz_join() is idempotent (early-returns when nothing is running),
-    // so a second call — e.g. from the destructor after an explicit abort — is a
+    // so a second call - e.g. from the destructor after an explicit abort - is a
     // safe no-op.
     ncz_join(false);
 
     // The ncm teardown must run exactly once: a second DeletePlaceHolder/Close on
     // already-freed ncm state faults. exchange() is a single atomic check-and-set
-    // — if it returns true, another call already claimed the teardown.
+    // - if it returns true, another call already claimed the teardown.
     if (m_aborted.exchange(true)) { m_entry_open = false; return; }
 
 #ifdef PLATFORM_SWITCH
-    // m_ph_open is the authority: on the NSZ path the worker — not this thread —
+    // m_ph_open is the authority: on the NSZ path the worker - not this thread -
     // creates the placeholder, and it may or may not have got that far.
     if (m_ph_open) {
         ncmContentStorageDeletePlaceHolder(&m_cs, &m_ph);
@@ -765,7 +765,7 @@ void StreamInstaller::ncz_worker() {
     m_progress.push_log(lb);   // push_log takes its own lock; safe from here
 
 #ifdef PLATFORM_SWITCH
-    // Sized to the DECOMPRESSED NCA — the reconstructed NCA is byte-identical to
+    // Sized to the DECOMPRESSED NCA - the reconstructed NCA is byte-identical to
     // the original, so its SHA-256 must match content_id. Sizing this to the
     // compressed length would fail on the first write past the end.
     if (R_FAILED(ncmContentStorageGeneratePlaceHolderId(&m_cs, &m_ph))) {

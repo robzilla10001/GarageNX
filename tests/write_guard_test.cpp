@@ -1,7 +1,7 @@
 // tests/write_guard_test.cpp
 //
 // The write guard is what stands between a PC client and the console's NAND, so
-// its decision table gets explicit coverage — including the negative cases, which
+// its decision table gets explicit coverage - including the negative cases, which
 // are the ones that actually matter for safety.
 
 #include "services/write_guard.hpp"
@@ -99,7 +99,7 @@ int main() {
     expect("save:/slot.dat",           def, WritePolicy::NeedsConfirm,
            "and the very same path asks when it is enabled");
 
-    // A SYNTHETIC save path is claimed by no surface — which is exactly why every
+    // A SYNTHETIC save path is claimed by no surface - which is exactly why every
     // transport resolves to the mounted path BEFORE it guards.
     expect("savedata:/Rob/G [01]/s.dat", def, WritePolicy::Deny,
            "synthetic save path denies: resolve first, then guard");
@@ -108,7 +108,7 @@ int main() {
     expect("",                         def, WritePolicy::Deny, "empty path denied");
     expect("nonsense:/x",              def, WritePolicy::Deny, "unknown mount denied");
     expect("/SD Card/game.nsp",        def, WritePolicy::Deny,
-           "a POSIX display path is not a VFS path — denied");
+           "a POSIX display path is not a VFS path - denied");
     expect("sdmc",                     def, WritePolicy::Deny,
            "prefix without colon does not match a surface");
 

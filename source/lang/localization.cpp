@@ -42,7 +42,7 @@ static bool load_file(const std::string& path,
                        LanguageInfo* info_out = nullptr) {
     std::ifstream file(path);
     if (!file.is_open()) {
-        SDL_Log("Lang::load_file — cannot open %s", path.c_str());
+        SDL_Log("Lang::load_file - cannot open %s", path.c_str());
         return false;
     }
 
@@ -59,7 +59,7 @@ static bool load_file(const std::string& path,
         flatten(j, out);
         return true;
     } catch (const std::exception& e) {
-        SDL_Log("Lang::load_file — parse error in %s: %s", path.c_str(), e.what());
+        SDL_Log("Lang::load_file - parse error in %s: %s", path.c_str(), e.what());
         return false;
     }
 }
@@ -87,9 +87,9 @@ void set_baseline_dir(const std::string& dir) {
     s_fallback.clear();
     std::string en_path = dir + "/en.json";
     if (!load_file(en_path, s_fallback)) {
-        SDL_Log("Lang::set_baseline_dir — WARNING: could not load %s", en_path.c_str());
+        SDL_Log("Lang::set_baseline_dir - WARNING: could not load %s", en_path.c_str());
     } else {
-        SDL_Log("Lang::set_baseline_dir — baseline loaded from %s (%zu keys)",
+        SDL_Log("Lang::set_baseline_dir - baseline loaded from %s (%zu keys)",
                 en_path.c_str(), s_fallback.size());
     }
     // Default active strings to the baseline so the very first frame has text
@@ -99,7 +99,7 @@ void set_baseline_dir(const std::string& dir) {
 }
 
 // Scan a single directory for *.json, appending to `out`. De-dupes by code
-// (a language already present is not added again — user dir is scanned first
+// (a language already present is not added again - user dir is scanned first
 // so user versions take precedence in the listing).
 static void scan_dir(const std::string& dir, std::vector<LanguageInfo>& out) {
     DIR* d = opendir(dir.c_str());
@@ -149,7 +149,7 @@ bool load(const std::string& code) {
     if (code == "en") {
         s_strings     = s_fallback;
         s_active_code = "en";
-        SDL_Log("Lang::load — active language: English (en)");
+        SDL_Log("Lang::load - active language: English (en)");
         return true;
     }
 
@@ -163,7 +163,7 @@ bool load(const std::string& code) {
         found = load_file(s_baseline_dir + "/" + code + ".json", loaded);
 
     if (!found) {
-        SDL_Log("Lang::load — '%s' not found; staying on English", code.c_str());
+        SDL_Log("Lang::load - '%s' not found; staying on English", code.c_str());
         s_strings     = s_fallback;
         s_active_code = "en";
         return false;
@@ -177,7 +177,7 @@ bool load(const std::string& code) {
 
     s_strings     = std::move(loaded);
     s_active_code = code;
-    SDL_Log("Lang::load — active language: %s", code.c_str());
+    SDL_Log("Lang::load - active language: %s", code.c_str());
     return true;
 }
 

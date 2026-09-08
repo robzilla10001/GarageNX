@@ -27,7 +27,7 @@ static Result  s_result  = Result::Pending;
 // irreversible actions (file deletes, etc.).
 // Body wrapped ONCE in show(), not per frame. Wrapping measures many trial
 // substrings, and the body cannot change while a modal is up, so re-wrapping
-// every frame would be pure waste on the main thread — the same thread the
+// every frame would be pure waste on the main thread - the same thread the
 // transports block on waiting for a confirmation.
 static std::vector<std::string> s_body_lines;
 
@@ -38,7 +38,7 @@ static constexpr float MODAL_HOLD_SECONDS = 2.0f;
 // A modal must never react to the button press that OPENED it. Input::poll()
 // runs once per frame and pressed() is edge state that reads do NOT consume, so
 // the A that selected an item in a screen's update() is still "pressed" when
-// update_and_draw() runs later in the SAME frame — instantly confirming an Info
+// update_and_draw() runs later in the SAME frame - instantly confirming an Info
 // modal (symptom: the dialog flashes and vanishes). show() sets this; the first
 // update_and_draw() draws the modal but swallows that one frame of input.
 static bool s_suppress_input = false;
@@ -94,7 +94,7 @@ void show(const Options& opts) {
                               Font::Weight::Regular);
 
     // Clamp a body long enough to overflow the SCREEN, which would otherwise
-    // draw a modal taller than the display and hide its own buttons — leaving no
+    // draw a modal taller than the display and hide its own buttons - leaving no
     // way to answer it, and for a broker confirmation, a transport blocked until
     // the timeout.
     const int line_h   = static_cast<int>(Font::Size::Body) + 6;
@@ -143,7 +143,7 @@ Result update_and_draw() {
     // longer than the modal ran off the box and off the screen. It was marked a
     // placeholder; it became a real bug the moment a modal carried a sentence
     // rather than a label. The write-confirmation modals were exposed to the same
-    // thing without anyone hitting it yet — they show FILE PATHS, which contain
+    // thing without anyone hitting it yet - they show FILE PATHS, which contain
     // no spaces and so need the mid-token break too.
     const int line_h = static_cast<int>(Font::Size::Body) + 6;
     int body_h = static_cast<int>(s_body_lines.size()) * line_h;
@@ -247,7 +247,7 @@ Result update_and_draw() {
             }
         }
     } else {
-        // Info — single OK button
+        // Info - single OK button
         int btn_w = 120;
         int btn_x = Layout::MODAL_X + (Layout::MODAL_W - btn_w) / 2;
         draw_button(btn_x, btn_y, btn_w, 40, s_opts.confirm_label, true, accent);

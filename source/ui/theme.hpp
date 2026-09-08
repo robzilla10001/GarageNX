@@ -1,7 +1,7 @@
 #pragma once
 // source/ui/theme.hpp
 // Color token system for GarageNX.
-// All rendering code uses these tokens — never hardcoded colors.
+// All rendering code uses these tokens - never hardcoded colors.
 // Swapping dark ↔ light is a single call to Theme::set().
 
 #include <SDL2/SDL.h>
@@ -21,13 +21,13 @@ enum class Token {
     FgDisabled,     // unavailable options
     Accent,         // selection highlight, progress bars, focus ring
     AccentWarn,     // warnings, destructive confirmations
-    AccentDanger,   // delete / wipe — stronger than warn
+    AccentDanger,   // delete / wipe - stronger than warn
     AccentOk,       // success states, complete indicators
     Border,         // subtle separators
     StatusBarBg,    // persistent bottom bar background
     TitleBarBg,     // persistent top bar background
 
-    _Count          // sentinel — keep last
+    _Count          // sentinel - keep last
 };
 
 enum class Variant { Dark, Light };
@@ -35,7 +35,7 @@ enum class Variant { Dark, Light };
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /// Apply a theme variant. Must be called before the first frame.
-/// Safe to call at any time — takes effect on the next frame.
+/// Safe to call at any time - takes effect on the next frame.
 void set(Variant v);
 
 /// Retrieve the current variant.

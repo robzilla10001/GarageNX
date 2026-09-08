@@ -38,7 +38,7 @@ const std::vector<MenuEntry>& menu_top_level() {
     static const std::vector<MenuEntry> v = {
         // NOTE: entries are listed here ONLY when dispatch returns a real screen.
         // An item that dispatches to nullptr looks broken when pressed, so it stays
-        // out of the menu until its screen exists — the enum value and its
+        // out of the menu until its screen exists - the enum value and its
         // (nullptr) dispatch case remain, so re-adding it is one line.
         // Currently withheld for that reason: InstallCartridge.
         { MenuItem::InstalledTitles,  "main_menu.installed_titles"       },
@@ -68,7 +68,7 @@ const std::vector<MenuEntry>& menu_browse_items() {
         // rather than nothing, so it is not a dead button.
         // REMOVED DELIBERATELY: Tickets. Listing tickets invites deleting them,
         // deleting one can make an installed title unlaunchable, and almost no
-        // homebrew uses titlekey crypto — so the feature carried real risk for
+        // homebrew uses titlekey crypto - so the feature carried real risk for
         // very little reach. Core::Es::list_common_tickets() stays (it is proven
         // and harmless) in case a future need is clearer.
     };
@@ -139,14 +139,14 @@ bool menu_item_visible(MenuItem id) {
         case MenuItem::BrowseSD:              return vis.browse_sd;
         // Gated on the STORAGE SURFACE, not a separate visibility flag. "Can this
         // console see game cards" is one decision, and duplicating it as a second
-        // toggle would let the two disagree — a menu entry that opens a surface the
+        // toggle would let the two disagree - a menu entry that opens a surface the
         // transports have been told to hide. It also disappears with the card,
         // because an unmounted surface fails the same probe FTP and MTP use.
         case MenuItem::BrowseGamecard:
             // BOTH conditions. The surface being enabled is a user preference; the
             // card being INSERTED is a fact about the world, and the entry must
             // follow the fact too. Gating only on the preference left a row that
-            // was always visible and did nothing when no card was in — the
+            // was always visible and did nothing when no card was in - the
             // dead-button problem, reintroduced by me in the round that was
             // supposed to remove dead buttons.
             return Config::any_transport_exposes(&Config::Surfaces::gamecard)
@@ -154,7 +154,7 @@ bool menu_item_visible(MenuItem id) {
         case MenuItem::BrowseSystemPartition: return vis.browse_system_partition;
         case MenuItem::BrowseUserPartition:   return vis.browse_user_partition;
         // Shown only when a drive is actually attached AND the user has the item
-        // enabled — the same both-conditions rule the game card uses. An entry that
+        // enabled - the same both-conditions rule the game card uses. An entry that
         // is always visible and opens nothing is the dead-button problem.
         case MenuItem::BrowseUSB:
             return vis.browse_usb && !Core::UsbMount::volumes().empty();
@@ -231,7 +231,7 @@ std::unique_ptr<Screen> menu_activate(MenuItem id, bool& pop) {
 
         // CAUTION: every case below returns its OWN screen. Do not add a new case
         // to an existing fall-through group without checking what that group
-        // returns — a `case X:` dropped into the "unimplemented" list silently
+        // returns - a `case X:` dropped into the "unimplemented" list silently
         // inherits its return. That is exactly how BrowseSystemPartition,
         // BrowseUserPartition, BrowseUSB and BrowseNetwork all ended up opening
         // the SETTINGS screen: MenuItem::Settings was added to the head of their
@@ -241,7 +241,7 @@ std::unique_ptr<Screen> menu_activate(MenuItem id, bool& pop) {
 
         // NAND partitions, read-only unless the write guard says otherwise. The
         // mount is config-gated (mount_nand), so if the surface is disabled the
-        // browser opens on a device that is not there — hence the mount check.
+        // browser opens on a device that is not there - hence the mount check.
         case MenuItem::BrowseSystemPartition:
             if (!Fs::is_directory("bis_system:/")) return nullptr;
             return std::unique_ptr<Screen>(
@@ -281,8 +281,8 @@ std::unique_ptr<Screen> menu_activate(MenuItem id, bool& pop) {
             return std::unique_ptr<Screen>(new ActivityLogScreen());
 
         case MenuItem::BrowseUSB: {
-            // Open the attached USB volume. Reached only when one is present —
-            // menu_item_visible() gates the entry on volumes() being non-empty —
+            // Open the attached USB volume. Reached only when one is present -
+            // menu_item_visible() gates the entry on volumes() being non-empty -
             // but re-checked here because visibility is evaluated a frame earlier
             // and a drive can be pulled in between.
             const auto& vols = Core::UsbMount::volumes();

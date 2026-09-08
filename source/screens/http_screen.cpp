@@ -45,8 +45,8 @@ std::unique_ptr<Screen> HTTPScreen::update(bool& pop) {
     if (m_server && m_server->is_running()) {
         // Feed the meter the WIRE bytes of the active install, NOT
         // bytes_sent+bytes_recv. Those totals now include the web UI's own
-        // traffic — the HTML page on every load and a JSON listing on every
-        // navigation and status poll — so using them would report page chatter as
+        // traffic - the HTML page on every load and a JSON listing on every
+        // navigation and status poll - so using them would report page chatter as
         // install throughput. Before B2 that distinction barely mattered; with a
         // browser client polling every 5s it would be actively misleading.
         // When no install is running current_wire_recv() is 0 and the meter idles.
@@ -144,7 +144,7 @@ void HTTPScreen::draw() {
             Widgets::draw_text(cx + 2 * kColW, y, f,
                                Font::Size::Body, Font::Weight::Regular, Theme::Token::FgSecondary);
 
-            // Same stat set and the same lang keys as MTP and FTP — one column
+            // Same stat set and the same lang keys as MTP and FTP - one column
             // layout across all three transports, so the pages read identically.
             std::snprintf(f, sizeof(f), "%s: %s",
                           Lang::t("mtp.speed_now").c_str(), m_disp_cur.c_str());

@@ -36,7 +36,7 @@ SDL_Renderer* get();
 SDL_Window*   window();
 
 /// True when running docked (1080p output). The renderer is always addressed
-/// in 1280x720 logical coordinates — SDL handles the scale automatically.
+/// in 1280x720 logical coordinates - SDL handles the scale automatically.
 bool is_docked();
 
 /// Draw a filled rectangle using the current draw color.
@@ -83,7 +83,7 @@ void measure_text(const std::string& text, int size, int weight, int family,
 /// per frame by begin_frame(); exposed for tests.
 void text_cache_advance_frame();
 
-/// Live entry count — for diagnostics/tests.
+/// Live entry count - for diagnostics/tests.
 size_t text_cache_size();
 
 /// Destroy all cached textures. Called by shutdown() before the renderer dies.

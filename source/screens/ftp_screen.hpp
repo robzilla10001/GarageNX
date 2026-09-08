@@ -32,7 +32,7 @@ private:
     void start_server();
 
     // Stats sampled every frame (accurate rate math), displayed values latched at
-    // 1 Hz — same approach as the MTP screen: keeps the numbers legible and avoids
+    // 1 Hz - same approach as the MTP screen: keeps the numbers legible and avoids
     // churning the text cache 60×/s, without throttling the render loop.
     void refresh_latched_stats();
 
@@ -50,7 +50,7 @@ private:
     uint32_t    m_last_latch_ms = 0;
     std::string m_disp_sent = "0 B";
     std::string m_disp_recv = "0 B";
-    std::string m_disp_cur  = "—";   // current speed
-    std::string m_disp_avg  = "—";   // average speed (install data phase)
-    std::string m_disp_eta  = "—";   // ETA, "—" until wire size known
+    std::string m_disp_cur  = "-";   // current speed
+    std::string m_disp_avg  = "-";   // average speed (install data phase)
+    std::string m_disp_eta  = "-";   // ETA, "-" until wire size known
 };

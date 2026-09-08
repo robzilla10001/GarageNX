@@ -24,10 +24,15 @@ uint64_t titles_generation() { return s_titles_gen; }
 
 static TitleType map_meta_type(u8 meta_type) {
     switch (meta_type) {
-        case NcmContentMetaType_Application:  return TitleType::Application;
-        case NcmContentMetaType_Patch:        return TitleType::Patch;
-        case NcmContentMetaType_AddOnContent: return TitleType::AddOnContent;
-        default:                              return TitleType::Other;
+        case NcmContentMetaType_Application:        return TitleType::Application;
+        case NcmContentMetaType_Patch:              return TitleType::Patch;
+        case NcmContentMetaType_AddOnContent:       return TitleType::AddOnContent;
+        case NcmContentMetaType_SystemProgram:      return TitleType::SystemProgram;
+        case NcmContentMetaType_SystemData:         return TitleType::SystemData;
+        case NcmContentMetaType_SystemUpdate:       return TitleType::SystemUpdate;
+        case NcmContentMetaType_BootImagePackage:   return TitleType::BootImagePackage;
+        case NcmContentMetaType_BootImagePackageSafe: return TitleType::BootImagePackageSafe;
+        default:                                    return TitleType::Other;
     }
 }
 
@@ -36,7 +41,7 @@ static void list_storage(NcmStorageId storage_id, Storage tag,
                          std::vector<Title>& out) {
     NcmContentMetaDatabase db;
     if (R_FAILED(ncmOpenContentMetaDatabase(&db, storage_id))) {
-        // Storage may be empty/unavailable (e.g. no SD titles) — not an error.
+        // Storage may be empty/unavailable (e.g. no SD titles) - not an error.
         return;
     }
 
@@ -70,14 +75,14 @@ static void list_storage(NcmStorageId storage_id, Storage tag,
 
             // Total content size: the sum of this meta's NCAs.
             //
-            // NOT ncmContentMetaDatabaseGetSize() — that returns the size of the
+            // NOT ncmContentMetaDatabaseGetSize() - that returns the size of the
             // META RECORD (the CNMT row), which is ~100 bytes for every title.
             // Using it made every title display as "100 B" on the console and made
             // an FTP dump report a 100-byte transfer.
             //
             // These are metadata queries only (no decryption) and they reuse the
             // db/cs sessions already open for this storage, so there is no session
-            // churn — the pattern that has caused trouble elsewhere in this file.
+            // churn - the pattern that has caused trouble elsewhere in this file.
             {
                 uint64_t total_sz = 0;
                 s32 coff = 0;
@@ -117,7 +122,7 @@ static void list_storage(NcmStorageId storage_id, Storage tag,
 std::vector<Title> list_gamecard(bool* ok) {
     std::vector<Title> out;
 #ifdef PLATFORM_SWITCH
-    // Same enumeration as any other storage — a game card registers its titles in
+    // Same enumeration as any other storage - a game card registers its titles in
     // NCM under NcmStorageId_GameCard exactly like SD or built-in. Nothing about
     // reading it is special; it was simply never asked for.
     //
@@ -134,8 +139,26 @@ std::vector<Title> list_gamecard(bool* ok) {
 std::vector<Title> list_all(bool* ok) {
     std::vector<Title> out;
 #ifdef PLATFORM_SWITCH
+
+    // Check if BuiltInSystem is available at runtime
+    bool built_in_system_available = false;
+#ifdef NcmStorageId_BuiltInSystem
+    NcmContentMetaDatabase db_test;
+    if (R_SUCCEEDED(ncmOpenContentMetaDatabase(&db_test, NcmStorageId_BuiltInSystem))) {
+        ncmContentMetaDatabaseClose(&db_test);
+        built_in_system_available = true;
+    }
+#endif
+
     list_storage(NcmStorageId_BuiltInUser, Storage::BuiltIn, out);
     list_storage(NcmStorageId_SdCard,      Storage::SdCard,  out);
+
+#ifdef NcmStorageId_BuiltInSystem
+    if (built_in_system_available) {
+        list_storage(NcmStorageId_BuiltInSystem, Storage::BuiltInSystem, out);
+    }
+#endif
+
     if (ok) *ok = true;
 #else
     // PC stub: a couple of fake titles for UI development.
@@ -182,7 +205,7 @@ std::vector<TitleGroup> group_by_application(const std::vector<Title>& all) {
     }
 
     // Second pass: attach updates and DLC to their base application. If the base
-    // app isn't installed (orphan update/DLC), we skip it here — orphans get
+    // app isn't installed (orphan update/DLC), we skip it here - orphans get
     // their own handling later if needed.
     for (const auto& t : all) {
         if (t.type == TitleType::Application) continue;
@@ -221,10 +244,15 @@ Core::Nca::ControlData resolve_control(const Title& title,
     std::memset(&key, 0, sizeof(key));
     key.id      = title.meta_id;
     key.version = title.version;
-    key.type    = (title.type == TitleType::Application) ? NcmContentMetaType_Application
-                : (title.type == TitleType::Patch)       ? NcmContentMetaType_Patch
-                : (title.type == TitleType::AddOnContent)? NcmContentMetaType_AddOnContent
-                                                         : (NcmContentMetaType)0;
+    key.type    = (title.type == TitleType::Application)     ? NcmContentMetaType_Application
+                : (title.type == TitleType::Patch)           ? NcmContentMetaType_Patch
+                : (title.type == TitleType::AddOnContent)    ? NcmContentMetaType_AddOnContent
+                : (title.type == TitleType::SystemProgram)   ? NcmContentMetaType_SystemProgram
+                : (title.type == TitleType::SystemData)      ? NcmContentMetaType_SystemData
+                : (title.type == TitleType::SystemUpdate)    ? NcmContentMetaType_SystemUpdate
+                : (title.type == TitleType::BootImagePackage)? NcmContentMetaType_BootImagePackage
+                : (title.type == TitleType::BootImagePackageSafe)? NcmContentMetaType_BootImagePackageSafe
+                                                               : (NcmContentMetaType)0;
     key.install_type = NcmContentInstallType_Full;
 
     // Find the Control content id for this meta.

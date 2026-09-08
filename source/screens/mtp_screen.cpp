@@ -33,7 +33,7 @@ std::unique_ptr<Screen> MTPScreen::update(bool& pop) {
 
     if (m_server && m_server->is_running()) {
         // Feed the meter the WIRE bytes of the actual file transfer, not
-        // bytes_sent()+bytes_recv() — those include every MTP protocol exchange
+        // bytes_sent()+bytes_recv() - those include every MTP protocol exchange
         // (OpenSession, SendObjectInfo, responses), so sampling them makes the
         // data-phase average anchor the moment the host connects rather than when
         // a transfer begins. current_wire_recv() counts only file payload.
@@ -52,7 +52,7 @@ std::unique_ptr<Screen> MTPScreen::update(bool& pop) {
         // Clear the latched display so stale figures do not linger across a
         // stop/start.
         m_disp_sent = m_disp_recv = "0 B";
-        m_disp_cur = m_disp_avg = m_disp_eta = "—";
+        m_disp_cur = m_disp_avg = m_disp_eta = "-";
         m_last_latch_ms = 0;
     }
     return nullptr;
@@ -66,19 +66,19 @@ void MTPScreen::refresh_latched_stats() {
 
     const double cur = m_rate.bytes_per_sec();
     const double avg = m_rate.average_bytes_per_sec();
-    m_disp_cur = cur > 0 ? (Fs::format_size((uint64_t)cur) + "/s") : "—";
+    m_disp_cur = cur > 0 ? (Fs::format_size((uint64_t)cur) + "/s") : "-";
     m_disp_avg = (m_rate.data_phase_started() && avg > 0)
-                     ? (Fs::format_size((uint64_t)avg) + "/s") : "—";
+                     ? (Fs::format_size((uint64_t)avg) + "/s") : "-";
 
     // ETA against WIRE bytes (compressed size crossing USB), not installed bytes.
-    // "—" until the host has declared a size (SendObjectInfo) and we have a rate.
+    // "-" until the host has declared a size (SendObjectInfo) and we have a rate.
     const uint64_t wire_size = m_server->current_wire_size();
     const uint64_t wire_recv = m_server->current_wire_recv();
     if (wire_size > 0 && wire_recv <= wire_size && cur > 1.0) {
         const double remaining = (double)(wire_size - wire_recv);
         m_disp_eta = UI::format_eta(remaining / cur);
     } else {
-        m_disp_eta = "—";
+        m_disp_eta = "-";
     }
 }
 
@@ -102,7 +102,7 @@ void MTPScreen::draw() {
     y += 40;
 
     if (st == Services::Status::Running) {
-        // USB connection state — the thing the user actually needs to know,
+        // USB connection state - the thing the user actually needs to know,
         // since there is no address to type anywhere.
         const bool connected = m_server->host_connected();
         w = Widgets::draw_text(cx, y, Lang::t("mtp.host"),

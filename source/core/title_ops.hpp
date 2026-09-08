@@ -3,7 +3,7 @@
 // Destructive title-management operations (Milestone 4 Phase C).
 //
 // Delete is implemented first, via the ns application-management API, which
-// removes content AND records atomically the way the OS does — far safer than
+// removes content AND records atomically the way the OS does - far safer than
 // deleting individual NCAs through ncm (which risks orphaned records/content).
 //
 // Dump-to-SD and move SD<->NAND are added in subsequent passes.

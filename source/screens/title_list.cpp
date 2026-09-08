@@ -31,13 +31,13 @@ void TitleListScreen::free_icons() {
 }
 
 void TitleListScreen::on_enter() {
-    // on_enter() fires every time this screen becomes active — including when we
+    // on_enter() fires every time this screen becomes active - including when we
     // pop back from TitleDetail. Only build the list on the FIRST entry; on
     // return we keep the already-decrypted rows so we don't re-decrypt every
     // title's Control NCA again. The cache is discarded only when this screen is
     // destroyed (i.e. when the user leaves the title list entirely).
     if (m_phase == Phase::Ready || m_phase == Phase::Loading) {
-        // Already loaded — but if a child screen changed the installed set
+        // Already loaded - but if a child screen changed the installed set
         // (e.g. deleted a title), rebuild instead of showing a stale list.
         if (Core::Ncm::titles_generation() != m_seen_gen) {
             m_seen_gen = Core::Ncm::titles_generation();
@@ -250,7 +250,7 @@ void TitleListScreen::draw() {
 
         int text_x = x + Layout::PAD_LG;
 
-        // Name (primary) — standard size, no inline icon.
+        // Name (primary) - standard size, no inline icon.
         Widgets::draw_text(text_x, cy + 8, row.name,
                            Font::Size::Body, Font::Weight::Bold,
                            Theme::Token::FgPrimary, list_right - text_x - 160);

@@ -6,30 +6,23 @@
 // to the console.
 //
 // ── API PINNING (§5.4) ───────────────────────────────────────────────────────
-// Every library call below was checked against the upstream headers/symbols, not
-// written from memory:
-//   * libnfs sync API — sahlberg/libnfs include/nfsc/libnfs.h:
+// Every library call below was checked against the upstream headers/symbols:
+//   * libnfs sync API (sahlberg/libnfs include/nfsc/libnfs.h):
 //       nfs_init_context(), nfs_mount(nfs, server, export), nfs_umount(nfs),
 //       nfs_set_autoreconnect(nfs, n), nfs_get_error(nfs), nfs_destroy_context(nfs).
-//   * libsmb2 sync API — sahlberg/libsmb2 include/smb2/libsmb2.h + lib/libsmb2.syms:
+//   * libsmb2 sync API (sahlberg/libsmb2 include/smb2/libsmb2.h):
 //       smb2_init_context(), smb2_set_user/_domain/_password(), smb2_set_timeout(),
 //       smb2_connect_share(smb2, server, share, user), smb2_disconnect_share(),
 //       smb2_get_error(), smb2_destroy_context().
-// The structure is checked by the syntax guard; TYPES are not (the guard stops
-// before type-checking), so these still need a real compile on device. Nothing
-// here is invented — where a call is optional or a constant is uncertain, it is
-// omitted rather than guessed (the ueventWait() lesson from core/usb_mount.cpp).
+// The structure is checked by the syntax guard; TYPES are not, so these still
+// need a real compile on device. Where a call is optional or a constant is
+// uncertain, it is omitted rather than guessed (the ueventWait() lesson).
 //
-// ── THE ONE REMAINING SEAM: the "net:" devoptab ──────────────────────────────
-// connect + mount is implemented below and can be verified in isolation on device
-// (it logs success/failure). What is NOT here is the devoptab that exposes the
-// mounted context as "net:/..." so FileBrowserScreen and the transports can use
-// ordinary file I/O. That wrapper (open/close/read/seek/fstat/stat/opendir/
-// dirnext/closedir dispatching to nfs_*/smb2_*) is the piece best written where it
-// compiles against the real headers, since a wrong devoptab field would pass the
-// guard and fault on hardware. Until it lands, net_resolve() connects (proving
-// reachability + credentials), logs, releases, and returns "" — so no caller opens
-// a browser on a surface that cannot answer, and there is no leaked connection.
+// ── THE "net:" devoptab ──────────────────────────────────────────────────────
+// connect + mount is implemented below; the devoptab exposes the mounted context
+// as "net:/..." for FileBrowserScreen and the transports. It is written here so
+// it compiles against the real headers - a wrong devoptab field would pass the
+// guard and fault on hardware.
 
 #include "services/net_surface.hpp"
 
@@ -38,15 +31,15 @@
 #include <SDL2/SDL.h>
 #endif
 // The SMB/NFS client headers live in the devkitPro portlibs (switch-libnfs /
-// switch-libsmb2). They are pulled in ONLY when the client is explicitly enabled
-// (CMake: -DGARAGENX_NET_CLIENT=ON, which defines GNX_NET_CLIENT and links
-// -lnfs -lsmb2). Gating the INCLUDES — not just the link flags — is what lets the
-// tree compile before the portlibs are installed. (A previous cut commented the
-// link flags but left these includes active, which broke the build with
+// switch-libsmb2). They are pulled in when the client is enabled (CMake:
+// GARAGENX_NET_CLIENT, ON by default, defines GNX_NET_CLIENT and links
+// -lnfs -lsmb2). Gating the INCLUDES - not just the link flags - is what lets
+// the tree compile before the portlibs are installed. (A previous cut commented
+// the link flags but left these includes active, which broke the build with
 // "nfsc/libnfs.h: No such file or directory".)
 #if defined(PLATFORM_SWITCH) && defined(GNX_NET_CLIENT)
 // libnfs.h references `struct timeval` (in struct nfsdirent) but only includes
-// <sys/time.h> for a few platforms — NOT Switch, where it pulls <time.h>, which
+// <sys/time.h> for a few platforms - NOT Switch, where it pulls <time.h>, which
 // does not define timeval on newlib. Include it ourselves first so the type is
 // complete before libnfs.h uses it.
 #include <sys/time.h>
@@ -126,10 +119,10 @@ bool connect_smb(const Config::NetShare& s) {
     if (net_credentials().get(s.name, pw) && !pw.empty())
         smb2_set_password(g_smb2, pw.c_str());
 
-    smb2_set_timeout(g_smb2, 10);   // seconds — fast-fail the CONNECT on a dead host
+    smb2_set_timeout(g_smb2, 10);   // seconds - fast-fail the CONNECT on a dead host
 
     const char* user = s.username.empty() ? nullptr : s.username.c_str();
-    // An SMB share name is bare ("media") — never a path. Trim any leading/trailing
+    // An SMB share name is bare ("media") - never a path. Trim any leading/trailing
     // slashes a user might type ("/media", "media/"), which a server otherwise
     // rejects at Tree Connect as STATUS_BAD_NETWORK_NAME. (NFS export paths keep
     // their leading '/', so this trimming is SMB-only.)
@@ -149,7 +142,7 @@ bool connect_smb(const Config::NetShare& s) {
     }
     // Connected: relax the timeout for the session. 10 s is too aggressive for large
     // transfers, but with reconnect-and-retry handling recovery we don't need the
-    // very long 300 s either — 60 s detects a genuinely stalled read in about a
+    // very long 300 s either - 60 s detects a genuinely stalled read in about a
     // minute, then the read path reconnects and retries rather than freezing.
     smb2_set_timeout(g_smb2, 60);
     return true;
@@ -161,7 +154,7 @@ bool connect_smb(const Config::NetShare& s) {
 // store, same as the first connect.
 //
 // The server is often briefly unresponsive right when it drops us, so a single
-// immediate reconnect fails — we retry a few times with a pause to let the server
+// immediate reconnect fails - we retry a few times with a pause to let the server
 // and the network recover.
 static bool smb_reconnect() {
     const Config::NetShare* s = find_live(g_mounted);
@@ -177,23 +170,18 @@ static bool smb_reconnect() {
 
 // ── devoptab: expose the mounted share as "net:" ──────────────────────────────
 //
-// FileBrowserScreen and the dump/install paths use ordinary POSIX file I/O over a
-// devoptab root (like "sdmc:", "ums0:"), so a single "net:" device backed by the
-// active g_nfs/g_smb2 context lets a network share reuse the entire file manager.
-// Only ONE context is live at a time (single-slot), so each callback dispatches on
-// whichever of g_nfs/g_smb2 is set. Read path only for now (browse + install-from);
-// writes are intentionally absent (NULL in the table) until they're needed.
+// FileBrowserScreen and the dump/install paths use ordinary POSIX file I/O over
+// a devoptab root, so a single "net:" device backed by the active g_nfs/g_smb2
+// context lets a network share reuse the entire file manager. Only ONE context
+// is live at a time (single-slot), so each callback dispatches on whichever of
+// g_nfs/g_smb2 is set. Read path only for now (browse + install-from).
 //
-// PINNED against the real headers (§5.4): devoptab_t layout from devkitPro newlib
-// sys/iosupport.h; libnfs/libsmb2 calls from sahlberg's libnfs.h / libsmb2.h. Two
-// things to CONFIRM on the first device compile, since the guard can't type-check:
-//   • the file-op fd parameter is `void *fd` in devkitPro's newlib (64-bit); if
-//     your installed iosupport.h uses `int fd`, adjust the five callback sigs.
-//   • RemoveDevice() is called with "net:" below — match it to how AddDevice
-//     registered the name if your newlib is picky.
-// The table is filled field-by-field on a zero-initialised static (not a designated
-// initialiser), so it is robust to newlib adding devoptab fields and needs no
-// specific C++ standard.
+// PINNED against the real headers (§5.4): devoptab_t layout from devkitPro
+// newlib sys/iosupport.h; libnfs/libsmb2 calls from sahlberg's headers. Confirm
+// on the first device compile: the file-op fd parameter is `void *fd` in
+// devkitPro's newlib (64-bit), and RemoveDevice() is called with "net:" below.
+// The table is filled field-by-field on a zero-initialised static, so it is
+// robust to newlib adding devoptab fields.
 
 static constexpr uint32_t kReadAhead = 1u << 20;   // 1 MiB default network read
 
@@ -226,7 +214,7 @@ static const char* dev_relpath(const char* path) {
 
 // libsmb2 wants a share-relative path with NO leading slash ("" = the share root),
 // and converts internal '/' to '\' itself. A leading slash makes it a literal
-// "\..." name the server rejects — which shows up as an empty (blank) listing.
+// "\..." name the server rejects - which shows up as an empty (blank) listing.
 static std::string smb_relpath(const char* path) {
     const char* rel = dev_relpath(path);   // -> "/Movies/x", or "/" at the root
     while (*rel == '/') ++rel;              // -> "Movies/x", or "" at the root
@@ -287,7 +275,7 @@ static int net_dev_close(struct _reent* r, void* fd) {
 // read (>=0) or -1.
 static int raw_pread(NetFile* f, uint8_t* dst, uint32_t count, uint64_t offset, struct _reent* r) {
     if (f->nfs) {
-        // libnfs order is (nfs, fh, offset, count, buf) — NOT (buf, count, offset).
+        // libnfs order is (nfs, fh, offset, count, buf) - NOT (buf, count, offset).
         int n = nfs_pread(g_nfs, f->nfs, offset, count, dst);
         if (n < 0) { r->_errno = EIO; return -1; }
         return n;
@@ -322,7 +310,7 @@ static ssize_t net_dev_read(struct _reent* r, void* fd, char* ptr, size_t len) {
     while (len > 0) {
         // Serve from the read-ahead buffer whenever the position falls inside it.
         // This is what turns a phase of KB-sized reads (one network round-trip each
-        // over SMB — the "hours after transfer" symptom) into one read per MiB.
+        // over SMB - the "hours after transfer" symptom) into one read per MiB.
         if (f->rbuf_len && f->pos >= f->rbuf_off && f->pos < f->rbuf_off + f->rbuf_len) {
             const size_t off_in = static_cast<size_t>(f->pos - f->rbuf_off);
             size_t chunk = f->rbuf_len - off_in;
@@ -456,7 +444,7 @@ static int net_dev_dirclose(struct _reent* r, DIR_ITER* dirState) {
 static int net_dev_dirreset(struct _reent* r, DIR_ITER* dirState) {
     // A just-opened dir is already at the start, so reset is a no-op success. We
     // return 0 (not ENOSYS) because newlib's opendir()/rewinddir() can treat a
-    // failing dirreset as a failed open — which libusbhsfs avoids by returning 0.
+    // failing dirreset as a failed open - which libusbhsfs avoids by returning 0.
     (void)r; (void)dirState;
     return 0;
 }
@@ -508,7 +496,7 @@ std::string net_resolve(const NetPath& np) {
     }
 
     const Config::NetShare* s = find_live(np.connection);
-    if (!s) { // unknown connection — refuse, nothing mounted
+    if (!s) { // unknown connection - refuse, nothing mounted
         g_last_error = "Unknown connection.";
         net_surface_release();
         return {};
@@ -530,7 +518,7 @@ std::string net_resolve(const NetPath& np) {
     // Always (re)connect on an explicit selection: release whatever was mounted and
     // connect fresh. net_resolve is called only when the user picks a connection
     // from the chooser (browsing uses the devoptab's live context, never this), so
-    // this never reconnects mid-browse — but it DOES ensure an edited connection
+    // this never reconnects mid-browse - but it DOES ensure an edited connection
     // (changed host/share/path, same name) actually takes effect instead of reusing
     // the previous mount.
     net_surface_release();

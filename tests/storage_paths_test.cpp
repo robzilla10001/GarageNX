@@ -78,7 +78,7 @@ static void test_install_and_titlequery_kinds() {
 
 static void test_disabled_is_unreachable() {
     Config::Surfaces c;                 // nand_system=false by default
-    // A path into a disabled surface must be Invalid — a client cannot reach it.
+    // A path into a disabled surface must be Invalid - a client cannot reach it.
     auto ns = sp_resolve("/NAND (System)/x", c);
     CHECK(ns.kind == PathKind::Invalid, "disabled NAND System is unreachable");
 

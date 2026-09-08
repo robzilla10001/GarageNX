@@ -1,7 +1,7 @@
 #pragma once
 // source/ui/font.hpp
 // Inter TTF loader and size cache.
-// All text rendering goes through Font::get() — never load TTF_Font directly elsewhere.
+// All text rendering goes through Font::get() - never load TTF_Font directly elsewhere.
 
 #include <SDL2/SDL_ttf.h>
 #include <string>
@@ -40,7 +40,7 @@ void shutdown();
 // ─── Access ───────────────────────────────────────────────────────────────────
 
 /// Retrieve a font at a given size, weight, and family.
-/// Font is loaded on first access and cached — subsequent calls are O(1).
+/// Font is loaded on first access and cached - subsequent calls are O(1).
 /// Returns nullptr on failure (log will have details).
 TTF_Font* get(Size size, Weight weight = Weight::Regular,
               Family family = Family::Sans);

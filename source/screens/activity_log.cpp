@@ -17,7 +17,7 @@
 
 namespace {
 
-// "12h 34m", "34m", "—" when pdm has no record. Deliberately not seconds: a
+// "12h 34m", "34m", "-" when pdm has no record. Deliberately not seconds: a
 // playtime column that ticks in seconds invites reading precision that the
 // underlying data does not have.
 std::string fmt_playtime(uint64_t seconds, bool valid) {

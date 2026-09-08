@@ -10,7 +10,7 @@
 
 namespace Core::Battery {
 
-// ─── Basic power (psm) — reliable, used by status bar ──────────────────────────
+// ─── Basic power (psm) - reliable, used by status bar ──────────────────────────
 
 struct Power {
     float charge_fraction = 0.f;   // [0,1]

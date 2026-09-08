@@ -2,23 +2,21 @@
 // source/core/sleep_inhibit.hpp
 //
 // Keeps the console awake while it matters. The Switch auto-sleeps after an idle
-// period, and a transfer in progress does not count as "activity" — there is no HID
-// input during a big upload — so the console would sleep mid-transfer and drop the
-// MTP/FTP/HTTP connection, potentially leaving a half-written file behind.
+// period, and a transfer in progress does not count as "activity" - there is no
+// HID input during a big upload - so the console would sleep mid-transfer and
+// drop the MTP/FTP/HTTP connection.
 //
-// Scope is per SCREEN, not per connection: while a Connectivity screen (MTP/FTP/
-// HTTP) is open, the console stays awake. That is simpler and safer than tracking
-// client connections — there is no window where a transfer is live but the
-// inhibitor has already lapsed.
+// Scope is per SCREEN, not per connection: while a Connectivity screen (MTP/
+// FTP/HTTP) is open, the console stays awake. That is simpler and safer than
+// tracking client connections.
 //
-// Usage: hold a Guard as a member of the screen. Construction acquires, destruction
-// releases, so leaving the page (pop, quit, teardown) always restores normal sleep
-// behaviour even on paths that forget to call anything.
+// Usage: hold a Guard as a member of the screen. Construction acquires,
+// destruction releases, so leaving the page always restores normal sleep
+// behaviour.
 //
-// libnx calls used (both verified against libnx's ISelfController API, not guessed):
-//   appletSetAutoSleepDisabled(bool)  — the actual sleep inhibit
-//   appletReportUserIsActive()        — refreshes the idle timer so the screen also
-//                                       stops dimming; called periodically via tick()
+// libnx calls used (verified against libnx's ISelfController API):
+//   appletSetAutoSleepDisabled(bool)  - the actual sleep inhibit
+//   appletReportUserIsActive()        - refreshes the idle timer (via tick())
 
 namespace Core {
 

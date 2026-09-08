@@ -5,7 +5,7 @@
 //
 // The crash path is: user cancels a streaming NSZ install; recv_install's loop
 // exits on should_stop(); it calls m_install->abort(), which joins the
-// decompression worker and frees the decompress window — WHILE the OverlapBuffer
+// decompression worker and frees the decompress window - WHILE the OverlapBuffer
 // worker thread may still be inside the sink, which is m_install->feed() and
 // touches that same window. Two workers, uncoordinated teardown, cross-thread
 // use-after-free.
@@ -96,7 +96,7 @@ static void test_sink_failure_is_latched() {
 // ── 3. THE ONE THAT MATTERS: quiesce() fences the sink against teardown ───────
 //
 // A sink that reads and writes heap state owned by a unique_ptr. A second thread
-// cancels — quiesce()s the buffer, then frees the state — exactly as
+// cancels - quiesce()s the buffer, then frees the state - exactly as
 // recv_install's cancel path quiesce()s then abort()s. The invariant: no sink
 // call touches the state after it is freed. Under TSan a violation is a reported
 // race; under ASan a use-after-free. Both fail the run.
@@ -136,7 +136,7 @@ static void test_quiesce_fences_sink_before_state_is_freed() {
         stop.store(true);
         ov.quiesce();          // (1) after this the sink cannot run again
         raw->alive = false;    // (2) safe: no sink call is or will be in progress
-        win.reset();           // (3) free — must not race any sink call
+        win.reset();           // (3) free - must not race any sink call
 
         producer.join();
         CHECK(!touched_after_free.load(), "sink never ran against freed window state");

@@ -62,7 +62,7 @@ std::string parent(const std::string& path) {
         return p.substr(0, slash + 1);
     }
 
-    // Don't strip below "sdmc:/" — if what remains ends in ':' add the slash back
+    // Don't strip below "sdmc:/" - if what remains ends in ':' add the slash back
     std::string result = p.substr(0, slash);
     if (!result.empty() && result.back() == ':') result += "/";
     return result.empty() ? "/" : result;
@@ -102,7 +102,7 @@ std::vector<Entry> list(const std::string& path, bool* ok) {
 
     DIR* dir = opendir(path.c_str());
     if (!dir) {
-        SDL_Log("Fs::list — cannot open %s", path.c_str());
+        SDL_Log("Fs::list - cannot open %s", path.c_str());
         if (ok) *ok = false;
         return entries;
     }
@@ -123,7 +123,7 @@ std::vector<Entry> list(const std::string& path, bool* ok) {
         if (ent->d_type == DT_DIR)       { is_dir_flag = true;  }
         else if (ent->d_type == DT_REG)  { is_dir_flag = false; }
         else {
-            // DT_UNKNOWN — stat it
+            // DT_UNKNOWN - stat it
             struct stat st;
             if (stat(full.c_str(), &st) == 0) is_dir_flag = S_ISDIR(st.st_mode);
         }
@@ -169,6 +169,28 @@ std::vector<Entry> list(const std::string& path, bool* ok) {
 bool make_directory(const std::string& path) {
     if (mkdir(path.c_str(), 0755) == 0) return true;
     return exists(path) && is_directory(path);  // already exists is fine
+}
+
+bool make_directory_recursive(const std::string& path) {
+    if (path.empty()) return false;
+    std::string p = path;
+    while (!p.empty() && p.back() == '/') p.pop_back();  // "a/b/" means "a/b"
+    if (p.empty()) return false;
+    if (p.find('/') == std::string::npos) return make_directory(p);
+
+    // Walk every component after the device prefix and create what's missing.
+    // The prefix - everything before the first '/' ("sdmc:", "", "bis_system:")
+    // is a device name, not a directory: it must never be mkdir'd (doing so
+    // fails, and the failure would abort the whole walk).
+    const size_t first = p.find('/');
+    for (size_t i = first + 1; i <= p.size(); ++i) {
+        if (i == p.size() || p[i] == '/') {
+            const std::string level = p.substr(0, i);
+            if (level.empty()) continue;  // collapse '//'
+            if (!make_directory(level)) return false;
+        }
+    }
+    return make_directory(p);
 }
 
 bool create_empty_file(const std::string& path) {
@@ -231,12 +253,12 @@ std::string resolve_rename(const std::string& path) {
 static bool copy_file_bytes(const std::string& src, const std::string& dst,
                              Progress& progress) {
     FILE* in = fopen(src.c_str(), "rb");
-    if (!in) { SDL_Log("Fs::copy — cannot read %s", src.c_str()); return false; }
+    if (!in) { SDL_Log("Fs::copy - cannot read %s", src.c_str()); return false; }
 
     FILE* out = fopen(dst.c_str(), "wb");
-    if (!out) { SDL_Log("Fs::copy — cannot write %s", dst.c_str()); fclose(in); return false; }
+    if (!out) { SDL_Log("Fs::copy - cannot write %s", dst.c_str()); fclose(in); return false; }
 
-    // 1 MB buffer — good throughput on the Switch's SD without hogging memory.
+    // 1 MB buffer - good throughput on the Switch's SD without hogging memory.
     constexpr size_t BUF = 1024 * 1024;
     std::vector<char> buffer(BUF);
 
@@ -245,7 +267,7 @@ static bool copy_file_bytes(const std::string& src, const std::string& dst,
     while ((n = fread(buffer.data(), 1, BUF, in)) > 0) {
         if (progress.cancelled.load()) { ok = false; break; }
         if (fwrite(buffer.data(), 1, n, out) != n) {
-            SDL_Log("Fs::copy — write error on %s", dst.c_str());
+            SDL_Log("Fs::copy - write error on %s", dst.c_str());
             ok = false;
             break;
         }
@@ -303,7 +325,7 @@ static bool copy_recursive(const std::string& src, const std::string& dst,
 
     // Directory. Create it at the destination, then recurse.
     if (!make_directory(dst)) {
-        SDL_Log("Fs::copy — cannot create dir %s", dst.c_str());
+        SDL_Log("Fs::copy - cannot create dir %s", dst.c_str());
         return false;
     }
 

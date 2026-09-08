@@ -36,7 +36,7 @@ void mount_nand() {
 #ifdef PLATFORM_SWITCH
     // Mount if ANY transport exposes the partition. A mount is process-wide but
     // the toggles are per-transport, so asking one transport's block would leave
-    // the device unmounted for a user who enabled NAND on a different one — the
+    // the device unmounted for a user who enabled NAND on a different one - the
     // surface would then appear and fail to open, which is the exact symptom this
     // module's gating was meant to prevent.
     //

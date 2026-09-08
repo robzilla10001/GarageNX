@@ -2,7 +2,7 @@
 // source/screens/title_test.hpp
 // TEMPORARY validation screen for Milestone 4 Phase A. Enumerates installed
 // titles via NCM and, for the first Application, attempts to decrypt its Control
-// NCA to extract the display name — proving the keys → NCM → NCA pipeline works
+// NCA to extract the display name - proving the keys → NCM → NCA pipeline works
 // on real hardware before we build the full TitleList/TitleDetail UI.
 //
 // This screen is disposable; it will be replaced by TitleList in Phase B.

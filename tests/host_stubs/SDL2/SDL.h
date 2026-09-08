@@ -12,7 +12,7 @@
 // which is why a test that reaches it behaves sensibly rather than silently.
 //
 // Do NOT grow this into a general SDL shim. If a file needs more of SDL than a
-// log call, it is not a pure file and does not belong in the host suite — see the
+// log call, it is not a pure file and does not belong in the host suite - see the
 // admission rule at the top of tests/CMakeLists.txt.
 #pragma once
 

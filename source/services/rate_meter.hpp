@@ -6,7 +6,7 @@
 // deliberately know nothing about time. A screen owns a RateMeter and feeds it
 // the current cumulative total once per frame, and the meter turns those deltas
 // into a stable bytes/sec figure. Keeping the meter on the UI side means no
-// service needs a timer and no extra cross-thread state is introduced — the
+// service needs a timer and no extra cross-thread state is introduced - the
 // atomics the services already publish are the only contract.
 
 #include <chrono>
@@ -61,7 +61,7 @@ private:
 
     // Every-sample byte total, used for reset detection and first-byte anchoring.
     // Distinct from m_last_bytes, which is the instantaneous-rate window baseline
-    // and only advances once per kWindowMs — too coarse for these decisions.
+    // and only advances once per kWindowMs - too coarse for these decisions.
     bool              m_prev_primed = false;
     uint64_t          m_prev_bytes  = 0;
 };

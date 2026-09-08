@@ -4,8 +4,8 @@
 // speed and ETA. RateMeter reads steady_clock directly, so rather than refactor
 // a working class to inject a clock, this drives it with real (short) sleeps and
 // asserts the computed rate lands in a tolerance band. The point is to catch the
-// logic errors that matter — the average anchoring at the first byte (not at
-// reset), and re-anchoring after a counter reset — not to measure the clock.
+// logic errors that matter - the average anchoring at the first byte (not at
+// reset), and re-anchoring after a counter reset - not to measure the clock.
 
 #include "services/rate_meter.hpp"
 
@@ -45,7 +45,7 @@ static void test_average_zero_before_data() {
 static void test_idle_before_data_excluded() {
     RateMeter m;
     m.sample(0);
-    sleep_ms(200);         // 200ms of idle waiting — must NOT drag the average
+    sleep_ms(200);         // 200ms of idle waiting - must NOT drag the average
     m.sample(0);
     // Transfer runs: bytes climb over ~200ms. The screen samples every frame, so
     // model several samples across the data phase. The average anchors at the

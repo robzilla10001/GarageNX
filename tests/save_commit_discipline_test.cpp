@@ -6,19 +6,19 @@
 //     go through Services::SaveWrite::* (which commits), commit explicitly
 //     within a few lines, or be marked "// NO-COMMIT: <reason>".
 //
-// A Switch save filesystem is journalled — writes are discarded at unmount unless
-// fsdevCommitDevice() runs — so an uncommitted mutation looks like it worked and
+// A Switch save filesystem is journalled - writes are discarded at unmount unless
+// fsdevCommitDevice() runs - so an uncommitted mutation looks like it worked and
 // then reverts. There is nothing to see at the time and no error anywhere.
 //
 // It has failed twice by being a convention rather than a check:
 //   * FileBrowserScreen never committed. Correct for its whole life, because it
-//     only saw SD and NAND — until the Save Manager pointed it at "save:/" and
+//     only saw SD and NAND - until the Save Manager pointed it at "save:/" and
 //     on-device deletes started reverting.
 //   * do_new_dir() and do_new_file() were still live when this test was written:
 //     creating a folder or file inside a save quietly vanished at unmount.
 //
 // So this reads the actual source and fails the build. It is a lint, not a unit
-// test, which is unusual here — but the invariant is one no unit test can reach
+// test, which is unusual here - but the invariant is one no unit test can reach
 // (it lives in the relationship between a call and its follow-up) and one that
 // costs a user their save data when it breaks.
 
@@ -37,7 +37,7 @@ static int g_checks = 0;
 static int g_failures = 0;
 
 // Files that can be pointed at a save path. FileBrowserScreen is on this list
-// because the Save Manager opens it on "save:/" — the exact fact that made its
+// because the Save Manager opens it on "save:/" - the exact fact that made its
 // missing commits a bug.
 static const char* kSaveCapableFiles[] = {
     "screens/file_browser.cpp",

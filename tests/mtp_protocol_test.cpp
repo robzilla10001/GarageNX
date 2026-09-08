@@ -1,13 +1,13 @@
 // tests/mtp_protocol_test.cpp
 //
 // Host suite for the MTP wire format. mtp_data.hpp is deliberately free of USB
-// and libnx — its own header says so — which makes it the one part of the MTP
+// and libnx - its own header says so - which makes it the one part of the MTP
 // responder that can be checked anywhere but on a Switch. mtp_server (the
 // transport) cannot be, and nothing here pretends otherwise.
 //
 // The centrepiece is ObjectPropList parsing, added for slice 4c. The 64-bit
 // object size arrives in SendObjectPropList's COMMAND PARAMETERS (high/low
-// across params 4 and 5), not in this dataset — but the dataset is where the
+// across params 4 and 5), not in this dataset - but the dataset is where the
 // filename comes from, it is entirely host-supplied, and it is walked by
 // datatype-implied lengths, which is a decoder waiting to be fed something
 // malformed.
@@ -95,7 +95,7 @@ static void test_u64_survives_the_round_trip() {
 
         const ObjectProp* p = find_prop(props, ObjProp::ObjectSize);
         CHECK(p != nullptr, "ObjectSize present");
-        CHECK(p->num == sz, "u64 size survives exactly — no truncation to 32 bits");
+        CHECK(p->num == sz, "u64 size survives exactly - no truncation to 32 bits");
     }
     std::printf("  ok: u64 ObjectSize exact from 0 through 2^64-1 (incl. >4GiB)\n");
 }
@@ -214,7 +214,7 @@ static void test_uint128_is_stepped_over() {
 }
 
 // GetObjectPropDesc: a host asks for a description of EVERY property we claim
-// to support, and libmtp abandons the entire send if one is missing — the
+// to support, and libmtp abandons the entire send if one is missing - the
 // failure reads "could not get property description" and names nothing useful.
 // So the contract is: everything GetObjectPropsSupported advertises must be
 // describable here, and must be decodable by parse_object_prop_list().
@@ -247,7 +247,7 @@ static void test_every_advertised_property_has_a_description() {
         uint32_t group = 0; uint8_t form = 0;
         CHECK(r.u32(group) && r.u8(form), "group code and form flag read");
         CHECK(form == 0, "form flag none: no form field follows");
-        CHECK(r.offset() == w.size(), "the dataset is consumed EXACTLY — no trailing bytes");
+        CHECK(r.offset() == w.size(), "the dataset is consumed EXACTLY - no trailing bytes");
     }
     std::printf("  ok: all 6 advertised properties describable, datasets exact\n");
 }
@@ -288,7 +288,7 @@ static void test_describable_implies_decodable() {
     std::printf("  ok: describable <-> decodable for every advertised property\n");
 }
 
-// Pin the header codec down too — it frames every container.
+// Pin the header codec down too - it frames every container.
 static void test_header_codec() {
     Writer w;
     const std::vector<uint8_t> payload = {1, 2, 3, 4};

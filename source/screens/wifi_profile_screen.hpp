@@ -5,16 +5,11 @@
 // confirm (names the specific network) -> delete -> refresh.
 //
 // Pushed from the Tools screen's "Delete Wi-Fi Profiles" row rather than using
-// the Tools batch scan/dry-run/hold-confirm pattern (see ToolsScreen::Op::push
-// for why) — there's no way to say which SPECIFIC network "should" be deleted;
-// that's an inherently per-item choice, not a bulk cleanup category. The
-// original implementation here WAS a "delete everything" batch op; it was
-// corrected to this shape after real-world use showed that's not what's
-// wanted, matching how "delete users" was scoped from the start for the same
-// reason.
+// the Tools batch pattern: which network "should" be deleted is an inherently
+// per-item choice, not a bulk cleanup category.
 //
 // Scoped to NetworkProfileType::User only (not System/SsidList, not
-// Temporary) — matches what official Nintendo software itself does per
+// Temporary) - matches what official Nintendo software itself does per
 // Switchbrew's own note on the underlying enumerate command.
 
 #include "screens/screen.hpp"
@@ -38,7 +33,8 @@ public:
 private:
     struct Candidate {
         std::array<uint8_t, 0x10> uuid{};
-        std::string               name;   // network name, shown in the confirm text
+        std::string               name;   // profile name (console-assigned)
+        std::string               ssid;   // resolved SSID - the actual network id
     };
 
     std::vector<Candidate> m_profiles;

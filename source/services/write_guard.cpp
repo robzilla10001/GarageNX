@@ -60,11 +60,11 @@ WritePolicy classify_write(const std::string& vfs_path, const Config::Surfaces& 
     }
 
     // A surface the user has switched off is unreachable for writes as well as
-    // for browsing — otherwise disabling NAND system in settings would still
+    // for browsing - otherwise disabling NAND system in settings would still
     // leave it mutable by a client that guesses the path.
     //
     // NOTE this is now PER TRANSPORT. A surface enabled for MTP and disabled for
-    // FTP denies here for FTP only, silently and with no modal — which looks
+    // FTP denies here for FTP only, silently and with no modal - which looks
     // exactly like every other Deny from the outside. Hence the log line.
     if (!StorageCatalog::enabled(s->id, cfg)) {
         guardlog(tr, op, vfs_path, s, false, "DENY", "surface-disabled");

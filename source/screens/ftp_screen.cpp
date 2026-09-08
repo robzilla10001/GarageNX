@@ -64,7 +64,7 @@ std::unique_ptr<Screen> FTPScreen::update(bool& pop) {
         if (m_server && m_server->is_running()) { m_server->stop(); m_rate.reset(); }
         else { m_rate.reset(); start_server(); }
         m_disp_sent = m_disp_recv = "0 B";
-        m_disp_cur = m_disp_avg = m_disp_eta = "—";
+        m_disp_cur = m_disp_avg = m_disp_eta = "-";
         m_last_latch_ms = 0;
     }
     return nullptr;
@@ -77,16 +77,16 @@ void FTPScreen::refresh_latched_stats() {
 
     const double cur = m_rate.bytes_per_sec();
     const double avg = m_rate.average_bytes_per_sec();
-    m_disp_cur = cur > 0 ? (Fs::format_size((uint64_t)cur) + "/s") : "—";
+    m_disp_cur = cur > 0 ? (Fs::format_size((uint64_t)cur) + "/s") : "-";
     m_disp_avg = (m_rate.data_phase_started() && avg > 0)
-                     ? (Fs::format_size((uint64_t)avg) + "/s") : "—";
+                     ? (Fs::format_size((uint64_t)avg) + "/s") : "-";
 
     const uint64_t wire_size = m_server->current_wire_size();
     const uint64_t wire_recv = m_server->current_wire_recv();
     if (wire_size > 0 && wire_recv <= wire_size && cur > 1.0)
         m_disp_eta = UI::format_eta((double)(wire_size - wire_recv) / cur);
     else
-        m_disp_eta = "—";
+        m_disp_eta = "-";
 }
 
 void FTPScreen::draw() {

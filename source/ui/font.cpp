@@ -22,7 +22,7 @@ static bool s_initialized = false;
 
 bool init(const std::string& asset_root) {
     if (TTF_Init() != 0) {
-        SDL_Log("Font::init — TTF_Init failed: %s", TTF_GetError());
+        SDL_Log("Font::init - TTF_Init failed: %s", TTF_GetError());
         return false;
     }
 
@@ -55,7 +55,7 @@ void shutdown() {
 
 TTF_Font* get(Size size, Weight weight, Family family) {
     if (!s_initialized) {
-        SDL_Log("Font::get — font system not initialized");
+        SDL_Log("Font::get - font system not initialized");
         return nullptr;
     }
 
@@ -76,7 +76,7 @@ TTF_Font* get(Size size, Weight weight, Family family) {
 
     TTF_Font* font = TTF_OpenFont(path.c_str(), pt);
     if (!font) {
-        SDL_Log("Font::get — TTF_OpenFont(%s, %d) failed: %s",
+        SDL_Log("Font::get - TTF_OpenFont(%s, %d) failed: %s",
                 path.c_str(), pt, TTF_GetError());
         return nullptr;
     }
@@ -105,7 +105,7 @@ int measure_width(const std::string& text, Size size, Weight weight, Family fami
 std::vector<std::string> wrap(const std::string& text, int max_width, Size size,
                               Weight weight, Family family) {
     // Thin adapter: the algorithm lives in ui/text_wrap.hpp so it can be
-    // host-tested with an exact synthetic metric. Keep it that way — a second
+    // host-tested with an exact synthetic metric. Keep it that way - a second
     // copy here would be the one that gets fixed and the one that does not.
     return TextWrap::wrap(text, max_width,
                           [&](const std::string& t) {

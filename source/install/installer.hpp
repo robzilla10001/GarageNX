@@ -9,23 +9,16 @@
 //     2. For each NCA:
 //        a. GeneratePlaceHolderId → CreatePlaceHolder(content_id, ph, size)
 //        b. Stream NCA bytes from the container → WritePlaceHolder (4 MB chunks)
-//        c. Register(content_id, ph) — moves placeholder to registered path
+//        c. Register(content_id, ph) - moves placeholder to registered path
 //     3. Write the content meta record into the destination meta database.
 //     4. Commit the meta database.
 //
-// After content + meta-DB land, HOS auto-creates the application record. No
-// PushApplicationRecord call needed — proven by the Move operation in M4.
-// (The ns.c study confirmed: ns:am records are auto-populated when NCM has both
-// content and a committed meta-DB entry for a program-type title.)
+// After content + meta-DB land, HOS auto-creates the application record; no
+// PushApplicationRecord call needed. A .tik in the container is installed via
+// ES cmd 1 (ImportTicket), required for titlekey-crypto titles to launch.
 //
-// Ticket install:
-//   If the container includes a .tik file, it is installed via ES cmd 1
-//   (ImportTicket). This is required for titlekey-crypto titles to launch.
-//   Cert is also imported if present (ES cmd 2 ImportCertificate is not
-//   used by libnx; we import the ticket which carries its own cert chain ref).
-//
-// Storage target: caller chooses SD or NAND (BuiltInUser). The user picks via
-// the action menu in FileBrowser — same affordance as DBI.
+// Storage target: caller chooses SD or NAND (BuiltInUser); the user picks via
+// the action menu in FileBrowser - same affordance as DBI.
 
 #include "core/keys.hpp"
 #include "core/ncm.hpp"
@@ -114,21 +107,12 @@ struct ContentEntry {
 // `storage` is the destination (SD or NAND).
 // Returns true on success.
 /// `contents_preregistered`: the caller has ALREADY written and registered every
-/// large NCA — StreamInstaller does exactly that as the bytes arrive off USB, so
-/// by the time it calls here only metadata and tickets remain. Two consequences,
-/// both from that one fact:
-///
-///   * `progress` already holds the real account of the install, so it must NOT
-///     be reset. Resetting it erases the transfer's log and leaves only this
-///     function's view — which, since everything really is already registered,
-///     reads as "already installed, skipped" for every content and looks exactly
-///     like an install that never happened.
-///   * The per-content skip lines are then noise. They are accurate, but they
-///     report on work that DID occur, just not here. They are suppressed and
-///     replaced with a single line naming the hand-off.
-///
-/// Leave false for the file-browser path, which owns its Progress outright and
-/// for which "already installed" genuinely means pre-existing.
+/// large NCA (StreamInstaller does that as bytes arrive off USB), so only
+/// metadata and tickets remain. `progress` already holds the real account of
+/// the install and must NOT be reset - resetting it would read as "already
+/// installed, skipped" for every content. Per-content skip lines are replaced
+/// with a single hand-off line. Leave false for the file-browser path, which
+/// owns its Progress outright.
 bool install(std::vector<ContentEntry> contents,
              Core::Ncm::Storage storage,
              const Core::Keys::Keyset& keys,

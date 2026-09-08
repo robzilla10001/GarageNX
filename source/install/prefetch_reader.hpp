@@ -1,21 +1,19 @@
 #pragma once
 
-// PrefetchReader — wraps a pull-by-offset ReadFn with a background thread that
+// PrefetchReader - wraps a pull-by-offset ReadFn with a background thread that
 // reads the source sequentially ahead of the consumer into a bounded queue of
-// chunks. A consumer that reads mostly sequentially (the NSZ/NSP install streams)
-// then overlaps its own CPU/SD work (decompress, AES re-encrypt, WritePlaceHolder)
-// with network I/O instead of alternating serially with it.
+// chunks, so a mostly-sequential consumer (the NSZ/NSP install streams) overlaps
+// its own CPU/SD work (decompress, AES re-encrypt, WritePlaceHolder) with
+// network I/O instead of alternating serially with it.
 //
-// Threading contract: ONLY the worker thread ever calls the underlying ReadFn, so
-// a non-thread-safe source (e.g. the libsmb2 connection behind the net: devoptab)
-// is touched by exactly one thread. The consumer only ever touches the in-memory
-// queue under the mutex. The caller must ensure nothing else uses the same source
-// for the lifetime of the PrefetchReader (during an install the browser is blocked,
-// so this holds).
+// Threading contract: ONLY the worker thread ever calls the underlying ReadFn,
+// so a non-thread-safe source (e.g. the libsmb2 connection behind the net:
+// devoptab) is touched by exactly one thread. The consumer only ever touches
+// the in-memory queue under the mutex. The caller must ensure nothing else uses
+// the same source for the lifetime of the PrefetchReader.
 //
 // Random access is supported: a read at an unexpected offset repositions the
-// worker (dropping buffered data). The install does a few small header reads before
-// streaming; those cost a reposition each, then the bulk streams sequentially.
+// worker (dropping buffered data).
 
 #include "install/installer.hpp"   // Install::ReadFn
 

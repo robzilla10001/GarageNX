@@ -1,7 +1,10 @@
 # ─── Build output ─────────────────────────────────────────────────────────────
 .ai/
 build/
+build-fresh/
+build-switch/
 build-pc/
+build-tests/
 build-*/
 cmake-build-*/
 stubs/
@@ -39,7 +42,7 @@ GarageNX_data/
 
 # ─── Misc ─────────────────────────────────────────────────────────────────────
 tools/
-docs/
+tests/
 *.log
 *.tmp
 tags

@@ -8,7 +8,7 @@
 
 // ordered_json preserves INSERTION ORDER; plain nlohmann::json is a std::map and
 // re-sorts every key alphabetically on save. That meant a user's hand-edited
-// config.json was silently reshuffled the first time any setting changed —
+// config.json was silently reshuffled the first time any setting changed -
 // harmless to the parser, but it destroys the grouping a human put there and
 // makes a diff between two configs unreadable.
 using json = nlohmann::ordered_json;
@@ -19,7 +19,7 @@ static All         s_config;
 static std::string s_path;
 static bool        s_loaded = false;   // has load() been ATTEMPTED yet?
 // The file exactly as it was parsed. save() overlays our values onto THIS rather
-// than writing a fresh document, so keys we do not model survive a save — a
+// than writing a fresh document, so keys we do not model survive a save - a
 // hand-added key, a setting from a newer build, a comment-ish field someone put
 // there. Writing to_json() wholesale would silently delete all of it the first
 // time a user touched any setting, and that user would have no way to know.
@@ -27,7 +27,7 @@ static json        s_raw = json::object();
 
 // ─── JSON helpers ─────────────────────────────────────────────────────────────
 // Each get_or() call reads a key from JSON with a typed default fallback.
-// Missing keys never throw — they silently use the default value.
+// Missing keys never throw - they silently use the default value.
 
 template<typename T>
 static T jget(const json& j, const std::string& key, T def) {
@@ -200,7 +200,7 @@ static void from_json(const json& j, All& c) {
     c.app.update_check_url = jget<std::string>(app, "update_check_url", Defaults::UPDATE_CHECK_URL);
 
     // MIGRATION: an early build shipped a PLACEHOLDER update URL, and every
-    // config.json written since has that placeholder stored — so changing the
+    // config.json written since has that placeholder stored - so changing the
     // compile-time default fixes nothing for anyone who has run the app, because
     // a stored key always beats a default. Rewrite that exact string, and only
     // that string: a URL the user deliberately set is never touched.
@@ -242,16 +242,11 @@ static void from_json(const json& j, All& c) {
     c.visibility.start_http              = jget<bool>(vis, "start_http",               Defaults::VIS_START_HTTP);
 
     // ── Surfaces, now per-transport ─────────────────────────────────────────
-    // MIGRATION. Until this change every transport read the single "mtp" block,
-    // whose surface keys sat directly under it. An existing config.json therefore
-    // has flat keys and no "surfaces" object. Reading those flat keys as the
-    // fallback for ALL THREE transports reproduces the old behaviour EXACTLY —
-    // which is the point: an upgrade must not silently expose or hide a surface
-    // someone deliberately configured. A user who had opened NAND (System) keeps
-    // it open, on every transport, exactly as before.
-    //
-    // No version stamp is needed. "surfaces" present means new-format; absent
-    // means legacy, and legacy is unambiguous.
+    // MIGRATION. Older configs have flat keys under "mtp" and no "surfaces"
+    // object; reading those flat keys as fallback for all three transports
+    // reproduces the old behaviour exactly, so an upgrade neither exposes nor
+    // hides a configured surface. No version stamp needed: "surfaces" present
+    // means new-format, absent means legacy.
     auto mtp    = j.value("mtp", json::object());
     auto legacy = mtp;   // the old flat block doubles as the migration source
 
@@ -288,12 +283,12 @@ bool load(const std::string& config_path) {
     // ever attempted, not whether the file happened to parse.
     s_loaded = true;
 
-    // Apply defaults first — so even a partial file works
+    // Apply defaults first - so even a partial file works
     reset_to_defaults();
 
     std::ifstream file(config_path);
     if (!file.is_open()) {
-        SDL_Log("Config::load — no config found at %s, writing defaults",
+        SDL_Log("Config::load - no config found at %s, writing defaults",
                 config_path.c_str());
         return save();
     }
@@ -303,17 +298,17 @@ bool load(const std::string& config_path) {
         file >> j;
         s_raw = j;                 // remember the file so save() can preserve it
         from_json(j, s_config);
-        SDL_Log("Config::load — loaded from %s", config_path.c_str());
+        SDL_Log("Config::load - loaded from %s", config_path.c_str());
         return true;
     } catch (const std::exception& e) {
-        SDL_Log("Config::load — parse error: %s — using defaults", e.what());
+        SDL_Log("Config::load - parse error: %s - using defaults", e.what());
         return save();
     }
 }
 
 bool save() {
     if (s_path.empty()) {
-        SDL_Log("Config::save — no path set");
+        SDL_Log("Config::save - no path set");
         return false;
     }
 
@@ -327,7 +322,7 @@ bool save() {
 
         // The ONE deliberate removal: the pre-split flat surface keys under
         // "mtp". They have been migrated into "mtp"/"surfaces", and leaving them
-        // beside their replacements would be actively misleading — a stale
+        // beside their replacements would be actively misleading - a stale
         // "nand_system": true sitting next to "surfaces": {"nand_system": false}
         // reads like the surface is on when it is off. Removing them is what
         // makes the migration one-way and finished.
@@ -340,15 +335,15 @@ bool save() {
 
         std::ofstream file(s_path);
         if (!file.is_open()) {
-            SDL_Log("Config::save — cannot open %s for writing", s_path.c_str());
+            SDL_Log("Config::save - cannot open %s for writing", s_path.c_str());
             return false;
         }
         file << j.dump(2);
         s_raw = j;                 // keep in sync so a second save is idempotent
-        SDL_Log("Config::save — written to %s", s_path.c_str());
+        SDL_Log("Config::save - written to %s", s_path.c_str());
         return true;
     } catch (const std::exception& e) {
-        SDL_Log("Config::save — error: %s", e.what());
+        SDL_Log("Config::save - error: %s", e.what());
         return false;
     }
 }
@@ -368,7 +363,7 @@ void reset_to_defaults() {
 bool any_transport_exposes(bool Surfaces::* field) {
     // A MOUNT is global; a TOGGLE is per-transport. Anything that mounts, opens a
     // service, or otherwise makes a process-wide decision must ask this rather
-    // than any single transport's block — otherwise turning a surface on for FTP
+    // than any single transport's block - otherwise turning a surface on for FTP
     // alone would leave its device unmounted and the folder would appear, empty
     // and unenterable, on the transport that was supposed to serve it.
     const All& c = s_config;
@@ -377,7 +372,7 @@ bool any_transport_exposes(bool Surfaces::* field) {
 
 const All& get() {
     // Reading config before load() silently yields COMPILE-TIME DEFAULTS, which
-    // is indistinguishable from a user who chose those values — so the mistake
+    // is indistinguishable from a user who chose those values - so the mistake
     // shows up much later as behaviour that ignores config.json. That is exactly
     // how NAND (System) stayed unmountable: mount_nand() ran before load(), read
     // the default nand_system=false, and never mounted bis_system:. Nothing in
@@ -386,7 +381,7 @@ const All& get() {
         static bool warned = false;
         if (!warned) {
             warned = true;
-            SDL_Log("Config::get() called BEFORE Config::load() — caller is seeing "
+            SDL_Log("Config::get() called BEFORE Config::load() - caller is seeing "
                     "COMPILE-TIME DEFAULTS, not config.json. Move it after load().");
         }
     }

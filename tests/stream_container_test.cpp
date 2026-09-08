@@ -10,7 +10,7 @@
 //
 // Build: see tests/CMakeLists.txt. Runs on the host, no libnx, no device.
 //
-// SCOPE — read before adding to this file.
+// SCOPE - read before adding to this file.
 //   IN:  container parsing, entry boundaries, gap/padding skipping, table sort
 //        order, container_size() arithmetic, malformed-input rejection.
 //   OUT: anything NCZ. ncz.cpp's !PLATFORM_SWITCH branch (ncz.cpp:438) stubs the
@@ -169,7 +169,7 @@ static void test_container_size_beyond_4gib() {
         Rig r;
         CHECK(r.inst.begin("huge.nsp", 0xFFFFFFFF), "begin with a 32-bit-truncated size");
         CHECK(r.inst.feed(head.data(), head.size()), "feed header+table only");
-        // No data fed at all — the table alone is the authority.
+        // No data fed at all - the table alone is the authority.
         CHECK(r.inst.container_size() == data_start + 0x40 + c.size, c.label);
         CHECK(r.inst.container_size() > 0xFFFFFFFFull || c.size < 4ull * 1024 * 1024 * 1024,
               "over-4GiB cases exceed what MTP could have reported");
@@ -252,7 +252,7 @@ static void test_malformed_containers_are_rejected() {
 }
 
 // An NSZ cannot be decompressed without header_key, so it must be refused at the
-// table — before the host pushes gigabytes — rather than partway through.
+// table - before the host pushes gigabytes - rather than partway through.
 // This asserts the REFUSAL only. It says nothing about decompression, which is
 // stubbed out on this platform (see the scope note at the top).
 static void test_ncz_without_keys_is_refused_at_the_table() {
@@ -276,7 +276,7 @@ static void test_ncz_without_keys_is_refused_at_the_table() {
     std::printf("  ok: keyless NSZ refused at the table, before the data phase\n");
 }
 
-// NOTE — everything below POSTDATES the 4c refactor, unlike everything above.
+// NOTE - everything below POSTDATES the 4c refactor, unlike everything above.
 // The suite above is a characterization record: it pins behaviour that already
 // existed. This is a new claim about new behaviour, and is marked so that a
 // later reader does not mistake it for evidence about the original design.
@@ -284,7 +284,7 @@ static void test_ncz_without_keys_is_refused_at_the_table() {
 // The file count was bounded from the start; the string-table size never was.
 // Both are host-supplied u32s feeding straight into a reserve(), so a corrupt
 // NSP declaring 0xFFFFFFFF asks for a 4 GiB allocation and takes the process out
-// via bad_alloc — a crash, on a console, from a bad file. Found while writing
+// via bad_alloc - a crash, on a console, from a bad file. Found while writing
 // the XCI front-end, which needed the same guard on HFS0.
 static void test_hostile_string_table_cannot_exhaust_memory() {
     {   // The 4 GiB ask. The count stays legal, so only the string-table bound
@@ -314,7 +314,7 @@ static void test_hostile_string_table_cannot_exhaust_memory() {
     {   // The other side of the bound, and the more important one: this guard
         // is new on a path that installs real titles, so it must be shown NOT
         // to refuse an ordinary container. Real NSP names are ~40 bytes against
-        // a 256-byte allowance, so the margin is wide — but "wide" is a claim,
+        // a 256-byte allowance, so the margin is wide - but "wide" is a claim,
         // and this is the check that makes it one the suite can hold.
         const std::vector<FakeEntry> es = {
             {"0123456789abcdef0123456789abcdef.cnmt.nca", 0,    0x40},
@@ -335,11 +335,11 @@ static void test_hostile_string_table_cannot_exhaust_memory() {
 
 // The MTP cancel crash (2168-0002) was a DOUBLE abort(): every cancel site does
 // `m_install->abort(); m_install.reset();`, and ~StreamInstaller() calls abort()
-// too, so it ran twice — the second pass re-entered ncm against an already-freed
+// too, so it ran twice - the second pass re-entered ncm against an already-freed
 // placeholder and faulted.
 //
-// HONEST SCOPE: this test cannot prove the fix. The dangerous part — a second
-// ncmContentStorageDeletePlaceHolder/Close — is #ifdef PLATFORM_SWITCH, and on
+// HONEST SCOPE: this test cannot prove the fix. The dangerous part - a second
+// ncmContentStorageDeletePlaceHolder/Close - is #ifdef PLATFORM_SWITCH, and on
 // the host abort()'s only action (ncz_join) is already self-guarded by
 // m_ncz_running, so a double abort() was harmless here even BEFORE the guard.
 // Removing the guard does NOT fail this test. What this DOES do is exercise the
@@ -365,7 +365,7 @@ static void test_abort_is_idempotent_host_smoke() {
         r.inst.abort();                       // a second call must be a safe no-op
         r.inst.abort();                       // and a third
         CHECK(true, "repeated abort() did not fault");
-        // Destructor runs here (it calls abort() again) — must also be a no-op.
+        // Destructor runs here (it calls abort() again) - must also be a no-op.
     }
 
     // Abort before any data, then destruct.
