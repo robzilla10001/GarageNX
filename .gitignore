@@ -53,3 +53,4 @@ export_hex.py
 *.tar.gz
 *.patch
 photorec.se2
+.gitignore
