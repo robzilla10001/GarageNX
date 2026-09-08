@@ -9,19 +9,20 @@ sources, and no code from incompatibly-licensed projects was copied
 
 ## A. Linked or vendored code (ships in the binary)
 
-| Project | Origin | Where used |
-|---|---|---|
-| libnx (switchbrew) | linked, devkitPro | entire `core/` platform layer |
-| SDL2, SDL2_ttf, SDL2_image | linked, dkp-pacman | renderer, input, fonts, icons |
-| nlohmann/json (Niels Lohmann, MIT; includes an Abseil-derived snippet) | vendored at `source/nlohmann/json.hpp` | config + language parsing |
-| zstd (Facebook) | linked | NCZ/NSZ decompression (`install/ncz.cpp`) |
-| libusbhsfs (DarkMatterCore) | linked | USB mass storage (`core/usb_mount.*`) |
-| libnfs (sahlberg, pinned @20b39fd) | cross-compiled with a Switch patch | NFS client (`services/net_surface.cpp`) |
-| libsmb2 (sahlberg, v4.0.0) | cross-compiled with a Switch patch | SMB client (`services/net_surface.cpp`) |
-| nxmp-portlibs (proconsule) | patch/tarball source for libnfs + libsmb2 | `tools/build-net-portlibs.sh` |
+| Project | Origin | Where used | License / Distributable or Usable? |  
+|---|---|---|---|
+| libnx (switchbrew) | linked, devkitPro | entire `core/` platform layer | ISC License ✅ |  
+| SDL2, SDL2_ttf, SDL2_image | linked, dkp-pacman | renderer, input, fonts, icons | [Unknown](https://github.com/dhustkoder/SDL2?tab=License-1-ov-file) ✅ |  
+| nlohmann/json (Niels Lohmann, MIT; includes an Abseil-derived snippet) | vendored at `source/nlohmann/json.hpp` | config + language parsing | MIT License ✅ |  
+| zstd (Facebook) | linked | NCZ/NSZ decompression (`install/ncz.cpp`) | BSD License ✅ |  
+| libusbhsfs (DarkMatterCore) | linked | USB mass storage (`core/usb_mount.*`) | GNU GPL v2.0 ✅ |  
+| libnfs (sahlberg, pinned @20b39fd) | cross-compiled with a Switch patch | NFS client (`services/net_surface.cpp`) | GNU GPL v3.0 ✅ |  
+| libsmb2 (sahlberg, v4.0.0) | cross-compiled with a Switch patch | SMB client (`services/net_surface.cpp`) | GNU GPL v3.0 ✅ |  
+| nxmp-portlibs (proconsule) | patch/tarball source for libnfs + libsmb2 | `tools/build-net-portlibs.sh` | GNU GPL v3.0 ✅ |  
 
 The libnfs/libsmb2 patches and the build script live in this repository
 (`tools/build-net-portlibs.sh`); neither library is available in dkp-pacman.
+All licenses can be found in /licenses.
 
 ## B. Bundled assets
 
@@ -34,7 +35,7 @@ See `assets/fonts/README.txt`.
 
 1. ITotalJustice / Reset-Parental-Controls-NX - pctl raw-IPC command 1043 for
    parental-controls deletion, plus probes 1032/1031
-   (`screens/tools_screen.cpp`); hardware-confirmed.
+   (`screens/tools_screen.cpp`).
 2. ITotalJustice XCI installer - NS application-record sequence: cmd 27
    delete, cmd 16 push, HipcMapAlias buffer, record type 3 = Installed
    (`install/installer.cpp`, `tools/ns_probe/ns_probe.cpp`).
@@ -53,20 +54,17 @@ See `assets/fonts/README.txt`.
 8. Hekate - display-parity comparisons: eMMC CID readout, board model,
    battery design-capacity quirks (`core/storage.cpp`, `core/battery.cpp`,
    `screens/system_info.cpp`).
-9. DBI (author duckbill) - the clean-room replacement target itself:
-   install-target presentation, split-NSP dump layout compatibility,
-   activity-stats source documentation. See the README for the full rationale.
-10. Tinfoil - split-NSP directory layout (`install/nsp_reader.cpp`,
+9. Tinfoil - split-NSP directory layout (`install/nsp_reader.cpp`,
     `core/dump.cpp`), ticketless NSZ approach (`install/ncz.cpp`).
-11. Goldleaf - lead for accountextDeleteUser raw IPC (dropped feature,
+10. Goldleaf - lead for accountextDeleteUser raw IPC (dropped feature,
     `docs/ARCHITECTURE.md` section 7); USB-library peer.
-12. Awoo - USB-library peer (`core/usb_mount.hpp`).
-13. NX-Activity-Log - reference for what accurate play stats require (the
+11. Awoo - USB-library peer (`core/usb_mount.hpp`).
+12. NX-Activity-Log - reference for what accurate play stats require (the
     per-user play-log archive 80000000000000F0) (`core/activity.cpp`).
-14. libhaze (Atmosphere) - explicitly NOT used: GPLv2-only vs this project's
+13. libhaze (Atmosphere) - explicitly NOT used: GPLv2-only vs this project's
     AGPLv3; the documented reason MTP is clean-room
     (`services/mtp_server.hpp`).
-15. Atmosphere / exosphere - config items 65000-65010 for CFW detection,
+14. Atmosphere / exosphere - config items 65000-65010 for CFW detection,
     erpt_reports path (`core/atmosphere.cpp`).
 
 ## D. Documentation, specifications, and data sources (no code)
@@ -82,6 +80,4 @@ See `assets/fonts/README.txt`.
 
 ## License note
 
-GarageNX is AGPLv3. Verify each section-A component's license before
-redistribution; Inter and DejaVu are freely redistributable per their
-licenses (section B).
+GarageNX is AGPLv3. License is available in full at ./LICENSE and /licenses/GNU AGPLv3.txt
