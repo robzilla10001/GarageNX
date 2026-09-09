@@ -36,7 +36,6 @@ enum class MenuItem {
     BrowseGamecard,
     Gamecard,
     BrowseNetwork,
-    Homebrew,
     Tickets,
     Saves,
 

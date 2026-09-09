@@ -17,7 +17,6 @@
     "install_from_cartridge": "Install from Cartridge",
     "browse_network": "Browse Network",
     "installed_titles": "Installed Titles",
-    "homebrew": "Homebrew",
     "saves": "Save Data",
     "mtp": "USB-MTP Connection",
     "ftp": "FTP Server",
@@ -123,17 +122,6 @@
     "confirm_reset_req": "Reset required version for {name}?",
     "dumping": "Dumping…",
     "dump_done": "Dump complete."
-  },
-  "homebrew_list": {
-    "title": "Homebrew",
-    "scanning": "Scanning…",
-    "empty": "No NRO files found in sdmc:/switch/",
-    "action_launch": "Launch",
-    "action_install": "Install Forwarder",
-    "action_delete": "Delete",
-    "install_dest": "Install to: sdmc:/switch/{name}/{name}.nro",
-    "installing": "Installing…",
-    "install_done": "Forwarder installed."
   },
   "tools": {
     "title": "Tools",

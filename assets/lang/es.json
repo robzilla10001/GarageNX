@@ -17,7 +17,6 @@
     "install_from_cartridge": "Instalar desde cartucho",
     "browse_network": "Explorar red",
     "installed_titles": "Títulos instalados",
-    "homebrew": "Homebrew",
     "saves": "Datos de guardado",
     "mtp": "Conexión USB-MTP",
     "ftp": "Servidor FTP",
@@ -123,17 +122,6 @@
     "confirm_reset_req": "¿Restablecer la versión requerida de {name}?",
     "dumping": "Volcando…",
     "dump_done": "Volcado completo."
-  },
-  "homebrew_list": {
-    "title": "Homebrew",
-    "scanning": "Escaneando…",
-    "empty": "No se encontraron archivos NRO en sdmc:/switch/",
-    "action_launch": "Iniciar",
-    "action_install": "Instalar reenviador",
-    "action_delete": "Eliminar",
-    "install_dest": "Instalar en: sdmc:/switch/{name}/{name}.nro",
-    "installing": "Instalando…",
-    "install_done": "Reenviador instalado."
   },
   "tools": {
     "title": "Herramientas",

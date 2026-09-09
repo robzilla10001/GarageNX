@@ -60,7 +60,6 @@ const std::vector<MenuEntry>& menu_browse_items() {
         { MenuItem::BrowseUSB,             "main_menu.browse_usb"              },
         { MenuItem::BrowseNetwork,         "main_menu.browse_network"          },
         { MenuItem::BrowseGamecard,        "main_menu.browse_gamecard"         },
-        { MenuItem::Homebrew,              "main_menu.homebrew"                },
         { MenuItem::Saves,                 "main_menu.saves"                   },
         // BrowseUSB is listed above now that libusbhsfs backs it; BrowseNetwork is
         // listed now that it opens a real chooser (services/net_surface). With no
@@ -262,10 +261,6 @@ std::unique_ptr<Screen> menu_activate(MenuItem id, bool& pop) {
             if (!Fs::is_directory("gamecard:/")) return nullptr;
             return std::unique_ptr<Screen>(
                 new FileBrowserScreen("gamecard:/", Lang::t("main_menu.browse_gamecard")));
-
-        case MenuItem::Homebrew:
-            return std::unique_ptr<Screen>(
-                new FileBrowserScreen("sdmc:/switch/", Lang::t("main_menu.homebrew")));
 
         case MenuItem::Saves:
             return std::unique_ptr<Screen>(new SaveManagerScreen());

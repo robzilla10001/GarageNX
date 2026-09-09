@@ -26,9 +26,8 @@ GarageNX is built to be the opposite of a closed, mysterious tool. It is:
 Planned and in-progress functionality includes:
 
 - **File browser** - ranger-style three-column navigation with split-pane copy/move, text and hex viewers (paged for large files), and archive peeking (NSP/XCI content listing).
-- **Network browser** - navigate HTTP(S), FTP, and GitHub repositories using the same browser interface.
+- **Network browser** - navigate SMB/NFS shares using the same browser interface.
 - **Title management** - enumerate installed titles; uninstall, move between SD and NAND, reset version requirements, edit metadata, dump, and repack.
-- **Homebrew management** - recursively scan and launch NRO files; forwarder generation.
 - **Maintenance tools** - clean orphaned records, old updates, placeholders, unused tickets, firmware dumping, version manifests.
 - **System information** - comprehensive firmware, CFW, hardware, battery, and activity reporting.
 - **Connectivity** - USB-MTP, FTP server, and HTTP server with QR-code network sharing.
