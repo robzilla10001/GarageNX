@@ -16,8 +16,7 @@ Read `docs/ARCHITECTURE.md`. It captures the module layout, the invariants that 
 ## Ground rules
 
 1. **Stability first.** This tool has destructive capabilities. Every destructive operation must have a clear confirmation modal. Never load an unbounded amount of data into memory - page it.
-2. **No hardcoded colors or strings.** Colors come from `Theme::Token`. User-facing text comes from `Lang::t()`. Add new keys to `assets/lang/en.json`.
-3. **`en.json` stays complete.** It is the canonical translation template. Never commit a user-facing string without adding its English key.
+2. **No hardcoded colors or strings.** Colors come from `Theme::Token`. User-facing text comes from `Lang::t()`. Add new keys to `assets/lang/en.json`.3. **`en.json` stays complete.** It is the canonical translation template. Never commit a user-facing string without adding its English key.
 4. **Keep the UI thread responsive.** Long operations (copy, install, dump, network) run on background workers, not the render loop.
 5. **Match the existing style.** Clear names, section-commented files, no clever one-liners where a readable block will do.
 
@@ -26,8 +25,8 @@ Read `docs/ARCHITECTURE.md`. It captures the module layout, the invariants that 
 1. Copy `assets/lang/en.json` to a new file named with the language code (e.g. `es.json`, `pt-br.json`, `de.json`).
 2. Update `meta.language` and `meta.author`.
 3. Translate the values, not the keys. Leave the `meta.notes` and any key you're unsure about - untranslated keys fall back to English automatically.
-4. Test on-device by dropping the file in `sdmc:/switch/GarageNX/lang/`.
-5. Open a PR adding the file to `assets/lang/`.
+4. Test on-device by dropping the file in `sdmc:/switch/GarageNX/lang/` - the only location language files are read from.
+5. Open a PR adding the file to `assets/lang/` (repository copy of the template; not embedded into the app).
 
 ## Building and testing
 

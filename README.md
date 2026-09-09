@@ -83,7 +83,7 @@ source/
   lang/        Localization loader
 assets/
   fonts/       Inter TTF (bundled)
-  lang/        Language files (en.json is the canonical template)
+  lang/        Language file templates (shipped to the SD card, not embedded)
   icons/       Application icon (bundled)
 ```
 
@@ -93,14 +93,22 @@ The architecture reference lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.m
 
 ## Localization
 
-`assets/lang/en.json` is the translation template - it always contains every key. To add a language:
+Language files are always external: GarageNX reads them only from
+`sdmc:/switch/GarageNX/lang/` on the SD card. Nothing is embedded in the NRO,
+so translating and testing never requires a rebuild. `en.json` in that folder
+is required - it is the template and the fallback for every missing key.
 
-1. Copy `en.json`, rename it (e.g. `es.json`, `pt-br.json`).
+To add a language:
+
+1. Copy `en.json` from `assets/lang/` in this repository, rename it (e.g. `es.json`, `pt-br.json`).
 2. Update the `meta.language` and `meta.author` fields.
 3. Translate the values. Any key you leave out falls back to English automatically.
 4. Drop the file into `sdmc:/switch/GarageNX/lang/` on your device.
+5. Select it in System > Settings > Appearance > Language; the change applies immediately.
 
-GarageNX will detect it on next launch and offer to switch. Contributions of translation files back to this repository are very welcome.
+When distributing a build, copy the contents of `assets/lang/` to
+`sdmc:/switch/GarageNX/lang/` alongside the NRO. Contributions of translation
+files back to this repository are very welcome.
 
 ---
 

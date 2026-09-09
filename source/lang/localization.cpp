@@ -18,8 +18,19 @@ static std::map<std::string, std::string> s_strings;      // active language
 static std::map<std::string, std::string> s_fallback;     // en.json baseline
 static std::string                         s_active_code = "en";
 static std::vector<LanguageInfo>           s_available;
-static std::string                         s_baseline_dir;  // bundled assets (romfs)
-static std::string                         s_user_dir;      // user drop-in (sdmc)
+static std::string                         s_lang_dir;      // sdmc:/switch/GarageNX/lang
+
+// One-line diagnostics to sdmc:/switch/GarageNX/logs/lang.log. SDL_Log is
+// nxlink-only on hardware; without the file copy a scan/load failure leaves no
+// evidence at all.
+static void lang_log(const std::string& line) {
+    FILE* f = ::fopen("sdmc:/switch/GarageNX/logs/lang.log", "a");
+    if (f) {
+        ::fprintf(f, "%s\n", line.c_str());
+        ::fclose(f);
+    }
+    SDL_Log("%s", line.c_str());
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -42,7 +53,7 @@ static bool load_file(const std::string& path,
                        LanguageInfo* info_out = nullptr) {
     std::ifstream file(path);
     if (!file.is_open()) {
-        SDL_Log("Lang::load_file - cannot open %s", path.c_str());
+        lang_log("Lang::load_file - cannot open " + path);
         return false;
     }
 
@@ -59,7 +70,7 @@ static bool load_file(const std::string& path,
         flatten(j, out);
         return true;
     } catch (const std::exception& e) {
-        SDL_Log("Lang::load_file - parse error in %s: %s", path.c_str(), e.what());
+        lang_log("Lang::load_file - parse error in " + path + ": " + e.what());
         return false;
     }
 }
@@ -81,29 +92,40 @@ static std::string ext_of(const std::string& filename) {
     return filename.substr(dot);
 }
 
-void set_baseline_dir(const std::string& dir) {
-    s_baseline_dir = dir;
-    // Load the permanent English fallback from the baseline immediately.
-    s_fallback.clear();
-    std::string en_path = dir + "/en.json";
-    if (!load_file(en_path, s_fallback)) {
-        SDL_Log("Lang::set_baseline_dir - WARNING: could not load %s", en_path.c_str());
-    } else {
-        SDL_Log("Lang::set_baseline_dir - baseline loaded from %s (%zu keys)",
-                en_path.c_str(), s_fallback.size());
-    }
-    // Default active strings to the baseline so the very first frame has text
-    // even before load() is called.
-    s_strings     = s_fallback;
-    s_active_code = "en";
+void set_lang_dir(const std::string& dir) {
+    s_lang_dir = dir;
+    lang_log("Lang::set_lang_dir - language directory: " + dir);
 }
 
-// Scan a single directory for *.json, appending to `out`. De-dupes by code
-// (a language already present is not added again - user dir is scanned first
-// so user versions take precedence in the listing).
+// en.json is the permanent fallback and the source of every key. It lives in
+// the same directory as every other language file; loading is deferred to
+// first use. Attempted once - a retry on every t() call would hammer the SD
+// card and flood the log when the file is missing.
+static void ensure_en_fallback() {
+    static bool s_fallback_tried = false;
+    if (s_fallback_tried || s_lang_dir.empty()) return;
+    s_fallback_tried = true;
+
+    std::string en_path = s_lang_dir + "/en.json";
+    if (!load_file(en_path, s_fallback)) {
+        lang_log("Lang::ensure_en_fallback - FAILED to load " + en_path);
+        return;
+    }
+    lang_log("Lang::ensure_en_fallback - loaded " + en_path + " (" +
+             std::to_string(s_fallback.size()) + " keys)");
+    // Default active strings to the fallback so the very first frame has text
+    // even before load() is called.
+    s_strings = s_fallback;
+}
+
+// Scan the language directory for *.json, appending to `out`. De-dupes by
+// code, so en.json found here never double-lists the fallback already loaded.
 static void scan_dir(const std::string& dir, std::vector<LanguageInfo>& out) {
     DIR* d = opendir(dir.c_str());
-    if (!d) return;
+    if (!d) {
+        lang_log("Lang::scan - cannot open " + dir);
+        return;
+    }
     struct dirent* ent;
     while ((ent = readdir(d)) != nullptr) {
         std::string name = ent->d_name;
@@ -118,20 +140,24 @@ static void scan_dir(const std::string& dir, std::vector<LanguageInfo>& out) {
         LanguageInfo info;
         info.code = stem;
         std::map<std::string, std::string> tmp;
-        load_file(dir + "/" + name, tmp, &info);
-        out.push_back(info);
+        if (load_file(dir + "/" + name, tmp, &info)) {
+            lang_log("Lang::scan - found language '" + stem + "' (" +
+                     info.name + ") at " + dir + "/" + name);
+            out.push_back(info);
+        } else {
+            lang_log("Lang::scan - SKIPPED unparsable " + dir + "/" + name);
+        }
     }
     closedir(d);
 }
 
-ScanResult scan(const std::string& user_dir,
+ScanResult scan(const std::string& lang_dir,
                 const std::vector<std::string>& known_codes) {
-    s_user_dir = user_dir;
+    s_lang_dir = lang_dir;
     ScanResult result;
 
-    // User directory first (takes precedence), then baseline.
-    scan_dir(user_dir,       result.all);
-    scan_dir(s_baseline_dir, result.all);
+    ensure_en_fallback();
+    scan_dir(lang_dir, result.all);
 
     for (auto& li : result.all) {
         bool is_known = (li.code == "en");
@@ -140,36 +166,35 @@ ScanResult scan(const std::string& user_dir,
     }
 
     s_available = result.all;
+    lang_log("Lang::scan - " + std::to_string(result.all.size()) +
+             " language(s) available in " + lang_dir);
     return result;
 }
 
 bool load(const std::string& code) {
-    // English is always available via the baseline fallback that
-    // set_baseline_dir() loaded. Nothing more to do.
+    ensure_en_fallback();
+
     if (code == "en") {
         s_strings     = s_fallback;
         s_active_code = "en";
-        SDL_Log("Lang::load - active language: English (en)");
+        lang_log("Lang::load - active language: English (en)");
         return true;
     }
 
-    // Try the user dir first, then the baseline dir, for "<code>.json".
     std::map<std::string, std::string> loaded;
     bool found = false;
-
-    if (!s_user_dir.empty())
-        found = load_file(s_user_dir + "/" + code + ".json", loaded);
-    if (!found && !s_baseline_dir.empty())
-        found = load_file(s_baseline_dir + "/" + code + ".json", loaded);
+    if (!s_lang_dir.empty())
+        found = load_file(s_lang_dir + "/" + code + ".json", loaded);
 
     if (!found) {
-        SDL_Log("Lang::load - '%s' not found; staying on English", code.c_str());
+        lang_log("Lang::load - '" + code + "' not found in " + s_lang_dir +
+                 "; staying on English");
         s_strings     = s_fallback;
         s_active_code = "en";
         return false;
     }
 
-    // Backfill any missing keys from the English baseline so partial
+    // Backfill any missing keys from the English fallback so partial
     // translations never show blank strings.
     for (auto& [key, val] : s_fallback) {
         if (loaded.find(key) == loaded.end()) loaded[key] = val;
@@ -177,13 +202,15 @@ bool load(const std::string& code) {
 
     s_strings     = std::move(loaded);
     s_active_code = code;
-    SDL_Log("Lang::load - active language: %s", code.c_str());
+    lang_log("Lang::load - active language: " + code);
     return true;
 }
 
 // ─── Access ───────────────────────────────────────────────────────────────────
 
 const std::string& t(const std::string& key) {
+    ensure_en_fallback();
+
     auto it = s_strings.find(key);
     if (it != s_strings.end()) return it->second;
 

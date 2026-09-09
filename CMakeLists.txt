@@ -298,23 +298,21 @@ if(PLATFORM STREQUAL "Switch")
     set(ICON_PATH   "${CMAKE_SOURCE_DIR}/assets/icons/icon.jpg")
     set(NACP_PATH   "${CMAKE_BINARY_DIR}/GarageNX.nacp")
 
-    # RomFS: everything the app loads at runtime (fonts, lang) must be embedded
+    # RomFS: everything the app loads at runtime (fonts, bg) must be embedded
     # into the NRO so it's available on hardware under romfs:/.
-    # We stage a clean romfs dir (assets minus the icon, which is baked separately).
+    # Language files are deliberately NOT embedded: they live only in
+    # sdmc:/switch/GarageNX/lang so translations never require a rebuild.
     set(ROMFS_DIR "${CMAKE_BINARY_DIR}/romfs")
 
-    # Stage romfs contents: fonts + lang only (not the icon — that's a separate flag)
+    # Stage romfs contents: fonts + bg only (the icon is a separate flag)
     add_custom_command(TARGET GarageNX POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "${ROMFS_DIR}/fonts"
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${ROMFS_DIR}/lang"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${ROMFS_DIR}/bg"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/assets/fonts" "${ROMFS_DIR}/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_SOURCE_DIR}/assets/lang"  "${ROMFS_DIR}/lang"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/assets/bg"    "${ROMFS_DIR}/bg"
-        COMMENT "Staging RomFS (fonts, lang, bg)..."
+        COMMENT "Staging RomFS (fonts, bg)..."
     )
 
     # Build NACP (application metadata)

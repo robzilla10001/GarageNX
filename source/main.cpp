@@ -64,7 +64,6 @@ static const std::string ASSET_ROOT  = "./assets";
 
 static std::string config_path() { return ROOT_PATH + "/config.json"; }
 static std::string lang_dir()    { return ROOT_PATH + "/lang";        }
-static std::string asset_lang_dir() { return ASSET_ROOT + "/lang";    }
 
 // Create the app directory tree. Idempotent; mkdir does not create
 // intermediates, so build top-down.
@@ -191,12 +190,13 @@ static bool startup() {
     Input::set_repeat_interval(80);
 
     // ── Localization ──────────────────────────────────────────────────────────
-    Lang::set_baseline_dir(asset_lang_dir());   // bundled English fallback
+    // Language files live only on the SD card - sdmc:/switch/GarageNX/lang -
+    // so translations never require a rebuild. en.json there is required.
+    Lang::set_lang_dir(lang_dir());
 
     std::vector<std::string> known = { cfg.app.language };
     auto scan = Lang::scan(lang_dir(), known);
-
-    // TODO (Milestone 8): if scan.new_ones is non-empty, prompt language selection
+    (void)scan;   // first-run prompt is future work; scan also publishes available()
 
     Lang::load(cfg.app.language);
 

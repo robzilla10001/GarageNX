@@ -32,7 +32,7 @@ SDL2, zstd.
 GarageNX/
 ├── CMakeLists.txt              ← build definition (SOURCES list is manual, not a glob)
 ├── toolchain-switch.cmake      ← devkitPro Switch target
-├── assets/                     ← fonts (Inter), lang/en.json (canonical), icon
+├── assets/                     ← fonts (Inter), lang/ templates (shipped to SD), icon
 ├── source/
 │   ├── main.cpp                ← entry point, startup(), app loop
 │   ├── core/                   ← libnx system API wrappers
@@ -230,3 +230,5 @@ The scan/dry-run/hold-confirm flow is shared; statuses as of 2026-09-07:
    what is verified versus inferred.
 7. **Localization:** `assets/lang/en.json` is the canonical template and must
    always be complete; missing keys in other languages fall back to English.
+   Language files are read only from `sdmc:/switch/GarageNX/lang` - never
+   embedded in the NRO - so translations never require a rebuild.

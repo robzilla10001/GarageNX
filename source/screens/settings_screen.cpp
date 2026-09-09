@@ -12,6 +12,7 @@
 #include "ui/theme.hpp"
 
 #include <SDL2/SDL.h>
+#include <algorithm>
 
 namespace Settings {
 namespace {
@@ -352,13 +353,39 @@ std::unique_ptr<Screen> SettingsScreen::root() {
             Row r;
             r.kind  = Row::Kind::Choice;
             r.label = Lang::t("settings.language");
-            // Same int-index adaptation as the theme row. Only languages that
-            // actually ship a file are offered - listing a language with no
-            // translation would silently fall back to English and look broken.
-            r.choice_get = [] { return Config::get().app.language == "en" ? 0 : 0; };
-            r.choice_set = [](int) { Config::get_mutable().app.language = "en"; };
-            r.choice_values = { 0 };
-            r.choice_labels = { "English" };
+            // Built from the scan of sdmc:/switch/GarageNX/lang at screen open,
+            // so a language dropped into that folder appears with no rebuild.
+            // "en" stays first (it is the fallback); the rest are alphabetical.
+            std::vector<std::string> codes;
+            for (const auto& li : Lang::available()) codes.push_back(li.code);
+            if (codes.empty()) codes.push_back("en");
+            std::sort(codes.begin(), codes.end());
+            auto en = std::find(codes.begin(), codes.end(), "en");
+            if (en != codes.end()) std::rotate(codes.begin(), en, en + 1);
+
+            // Display names are proper names (English, Espanol ...) so they do
+            // not change with the active language.
+            r.choice_get = [codes] {
+                const std::string& cur = Config::get().app.language;
+                for (size_t i = 0; i < codes.size(); ++i)
+                    if (codes[i] == cur) return static_cast<int>(i);
+                return 0;
+            };
+            r.choice_set = [codes](int v) {
+                if (v < 0 || v >= static_cast<int>(codes.size())) return;
+                Config::get_mutable().app.language = codes[v];
+                // Applies immediately; screens re-read Lang::t() when re-entered,
+                // so the new language shows on back-navigation.
+                Lang::load(codes[v]);
+            };
+            for (int i = 0; i < static_cast<int>(codes.size()); ++i)
+                r.choice_values.push_back(i);
+            for (const auto& c : codes) {
+                std::string label = c;
+                for (const auto& li : Lang::available())
+                    if (li.code == c && !li.name.empty()) { label = li.name; break; }
+                r.choice_labels.push_back(label);
+            }
             return r;
         }(),
         toggle_row(Lang::t("settings.show_clock"), &Config::Behavior::show_clock),
