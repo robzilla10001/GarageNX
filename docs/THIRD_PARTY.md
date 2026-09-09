@@ -39,7 +39,7 @@ See `assets/fonts/README.txt`.
 2. ITotalJustice XCI installer - NS application-record sequence: cmd 27
    delete, cmd 16 push, HipcMapAlias buffer, record type 3 = Installed
    (`install/installer.cpp`, `tools/ns_probe/ns_probe.cpp`).
-3. Sphaira / yati - RegisterNcasAndPushRecord install flow including zeroed
+3. Sphaira - RegisterNcasAndPushRecord install flow including zeroed
    storage_id conventions (`install/installer.cpp`), NCZ
    decompressFuncInternal mirroring (`install/ncz.cpp`), app-exit behavior
    notes (`core/app_exit.hpp`).
