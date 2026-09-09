@@ -13,6 +13,7 @@
 
 #include <SDL2/SDL.h>
 #include <algorithm>
+#include <initializer_list>
 
 namespace Settings {
 namespace {
@@ -52,6 +53,24 @@ bool flush() {
 
 namespace {
 
+// ── Keyed labels ─────────────────────────────────────────────────────────────────
+// Rows keep their translation key next to the rendered text so rebuild_rows()
+// can re-translate after a language change made in the open Appearance picker;
+// without it, rows built before the switch keep the old language until the
+// screen is torn down and rebuilt.
+std::string tr(std::string& key_out, const char* key) {
+    key_out = key;
+    return Lang::t(key);
+}
+
+// Fill choice_labels from keys, keeping the key list and rendered labels in sync.
+void keyed_labels(SettingsScreen::Row& r, std::initializer_list<const char*> keys) {
+    for (const char* k : keys) {
+        r.choice_label_keys.push_back(k);
+        r.choice_labels.push_back(Lang::t(k));
+    }
+}
+
 // The ten surface toggles for one transport. Built from member pointers so all
 // three transports share one definition - the alternative is thirty lambdas that
 // disagree the first time a surface is added.
@@ -79,15 +98,17 @@ std::vector<SettingsScreen::Row> surface_rows(Config::Surfaces& s) {
     for (const auto& d : defs) {
         SettingsScreen::Row r;
         r.kind  = SettingsScreen::Row::Kind::Toggle;
-        r.label = Lang::t(d.lang_key);
+        r.label = tr(r.lang_key, d.lang_key);
         // Capturing &s is safe: it points into the process-lifetime config
         // singleton, not into anything this screen owns.
         r.get = [&s, f = d.field]() { return s.*f; };
         r.set = [&s, f = d.field](bool v) { s.*f = v; };
         if (d.confirm_on_enable) {
             r.confirm_on_enable = true;
-            r.confirm_title     = Lang::t("settings.nand_system_confirm_title");
-            r.confirm_body      = Lang::t("settings.nand_system_confirm_body");
+            r.confirm_title_key = "settings.nand_system_confirm_title";
+            r.confirm_body_key  = "settings.nand_system_confirm_body";
+            r.confirm_title     = Lang::t(r.confirm_title_key);
+            r.confirm_body      = Lang::t(r.confirm_body_key);
         }
         rows.push_back(std::move(r));
     }
@@ -97,43 +118,43 @@ std::vector<SettingsScreen::Row> surface_rows(Config::Surfaces& s) {
 // Compact builders. Settings rows are overwhelmingly "point at a config field",
 // so spelling that out longhand thirty times would bury the few rows that are
 // actually interesting (NAND System's confirmation, the clamped ports).
-SettingsScreen::Row toggle_row(std::string label, bool Config::Behavior::* f) {
+SettingsScreen::Row toggle_row(const char* key, bool Config::Behavior::* f) {
     SettingsScreen::Row r;
     r.kind  = SettingsScreen::Row::Kind::Toggle;
-    r.label = std::move(label);
+    r.label = tr(r.lang_key, key);
     r.get = [f] { return Config::get().behavior.*f; };
     r.set = [f](bool v) { Config::get_mutable().behavior.*f = v; };
     return r;
 }
 
-SettingsScreen::Row vis_row(std::string label, bool Config::Visibility::* f) {
+SettingsScreen::Row vis_row(const char* key, bool Config::Visibility::* f) {
     SettingsScreen::Row r;
     r.kind  = SettingsScreen::Row::Kind::Toggle;
-    r.label = std::move(label);
+    r.label = tr(r.lang_key, key);
     r.get = [f] { return Config::get().visibility.*f; };
     r.set = [f](bool v) { Config::get_mutable().visibility.*f = v; };
     return r;
 }
 
-SettingsScreen::Row text_row(std::string label,
+SettingsScreen::Row text_row(const char* key,
                              std::function<std::string()> get,
                              std::function<void(const std::string&)> set,
                              bool secret = false) {
     SettingsScreen::Row r;
     r.kind        = SettingsScreen::Row::Kind::Text;
-    r.label       = std::move(label);
+    r.label       = tr(r.lang_key, key);
     r.text_get    = std::move(get);
     r.text_set    = std::move(set);
     r.text_secret = secret;
     return r;
 }
 
-SettingsScreen::Row num_row(std::string label,
+SettingsScreen::Row num_row(const char* key,
                             std::function<int()> get, std::function<void(int)> set,
                             int lo, int hi, std::string suffix = "") {
     SettingsScreen::Row r;
     r.kind       = SettingsScreen::Row::Kind::Number;
-    r.label      = std::move(label);
+    r.label      = tr(r.lang_key, key);
     r.num_get    = std::move(get);
     r.num_set    = std::move(set);
     r.num_min    = lo;
@@ -142,11 +163,11 @@ SettingsScreen::Row num_row(std::string label,
     return r;
 }
 
-SettingsScreen::Row submenu_row(std::string label,
+SettingsScreen::Row submenu_row(const char* key,
                                 std::function<std::unique_ptr<Screen>()> open) {
     SettingsScreen::Row r;
     r.kind  = SettingsScreen::Row::Kind::Submenu;
-    r.label = std::move(label);
+    r.label = tr(r.lang_key, key);
     r.open  = std::move(open);
     return r;
 }
@@ -155,17 +176,17 @@ SettingsScreen::Row submenu_row(std::string label,
 
 std::unique_ptr<Screen> SettingsScreen::root() {
     std::vector<Row> storages = {
-        submenu_row(Lang::t("settings.transport_mtp"), [] {
+        submenu_row("settings.transport_mtp", [] {
             return std::unique_ptr<Screen>(new SettingsScreen(
                 Lang::t("settings.transport_mtp"),
                 surface_rows(Config::get_mutable().mtp.surfaces)));
         }),
-        submenu_row(Lang::t("settings.transport_ftp"), [] {
+        submenu_row("settings.transport_ftp", [] {
             return std::unique_ptr<Screen>(new SettingsScreen(
                 Lang::t("settings.transport_ftp"),
                 surface_rows(Config::get_mutable().ftp.surfaces)));
         }),
-        submenu_row(Lang::t("settings.transport_http"), [] {
+        submenu_row("settings.transport_http", [] {
             return std::unique_ptr<Screen>(new SettingsScreen(
                 Lang::t("settings.transport_http"),
                 surface_rows(Config::get_mutable().http.surfaces)));
@@ -173,7 +194,7 @@ std::unique_ptr<Screen> SettingsScreen::root() {
     };
 
     std::vector<Row> rows;
-    rows.push_back(submenu_row(Lang::t("settings.section_storages"),
+    rows.push_back(submenu_row("settings.section_storages",
                                [storages] {
         return std::unique_ptr<Screen>(new SettingsScreen(
             Lang::t("settings.section_storages"), storages));
@@ -185,21 +206,19 @@ std::unique_ptr<Screen> SettingsScreen::root() {
     {
         Row r;
         r.kind          = Row::Kind::Choice;
-        r.label         = Lang::t("settings.auto_backup");
+        r.label         = tr(r.lang_key, "settings.auto_backup");
         r.choice_get    = [] { return Config::get().behavior.save_auto_backup_days; };
         r.choice_set    = [](int v) {
             Config::get_mutable().behavior.save_auto_backup_days = v;
         };
         r.choice_values = { 0, 1, 3, 7, 14, 30 };
-        r.choice_labels = {
-            Lang::t("common.off"),
-            Lang::t("settings.days_1"),  Lang::t("settings.days_3"),
-            Lang::t("settings.days_7"),  Lang::t("settings.days_14"),
-            Lang::t("settings.days_30"),
-        };
+        keyed_labels(r, { "common.off",
+                          "settings.days_1",  "settings.days_3",
+                          "settings.days_7",  "settings.days_14",
+                          "settings.days_30" });
         saves.push_back(std::move(r));
     }
-    rows.push_back(submenu_row(Lang::t("settings.section_saves"), [saves] {
+    rows.push_back(submenu_row("settings.section_saves", [saves] {
         return std::unique_ptr<Screen>(new SettingsScreen(
             Lang::t("settings.section_saves"), saves));
     }));
@@ -209,24 +228,24 @@ std::unique_ptr<Screen> SettingsScreen::root() {
     // takes effect the NEXT time the server is started, not on one already
     // running. Stopping and restarting from the FTP page applies it.
     std::vector<Row> ftp = {
-        num_row(Lang::t("settings.ftp_port"),
+        num_row("settings.ftp_port",
                 [] { return (int)Config::get().ftp.server_port; },
                 [](int v) { Config::get_mutable().ftp.server_port = (uint16_t)v; },
                 1, 65535),
         [] { Row r; r.kind = Row::Kind::Toggle;
-             r.label = Lang::t("settings.ftp_anonymous");
+             r.label = tr(r.lang_key, "settings.ftp_anonymous");
              r.get = [] { return Config::get().ftp.allow_anonymous; };
              r.set = [](bool v) { Config::get_mutable().ftp.allow_anonymous = v; };
              return r; }(),
-        text_row(Lang::t("settings.ftp_user"),
+        text_row("settings.ftp_user",
                  [] { return Config::get().ftp.login_user; },
                  [](const std::string& v) { Config::get_mutable().ftp.login_user = v; }),
-        text_row(Lang::t("settings.ftp_pass"),
+        text_row("settings.ftp_pass",
                  [] { return Config::get().ftp.login_pass; },
                  [](const std::string& v) { Config::get_mutable().ftp.login_pass = v; },
                  /*secret=*/true),
     };
-    rows.push_back(submenu_row(Lang::t("settings.section_ftp"), [ftp] {
+    rows.push_back(submenu_row("settings.section_ftp", [ftp] {
         return std::unique_ptr<Screen>(new SettingsScreen(
             Lang::t("settings.section_ftp"), ftp));
     }));
@@ -234,46 +253,46 @@ std::unique_ptr<Screen> SettingsScreen::root() {
     // ── Access point ────────────────────────────────────────────────────────
     std::vector<Row> ap = {
         [] { Row r; r.kind = Row::Kind::Toggle;
-             r.label = Lang::t("settings.ap_enable");
+             r.label = tr(r.lang_key, "settings.ap_enable");
              r.get = [] { return Config::get().ftp.start_access_point; };
              r.set = [](bool v) { Config::get_mutable().ftp.start_access_point = v; };
              return r; }(),
-        text_row(Lang::t("settings.ap_ssid"),
+        text_row("settings.ap_ssid",
                  [] { return Config::get().ftp.ssid; },
                  [](const std::string& v) { Config::get_mutable().ftp.ssid = v; }),
-        text_row(Lang::t("settings.ap_password"),
+        text_row("settings.ap_password",
                  [] { return Config::get().ftp.password; },
                  [](const std::string& v) { Config::get_mutable().ftp.password = v; },
                  /*secret=*/true),
         [] { Row r; r.kind = Row::Kind::Toggle;
-             r.label = Lang::t("settings.ap_5ghz");
+             r.label = tr(r.lang_key, "settings.ap_5ghz");
              r.get = [] { return Config::get().ftp.use_5ghz; };
              r.set = [](bool v) { Config::get_mutable().ftp.use_5ghz = v; };
              return r; }(),
         [] { Row r; r.kind = Row::Kind::Toggle;
-             r.label = Lang::t("settings.ap_hidden");
+             r.label = tr(r.lang_key, "settings.ap_hidden");
              r.get = [] { return Config::get().ftp.hidden_ssid; };
              r.set = [](bool v) { Config::get_mutable().ftp.hidden_ssid = v; };
              return r; }(),
     };
-    rows.push_back(submenu_row(Lang::t("settings.section_ap"), [ap] {
+    rows.push_back(submenu_row("settings.section_ap", [ap] {
         return std::unique_ptr<Screen>(new SettingsScreen(
             Lang::t("settings.section_ap"), ap));
     }));
 
     // ── HTTP server ─────────────────────────────────────────────────────────
     std::vector<Row> http = {
-        num_row(Lang::t("settings.http_port"),
+        num_row("settings.http_port",
                 [] { return (int)Config::get().http.server_port; },
                 [](int v) { Config::get_mutable().http.server_port = (uint16_t)v; },
                 1, 65535),
         [] { Row r; r.kind = Row::Kind::Toggle;
-             r.label = Lang::t("settings.http_upload");
+             r.label = tr(r.lang_key, "settings.http_upload");
              r.get = [] { return Config::get().http.allow_upload; };
              r.set = [](bool v) { Config::get_mutable().http.allow_upload = v; };
              return r; }(),
     };
-    rows.push_back(submenu_row(Lang::t("settings.section_http"), [http] {
+    rows.push_back(submenu_row("settings.section_http", [http] {
         return std::unique_ptr<Screen>(new SettingsScreen(
             Lang::t("settings.section_http"), http));
     }));
@@ -288,7 +307,7 @@ std::unique_ptr<Screen> SettingsScreen::root() {
         [] {
             Row r;
             r.kind  = Row::Kind::Choice;
-            r.label = Lang::t("settings.date_format");
+            r.label = tr(r.lang_key, "settings.date_format");
             // Stored as a 3-letter order (DMY/MDY/YMD); shown as the familiar
             // slash form. datetime.cpp already reads behavior.date_format for the
             // clock + log names, so this takes effect immediately.
@@ -304,22 +323,22 @@ std::unique_ptr<Screen> SettingsScreen::root() {
             r.choice_labels = { "DD/MM/YYYY", "MM/DD/YYYY", "YYYY/MM/DD" };
             return r;
         }(),
-        toggle_row(Lang::t("settings.button_repeat"),
+        toggle_row("settings.button_repeat",
                    &Config::Behavior::button_repeat_on_hold),
-        toggle_row(Lang::t("settings.action_logging"),
+        toggle_row("settings.action_logging",
                    &Config::Behavior::action_logging),
-        toggle_row(Lang::t("settings.verify_hash_on_install"),
+        toggle_row("settings.verify_hash_on_install",
                    &Config::Behavior::verify_hash_on_install),
-        num_row(Lang::t("settings.screen_dim_seconds"),
+        num_row("settings.screen_dim_seconds",
                 [] { return Config::get().behavior.screen_dim_seconds; },
                 [](int v) { Config::get_mutable().behavior.screen_dim_seconds = v; },
                 0, 600, " s"),
-        num_row(Lang::t("settings.screen_dim_seconds_net"),
+        num_row("settings.screen_dim_seconds_net",
                 [] { return Config::get().behavior.screen_dim_seconds_net; },
                 [](int v) { Config::get_mutable().behavior.screen_dim_seconds_net = v; },
                 0, 600, " s"),
     };
-    rows.push_back(submenu_row(Lang::t("settings.section_behavior"), [behav] {
+    rows.push_back(submenu_row("settings.section_behavior", [behav] {
         return std::unique_ptr<Screen>(new SettingsScreen(
             Lang::t("settings.section_behavior"), behav));
     }));
@@ -329,7 +348,7 @@ std::unique_ptr<Screen> SettingsScreen::root() {
         [] {
             Row r;
             r.kind  = Row::Kind::Choice;
-            r.label = Lang::t("settings.theme");
+            r.label = tr(r.lang_key, "settings.theme");
             // Theme is a std::string in config ("dark"/"light"), but Choice is
             // int-valued, so map through the index. Keeping Choice int-valued and
             // adapting here is less machinery than a second string-valued kind for
@@ -345,14 +364,13 @@ std::unique_ptr<Screen> SettingsScreen::root() {
                 Theme::set(v == 1 ? Theme::Variant::Light : Theme::Variant::Dark);
             };
             r.choice_values = { 0, 1 };
-            r.choice_labels = { Lang::t("settings.theme_dark"),
-                                Lang::t("settings.theme_light") };
+            keyed_labels(r, { "settings.theme_dark", "settings.theme_light" });
             return r;
         }(),
         [] {
             Row r;
             r.kind  = Row::Kind::Choice;
-            r.label = Lang::t("settings.language");
+            r.label = tr(r.lang_key, "settings.language");
             // Built from the scan of sdmc:/switch/GarageNX/lang at screen open,
             // so a language dropped into that folder appears with no rebuild.
             // "en" stays first (it is the fallback); the rest are alphabetical.
@@ -388,72 +406,72 @@ std::unique_ptr<Screen> SettingsScreen::root() {
             }
             return r;
         }(),
-        toggle_row(Lang::t("settings.show_clock"), &Config::Behavior::show_clock),
-        toggle_row(Lang::t("settings.show_seconds"), &Config::Behavior::show_seconds),
-        toggle_row(Lang::t("settings.time_24h"), &Config::Behavior::time_24h),
+        toggle_row("settings.show_clock", &Config::Behavior::show_clock),
+        toggle_row("settings.show_seconds", &Config::Behavior::show_seconds),
+        toggle_row("settings.time_24h", &Config::Behavior::time_24h),
     };
-    rows.push_back(submenu_row(Lang::t("settings.section_appearance"), [appear] {
+    rows.push_back(submenu_row("settings.section_appearance", [appear] {
         return std::unique_ptr<Screen>(new SettingsScreen(
             Lang::t("settings.section_appearance"), appear));
     }));
 
     // ── Paths ───────────────────────────────────────────────────────────────
     std::vector<Row> paths = {
-        text_row(Lang::t("settings.save_backup_path"),
+        text_row("settings.save_backup_path",
                  [] { return Config::get().paths.save_backup; },
                  [](const std::string& v) { Config::get_mutable().paths.save_backup = v; }),
-        text_row(Lang::t("settings.log_path"),
+        text_row("settings.log_path",
                  [] { return Config::get().paths.log_folder; },
                  [](const std::string& v) { Config::get_mutable().paths.log_folder = v; }),
-        text_row(Lang::t("settings.dump_path"),
+        text_row("settings.dump_path",
                  [] { return Config::get().paths.dump_folder; },
                  [](const std::string& v) { Config::get_mutable().paths.dump_folder = v; }),
     };
-    rows.push_back(submenu_row(Lang::t("settings.section_paths"), [paths] {
+    rows.push_back(submenu_row("settings.section_paths", [paths] {
         return std::unique_ptr<Screen>(new SettingsScreen(
             Lang::t("settings.section_paths"), paths));
     }));
 
     // ── Menu visibility ─────────────────────────────────────────────────────
     std::vector<Row> vis = {
-        vis_row(Lang::t("settings.vis_install_cartridge"),
+        vis_row("settings.vis_install_cartridge",
                 &Config::Visibility::install_from_cartridge),
-        vis_row(Lang::t("settings.vis_installed_games"),
+        vis_row("settings.vis_installed_games",
                 &Config::Visibility::view_installed_games),
-        vis_row(Lang::t("settings.vis_backup_saves"), &Config::Visibility::backup_saves),
-        vis_row(Lang::t("settings.vis_browse_sd"),    &Config::Visibility::browse_sd),
-        vis_row(Lang::t("settings.vis_browse_user"),
+        vis_row("settings.vis_backup_saves", &Config::Visibility::backup_saves),
+        vis_row("settings.vis_browse_sd",    &Config::Visibility::browse_sd),
+        vis_row("settings.vis_browse_user",
                 &Config::Visibility::browse_user_partition),
-        vis_row(Lang::t("settings.vis_browse_system"),
+        vis_row("settings.vis_browse_system",
                 &Config::Visibility::browse_system_partition),
-        vis_row(Lang::t("settings.vis_browse_usb"),   &Config::Visibility::browse_usb),
-        vis_row(Lang::t("settings.vis_browse_network"),
+        vis_row("settings.vis_browse_usb",   &Config::Visibility::browse_usb),
+        vis_row("settings.vis_browse_network",
                 &Config::Visibility::browse_network),
-        vis_row(Lang::t("settings.vis_saves"),        &Config::Visibility::view_saves),
-        vis_row(Lang::t("settings.vis_system_info"),        &Config::Visibility::tools),
-        vis_row(Lang::t("settings.vis_mtp"),          &Config::Visibility::start_mtp),
-        vis_row(Lang::t("settings.vis_ftp"),          &Config::Visibility::start_ftp),
-        vis_row(Lang::t("settings.vis_http"),         &Config::Visibility::start_http),
+        vis_row("settings.vis_saves",        &Config::Visibility::view_saves),
+        vis_row("settings.vis_system_info",        &Config::Visibility::tools),
+        vis_row("settings.vis_mtp",          &Config::Visibility::start_mtp),
+        vis_row("settings.vis_ftp",          &Config::Visibility::start_ftp),
+        vis_row("settings.vis_http",         &Config::Visibility::start_http),
     };
-    rows.push_back(submenu_row(Lang::t("settings.section_visibility"), [vis] {
+    rows.push_back(submenu_row("settings.section_visibility", [vis] {
         return std::unique_ptr<Screen>(new SettingsScreen(
             Lang::t("settings.section_visibility"), vis));
     }));
 
     // ── Network ─────────────────────────────────────────────────────────────
     std::vector<Row> net = {
-        text_row(Lang::t("settings.update_check_url"),
+        text_row("settings.update_check_url",
                  [] { return Config::get().app.update_check_url; },
                  [](const std::string& v) { Config::get_mutable().app.update_check_url = v; }),
-        text_row(Lang::t("settings.titledb_url"),
+        text_row("settings.titledb_url",
                  [] { return Config::get().app.titledb_url; },
                  [](const std::string& v) { Config::get_mutable().app.titledb_url = v; }),
-        text_row(Lang::t("settings.github_token"),
+        text_row("settings.github_token",
                  [] { return Config::get().network.github_token; },
                  [](const std::string& v) { Config::get_mutable().network.github_token = v; },
                  /*secret=*/true),
     };
-    rows.push_back(submenu_row(Lang::t("settings.section_network"), [net] {
+    rows.push_back(submenu_row("settings.section_network", [net] {
         return std::unique_ptr<Screen>(new SettingsScreen(
             Lang::t("settings.section_network"), net));
     }));
@@ -464,12 +482,14 @@ std::unique_ptr<Screen> SettingsScreen::root() {
     {
         Row r;
         r.kind  = Row::Kind::Toggle;
-        r.label = Lang::t("settings.reset_defaults");
+        r.label = tr(r.lang_key, "settings.reset_defaults");
         r.get   = [] { return false; };          // never "on" - it is an action
         r.set   = [](bool) {};                   // performed via the confirmation
         r.confirm_on_enable = true;
-        r.confirm_title     = Lang::t("settings.reset_defaults");
-        r.confirm_body      = Lang::t("settings.confirm_reset");
+        r.confirm_title_key = "settings.reset_defaults";
+        r.confirm_body_key  = "settings.confirm_reset";
+        r.confirm_title     = Lang::t(r.confirm_title_key);
+        r.confirm_body      = Lang::t(r.confirm_body_key);
         r.is_reset_action   = true;
         rows.push_back(std::move(r));
     }
@@ -496,33 +516,40 @@ void SettingsScreen::on_exit() {
 }
 
 void SettingsScreen::rebuild_rows() {
+    // Keyed labels re-translate on every rebuild, so a language change made in
+    // the open picker re-renders this screen on the same frame. Rows without a
+    // key keep their construction-time text (refreshed on re-entry via on_enter).
     std::vector<Widgets::ListItem> items;
     items.reserve(m_rows.size());
     for (const auto& r : m_rows) {
         Widgets::ListItem it;
+        const std::string& label = r.lang_key.empty() ? r.label : Lang::t(r.lang_key);
         if (r.kind == Row::Kind::Submenu) {
-            it.label = r.label + "...";       // matches the submenu convention
+            it.label = label + "...";         // matches the submenu convention
         } else if (r.kind == Row::Kind::Choice) {
-            it.label = r.label;
+            it.label = label;
             // Show the label for the current value, defaulting to the first.
+            auto label_for = [&r](size_t i) -> std::string {
+                if (i < r.choice_label_keys.size() && !r.choice_label_keys[i].empty())
+                    return Lang::t(r.choice_label_keys[i]);
+                return i < r.choice_labels.size() ? r.choice_labels[i] : std::string();
+            };
             const int cur = r.choice_get ? r.choice_get() : 0;
-            std::string meta = r.choice_labels.empty() ? std::string()
-                                                       : r.choice_labels.front();
+            std::string meta = r.choice_labels.empty() ? std::string() : label_for(0);
             for (size_t i = 0; i < r.choice_values.size(); ++i)
-                if (r.choice_values[i] == cur &&
-                    i < r.choice_labels.size()) { meta = r.choice_labels[i]; break; }
+                if (r.choice_values[i] == cur) { meta = label_for(i); break; }
             it.meta = meta;
         } else if (r.kind == Row::Kind::Text) {
-            it.label = r.label;
+            it.label = label;
             const std::string v = r.text_get ? r.text_get() : std::string();
             if (v.empty())            it.meta = Lang::t("settings.not_set");
             else if (r.text_secret)   it.meta = std::string(v.size() > 12 ? 12 : v.size(), '*');
             else                      it.meta = v;
         } else if (r.kind == Row::Kind::Number) {
-            it.label = r.label;
+            it.label = label;
             it.meta  = std::to_string(r.num_get ? r.num_get() : 0) + r.num_suffix;
         } else {
-            it.label       = r.label;
+            it.label       = label;
             it.is_selected = r.get && r.get();
             it.meta        = it.is_selected ? Lang::t("common.on") : Lang::t("common.off");
         }
@@ -637,8 +664,10 @@ std::unique_ptr<Screen> SettingsScreen::update(bool& pop) {
         if (want && r.confirm_on_enable) {
             Modal::Options o;
             o.kind          = Modal::Kind::Danger;
-            o.title         = r.confirm_title;
-            o.body          = r.confirm_body;
+            o.title = r.confirm_title_key.empty() ? r.confirm_title
+                                                  : Lang::t(r.confirm_title_key);
+            o.body  = r.confirm_body_key.empty() ? r.confirm_body
+                                                 : Lang::t(r.confirm_body_key);
             o.confirm_label = Lang::t("common.enable");
             o.cancel_label  = Lang::t("common.cancel");
             Modal::show(o);
@@ -708,7 +737,8 @@ void SettingsScreen::open_picker(int row_idx) {
     const int cur = r.choice_get ? r.choice_get() : 0;
     for (size_t i = 0; i < r.choice_labels.size(); ++i) {
         Widgets::ListItem it;
-        it.label = r.choice_labels[i];
+        it.label = (i < r.choice_label_keys.size() && !r.choice_label_keys[i].empty())
+                       ? Lang::t(r.choice_label_keys[i]) : r.choice_labels[i];
         if (i < r.choice_values.size() && r.choice_values[i] == cur)
             cur_at = (int)i;
         items.push_back(std::move(it));
@@ -738,7 +768,8 @@ void SettingsScreen::draw_picker() {
     Renderer::fill_rect(cx, cy, cw, ch);
 
     SDL_Color fg = Theme::get(Theme::Token::FgPrimary);
-    Renderer::draw_text(r.label, (int)Font::Size::Large, (int)Font::Weight::Bold,
+    const std::string picker_title = r.lang_key.empty() ? r.label : Lang::t(r.lang_key);
+    Renderer::draw_text(picker_title, (int)Font::Size::Large, (int)Font::Weight::Bold,
                         (int)Font::Family::Sans, fg, cx + 24, cy + 20,
                         nullptr, nullptr, cw - 48);
 

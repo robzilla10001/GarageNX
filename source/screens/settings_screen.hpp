@@ -32,6 +32,12 @@ public:
         Kind        kind = Kind::Toggle;
         std::string label;
 
+        // Translation key for `label`. When set, every rebuild re-translates
+        // through it, so a language change made in the open Appearance picker
+        // re-renders this screen immediately instead of on re-entry. `label`
+        // remains the English-time snapshot shown when no key is recorded.
+        std::string lang_key;
+
         // Toggle
         std::function<bool()>     get;
         std::function<void(bool)> set;
@@ -45,6 +51,9 @@ public:
         std::function<void(int)> choice_set;
         std::vector<int>         choice_values;
         std::vector<std::string> choice_labels;
+        // Parallel to choice_labels; when set for an index it is translated at
+        // rebuild time and wins over the stored label.
+        std::vector<std::string> choice_label_keys;
 
         // Text - opens the system keyboard (swkbd). The keyboard is BLOCKING: it
         // hands control to the OS overlay and returns on confirm/cancel, which is
@@ -74,6 +83,8 @@ public:
         bool        confirm_on_enable = false;
         std::string confirm_title;
         std::string confirm_body;
+        std::string confirm_title_key;   // translated at modal-open time
+        std::string confirm_body_key;
     };
 
     SettingsScreen(std::string title, std::vector<Row> rows);
