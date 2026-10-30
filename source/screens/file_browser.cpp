@@ -2,6 +2,7 @@
 
 #include "screens/file_browser.hpp"
 #include "screens/file_viewer.hpp"
+#include "screens/file_editor.hpp"
 #include "core/fs.hpp"
 #include "services/save_surface.hpp"
 #include "services/save_write.hpp"
@@ -37,6 +38,7 @@ enum {
     ACT_PASTE,
     ACT_RENAME,
     ACT_DELETE,
+    ACT_EDIT,
     ACT_NEW_DIR,
     ACT_NEW_FILE,
     ACT_OPEN_TEXT,
@@ -126,6 +128,13 @@ void FileBrowserScreen::on_enter() {
                                      // re-list it (a wasted network round-trip) otherwise
 }
 
+// Arg for the delete worker. Targets are copied in by value (the UI thread may
+// touch its own lists while this runs).
+struct DeleteThreadArg {
+    std::vector<std::string> targets;
+    Fs::Progress*            progress;
+};
+
 void FileBrowserScreen::on_modal_result(int result) {
     // Only meaningful when we have a delete pending confirmation.
     if (m_pending_delete.empty()) return;
@@ -135,11 +144,20 @@ void FileBrowserScreen::on_modal_result(int result) {
         auto targets = m_pending_delete;
         m_pending_delete.clear();
         m_progress.reset();
-        m_op_active = true;
-        m_op_label  = Lang::t("file_browser.op_deleting");
-        // Commits internally when the batch was in a save; no-op elsewhere.
-        Services::SaveWrite::remove_many(targets, m_progress);
-        m_progress.done = true;
+        m_op_active   = true;
+        m_op_by_files = true;
+        m_op_label    = Lang::t("file_browser.op_deleting");
+        // Worker thread, same as paste: deleting thousands of small files on the
+        // UI thread froze the console with no feedback. The batch commits
+        // internally when it was in a save; no-op elsewhere.
+        auto* arg = new DeleteThreadArg{ std::move(targets), &m_progress };
+#ifdef PLATFORM_SWITCH
+        threadCreate(&m_paste_thread, delete_thread_fn, arg, nullptr, 512 * 1024, 0x2C, -2);
+        threadStart(&m_paste_thread);
+        m_paste_thread_active = true;
+#else
+        delete_thread_fn(arg);   // PC/tests: synchronous
+#endif
     } else {
         m_pending_delete.clear();
     }
@@ -175,6 +193,12 @@ std::unique_ptr<Screen> FileBrowserScreen::update(bool& pop) {
         auto mode = hex ? FileViewerScreen::Mode::Hex
                         : FileViewerScreen::Mode::Text;
         return std::make_unique<FileViewerScreen>(path, mode);
+    }
+
+    if (!m_pending_edit_path.empty()) {
+        std::string path = m_pending_edit_path;
+        m_pending_edit_path.clear();
+        return std::make_unique<FileEditorScreen>(path);
     }
 
     // Poll active install - blocks other input while running.
@@ -301,6 +325,12 @@ std::unique_ptr<Screen> FileBrowserScreen::update(bool& pop) {
                     open_install_menu();
                     return nullptr;
                 }
+                // Plain config/text files open straight into the editor; nothing is
+                // written until the user saves. Anything else opens in the viewer
+                // (and can still be edited from the context menu).
+                if (ext == "txt" || ext == "ini")
+                    return std::make_unique<FileEditorScreen>(
+                        Fs::join(pane.path, e->name));
                 auto mode = prefers_text(ext)
                     ? FileViewerScreen::Mode::Text
                     : FileViewerScreen::Mode::Hex;
@@ -348,6 +378,7 @@ void FileBrowserScreen::open_context_menu() {
 
         if (cur && !cur->is_dir()) {
             std::string ext = cur->extension();
+            add("file_browser.context_edit_text", ACT_EDIT);
             add("file_browser.context_open_text", ACT_OPEN_TEXT);
             add("file_browser.context_open_hex",  ACT_OPEN_HEX);
 
@@ -427,6 +458,9 @@ void FileBrowserScreen::handle_context_action(int action_id) {
             m_pending_view_hex  = (action_id == ACT_OPEN_HEX);
             break;
         }
+        case ACT_EDIT:
+            m_pending_edit_path = pane.selected_path();
+            break;
         case ACT_PEEK:
             // TODO: Milestone 7 (NSP peek view)
             Modal::show({ Lang::t("modal.warning_title"),
@@ -463,6 +497,13 @@ struct PasteThreadArg {
     bool                     cut;
     Fs::Progress*            progress;
 };
+
+void FileBrowserScreen::delete_thread_fn(void* arg_raw) {
+    auto* a = static_cast<DeleteThreadArg*>(arg_raw);
+    Services::SaveWrite::remove_many(a->targets, *a->progress);
+    a->progress->done = true;   // remove_many sets it; also cover the empty-batch path
+    delete a;
+}
 
 void FileBrowserScreen::paste_thread_fn(void* arg_raw) {
     auto* a = static_cast<PasteThreadArg*>(arg_raw);
@@ -506,8 +547,9 @@ void FileBrowserScreen::do_paste(bool cut) {
     std::string dest_dir = active_pane().path;
 
     m_progress.reset();
-    m_op_active = true;
-    m_op_label  = cut ? Lang::t("file_browser.op_moving")
+    m_op_active   = true;
+    m_op_by_files = false;
+    m_op_label    = cut ? Lang::t("file_browser.op_moving")
                       : Lang::t("file_browser.op_copying");
 
     // Run the copy/move on a worker thread so the UI keeps drawing the progress
@@ -644,17 +686,41 @@ void FileBrowserScreen::draw() {
     if (m_op_active) {
         SDL_SetRenderDrawColor(r, 0, 0, 0, 140);
         Renderer::fill_rect(0, 0, Layout::SCREEN_W, Layout::SCREEN_H);
-        int bx = (Layout::SCREEN_W - 480) / 2;
-        int by = (Layout::SCREEN_H - 120) / 2;
+        const int bw = 560, bh = 170;
+        int bx = (Layout::SCREEN_W - bw) / 2;
+        int by = (Layout::SCREEN_H - bh) / 2;
         Theme::apply(r, Theme::Token::BgSurface);
-        Renderer::fill_rect(bx, by, 480, 120);
+        Renderer::fill_rect(bx, by, bw, bh);
         Theme::apply(r, Theme::Token::Border);
-        Renderer::draw_rect(bx, by, 480, 120);
-        Widgets::draw_text(bx + 20, by + 20, m_op_label,
+        Renderer::draw_rect(bx, by, bw, bh);
+        Widgets::draw_text(bx + 20, by + 16, m_op_label,
                            Font::Size::Medium, Font::Weight::Bold,
                            Theme::Token::FgPrimary);
-        Widgets::draw_progress(bx + 20, by + 70, 440, 16, m_progress.fraction());
-        Widgets::draw_text(bx + 20, by + 94, Lang::t("hints.cancel_b"),
+
+        // What is happening right now: the file being worked on, then a count.
+        const int  files_total = m_progress.files_total.load();
+        const int  files_done  = m_progress.files_done.load();
+        const bool scanning    = m_op_by_files && files_total == 0 && !m_progress.done.load();
+        Widgets::draw_text(bx + 20, by + 56,
+                           scanning ? Lang::t("file_browser.op_scanning") : m_progress.current(),
+                           Font::Size::Small, Font::Weight::Regular,
+                           Theme::Token::FgSecondary, bw - 40);
+
+        const float frac = m_op_by_files ? m_progress.files_fraction() : m_progress.fraction();
+        Widgets::draw_progress(bx + 20, by + 86, bw - 40, 16, frac);
+
+        char stat[64];
+        if (m_op_by_files && files_total > 0)
+            std::snprintf(stat, sizeof(stat), "%d / %d  (%d%%)", files_done, files_total,
+                          (int)(frac * 100.f));
+        else if (!m_op_by_files)
+            std::snprintf(stat, sizeof(stat), "%d%%", (int)(frac * 100.f));
+        else
+            stat[0] = '\0';
+        Widgets::draw_text(bx + 20, by + 110, stat,
+                           Font::Size::Small, Font::Weight::Regular,
+                           Theme::Token::FgPrimary);
+        Widgets::draw_text(bx + 20, by + 138, Lang::t("hints.cancel_b"),
                            Font::Size::Small, Font::Weight::Regular,
                            Theme::Token::FgSecondary);
     }

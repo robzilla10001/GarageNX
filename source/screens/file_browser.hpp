@@ -81,6 +81,7 @@ private:
     Fs::Progress             m_progress;
     bool                     m_op_active = false;
     std::string              m_op_label;
+    bool                     m_op_by_files = false;   // bar tracks file count (delete), not bytes
 
     // ── Pending actions ─────────────────────────────────────────────────────
     // Some actions can't complete inline (they need a modal answer or must push
@@ -88,6 +89,7 @@ private:
     // processed at the top of the next update().
     std::vector<std::string> m_pending_delete;   // awaiting delete confirmation
     std::string              m_pending_view_path; // open in viewer next frame
+    std::string              m_pending_edit_path; // open in editor next frame
     bool                     m_pending_view_hex = false;
 
     // ── Install pipeline (Milestone 5) ──────────────────────────────────────
@@ -106,6 +108,7 @@ private:
     bool                     m_install_thread_active = false;
     bool                     m_paste_thread_active   = false;
     static void              paste_thread_fn(void* arg_raw);
+    static void              delete_thread_fn(void* arg_raw);   // shares m_paste_thread
 
     void start_install(const std::string& path, Core::Ncm::Storage storage);
     void poll_install();

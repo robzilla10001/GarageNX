@@ -449,7 +449,6 @@ std::unique_ptr<Screen> SettingsScreen::root() {
                 &Config::Visibility::browse_network),
         vis_row("settings.vis_saves",        &Config::Visibility::view_saves),
         vis_row("settings.vis_system_info",        &Config::Visibility::tools),
-        vis_row("settings.vis_mtp",          &Config::Visibility::start_mtp),
         vis_row("settings.vis_ftp",          &Config::Visibility::start_ftp),
         vis_row("settings.vis_http",         &Config::Visibility::start_http),
     };

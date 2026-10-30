@@ -13,7 +13,7 @@ Resumes sessions should read the "Working on this codebase" section first.
 | Platform SDK | libnx (devkitPro), Switch only - no PC build |
 | Renderer | SDL2 + SDL2_ttf + SDL2_image |
 | Build system | CMake (`toolchain-switch.cmake`) |
-| Version | 1.0.0a (`APP_VERSION` define in `CMakeLists.txt`) |
+| Version | 1.0.0b (`APP_VERSION` define in `CMakeLists.txt`) |
 | License | AGPLv3 (source disclosure via `APP_SOURCE_URL`) |
 
 ---
@@ -65,6 +65,20 @@ Key modules:
 - `install/stream_driver` + `stream_installer` + `ncz_window` -
   transport-agnostic streaming install (MTP/FTP/HTTP all adapt onto one
   driver); NSZ/NCZ decompression with re-encryption.
+- `screens/file_editor` + `services/text_window` - basic line editor for
+  txt/ini (and anything via "Edit as Text"). Holds one line-aligned 256 KB
+  window, never the whole file; a save streams head + edited window + tail into
+  a temp file and swaps it in, so a failed save leaves the original untouched.
+  The window model is pure and host-tested (`text_window_test`: round trip is
+  byte-exact). Files over 32 MB or containing NUL are refused (viewer only).
+- Startup `prod.keys` probe (`Core::Keys::prod_keys_present()`): when missing, the
+  modal offers to download the latest Lockpick_RCM_Pro release if the payload is
+  absent (`services/lockpick_fetch`: GitHub API -> zip via libcurl -> minizip ->
+  temp file + swap into `sdmc:/bootloader/payloads/`; TLS certificates are NOT
+  verified, a project decision), then to restart to the bootloader via the Exit
+  menu's `RestartToBootloader` path so the user picks the payload in Hekate. No RCM
+  injection / `reboot_to_payload.nro` (patched on Mariko). The modal appears only
+  when `prod.keys` is missing; when present, nothing is drawn.
 - `screens/tools_screen` - the maintenance ops; `ToolsScreen::Op` has two
   shapes: scan/run (dry-run → held-confirm → execute) or `push` (a dedicated
   screen, e.g. `WifiProfileScreen`).
@@ -125,7 +139,7 @@ hardware-visible behaviour has its own log.
 ## 5. Testing reality
 
 The host suite (`cmake -S tests -B build-tests && cmake --build build-tests &&
-ctest --test-dir build-tests`) builds ONLY the pure, libnx-free modules - 52
+ctest --test-dir build-tests`) builds ONLY the pure, libnx-free modules - 56
 tests, all under sanitizers. It says nothing about screens, transports, or
 most of core. Their only mechanical check is the syntax guard:
 
@@ -143,8 +157,9 @@ hope. A text-flattened wiki snippet or a secondhand API summary is a lead to
 verify, never a source.
 
 The real Switch build runs in the devkitPro container (`switch_dev_build`,
-repo mounted at `/workspace`): configure once with the portlibs pkg-config
-env, then `cmake --build build-fresh`.
+repo mounted at `/projects/GarageNX-qwen`): `cmake -S . -B build-container
+-DPLATFORM=Switch` once, then `cmake --build build-container`. `build-container/`
+is the one Switch build directory.
 
 ## 6. Building the SMB/NFS network client
 

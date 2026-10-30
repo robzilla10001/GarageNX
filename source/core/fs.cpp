@@ -208,17 +208,20 @@ bool remove_file(const std::string& path) {
     return ::remove(path.c_str()) == 0;
 }
 
-bool remove_directory_recursive(const std::string& path) {
+bool remove_directory_recursive(const std::string& path, Progress* progress) {
     bool ok = true;
     auto entries = list(path, &ok);
     if (!ok) return false;
 
     for (auto& e : entries) {
+        if (progress && progress->cancelled.load()) return false;
         std::string child = join(path, e.name);
         if (e.is_dir()) {
-            if (!remove_directory_recursive(child)) ok = false;
+            if (!remove_directory_recursive(child, progress)) ok = false;
         } else {
+            if (progress) progress->set_current(e.name);
             if (!remove_file(child)) ok = false;
+            if (progress) progress->files_done.fetch_add(1);
         }
     }
     // Remove the now-empty directory
@@ -317,7 +320,7 @@ static bool copy_recursive(const std::string& src, const std::string& dst,
                 case Conflict::Overwrite: break;
             }
         }
-        progress.current_file = basename(src);
+        progress.set_current(basename(src));
         bool ok = copy_file_bytes(src, target, progress);
         progress.files_done.fetch_add(1);
         return ok;
@@ -409,14 +412,16 @@ bool remove_many(const std::vector<std::string>& paths, Progress& progress) {
     bool ok = true;
     for (auto& p : paths) {
         if (progress.cancelled.load()) { ok = false; break; }
-        progress.current_file = basename(p);
+        progress.set_current(basename(p));
         if (is_directory(p)) {
-            if (!remove_directory_recursive(p)) ok = false;
+            // Counts files itself, one at a time, so the bar moves while a big
+            // folder of small files is being emptied.
+            if (!remove_directory_recursive(p, &progress)) ok = false;
         } else {
             progress.bytes_done.fetch_add(file_size(p));
             if (!remove_file(p)) ok = false;
+            progress.files_done.fetch_add(1);
         }
-        progress.files_done.fetch_add(1);
     }
 
     progress.success = ok && !progress.cancelled.load();

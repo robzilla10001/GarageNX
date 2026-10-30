@@ -41,6 +41,7 @@ static int g_failures = 0;
 // missing commits a bug.
 static const char* kSaveCapableFiles[] = {
     "screens/file_browser.cpp",
+    "screens/file_editor.cpp",
     "services/ftp_server.cpp",
     "services/mtp_server.cpp",
     "services/save_surface.cpp",

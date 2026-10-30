@@ -18,6 +18,8 @@ sources, and no code from incompatibly-licensed projects was copied
 | libusbhsfs (DarkMatterCore) | linked | USB mass storage (`core/usb_mount.*`) | GNU GPL v2.0 ✅ |  
 | libnfs (sahlberg, pinned @20b39fd) | cross-compiled with a Switch patch | NFS client (`services/net_surface.cpp`) | GNU GPL v3.0 ✅ |  
 | libsmb2 (sahlberg, v4.0.0) | cross-compiled with a Switch patch | SMB client (`services/net_surface.cpp`) | GNU GPL v3.0 ✅ |  
+| libcurl + mbedTLS (devkitPro portlibs) | linked | HTTPS download of Lockpick_RCM_Pro (`services/lockpick_fetch.cpp`) | curl License / Apache-2.0 ✅ |  
+| minizip + zlib (devkitPro portlibs) | linked | extracting the downloaded release zip (`services/lockpick_fetch.cpp`) | zlib License ✅ |  
 | nxmp-portlibs (proconsule) | patch/tarball source for libnfs + libsmb2 | `tools/build-net-portlibs.sh` | GNU GPL v3.0 ✅ |  
 
 The libnfs/libsmb2 patches and the build script live in this repository

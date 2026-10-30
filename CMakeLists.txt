@@ -25,7 +25,7 @@ endif()
 set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/toolchain-switch.cmake"
     CACHE STRING "Toolchain file" FORCE)
 
-# CMake project() VERSION must be strictly numeric; the "a" label lives in
+# CMake project() VERSION must be strictly numeric; the letter label lives in
 # APP_VERSION below (shown in the title bar, System Info, and MTP DeviceVersion).
 project(GarageNX VERSION 1.0.0 LANGUAGES C CXX)
 
@@ -36,7 +36,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # ─── Compile-time constants ───────────────────────────────────────────────────
 add_compile_definitions(
     APP_NAME="GarageNX"
-    APP_VERSION="1.0.0a"
+    APP_VERSION="1.0.0b"
     APP_VERSION_MAJOR=1
     APP_VERSION_MINOR=0
     APP_VERSION_PATCH=0
@@ -133,6 +133,7 @@ set(SOURCES
     source/core/net.cpp
     source/core/qr.cpp
     source/core/keys.cpp
+    source/core/app_exit.cpp
     source/core/album_mount.cpp
     source/core/nand_mount.cpp
     source/core/gamecard_mount.cpp
@@ -172,6 +173,7 @@ set(SOURCES
     source/services/confirmation_broker.cpp
     source/services/mtp_data.cpp
     source/services/mtp_server.cpp
+    source/services/lockpick_fetch.cpp
     
     source/ui/renderer.cpp
     source/ui/theme.cpp
@@ -193,11 +195,13 @@ set(SOURCES
     source/screens/activity_log.cpp
     source/screens/gamecard.cpp
     source/ui/backup_overlay.cpp
+    source/ui/progress_overlay.cpp
     source/screens/menu_dispatch.cpp
     source/screens/file_browser.cpp
     source/screens/network_browser.cpp
     source/screens/network_edit.cpp
     source/screens/file_viewer.cpp
+    source/screens/file_editor.cpp
     source/screens/system_info.cpp
     source/screens/tools_screen.cpp
     source/screens/wifi_profile_screen.cpp
@@ -284,6 +288,14 @@ if(PLATFORM STREQUAL "Switch")
         # when -DGARAGENX_NET_CLIENT=ON. Like usbhsfs they must precede nx; the var
         # is empty otherwise, so the tree links without the portlibs present.
         ${GARAGENX_NET_LIBS}
+        # Lockpick_RCM_Pro download (services/lockpick_fetch.cpp): libcurl over
+        # mbedtls for HTTPS, minizip + zlib for the release zip.
+        curl
+        mbedtls
+        mbedx509
+        mbedcrypto
+        minizip
+        z
         nx
         m
     )

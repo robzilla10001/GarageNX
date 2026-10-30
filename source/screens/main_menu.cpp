@@ -59,6 +59,11 @@ std::unique_ptr<Screen> MainMenuScreen::update(bool& pop) {
         return nullptr;
     }
 
+    // X is a shortcut straight to the USB-MTP connection screen. The regular entry
+    // under Connectivity stays as well, so MTP is reachable without the shortcut.
+    if (Input::pressed(Input::Button::X))
+        return menu_activate(MenuItem::MTP, pop);
+
     if (m_list.handle_input()) {
         int idx = m_list.cursor();
         if (idx < 0 || idx >= static_cast<int>(s_id_map.size())) return nullptr;
@@ -90,6 +95,7 @@ void MainMenuScreen::draw() {
     std::vector<Widgets::ButtonHint> hints = {
         { "A", Lang::t("hints.open") },
         { "B", Lang::t("hints.back") },
+        { "X", Lang::t("hints.mtp") },
     };
     Widgets::draw_button_legend(x, y + h - 32, w, hints);
 }

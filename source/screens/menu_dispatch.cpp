@@ -111,15 +111,15 @@ bool menu_is_submenu(MenuItem id) {
 }
 
 namespace {
+// True when a loader that can chain-load the next NRO is present AND there is an
+// hbmenu to go back to. This is what "Exit to hbmenu" actually needs. It is NOT
+// the same as the applet type: Sphaira/hbmenu launched through title takeover run
+// as AppletType_Application, yet their hbloader supports next-load just fine, so
+// gating on the applet type hid the entry in exactly that case. A plain title
+// (no hbloader, e.g. a real NSP install) has no next-load and stays without it.
 bool running_under_hbloader() {
 #ifdef PLATFORM_SWITCH
-    switch (appletGetAppletType()) {
-        case AppletType_Application:
-        case AppletType_SystemApplication:
-            return false;
-        default:
-            return true;
-    }
+    return envHasNextLoad() && Fs::exists("sdmc:/hbmenu.nro");
 #else
     return false;
 #endif
@@ -165,7 +165,9 @@ bool menu_item_visible(MenuItem id) {
         case MenuItem::Tickets:               return vis.view_tickets;
         case MenuItem::Saves:                 return vis.view_saves;
         case MenuItem::BackupSaves:           return vis.backup_saves;
-        case MenuItem::MTP:                   return vis.start_mtp;
+        // MTP is never hideable: it is the primary way to move files on/off the
+        // console, and the main menu's X shortcut points at it.
+        case MenuItem::MTP:                   return true;
         case MenuItem::FTP:                   return vis.start_ftp;
         case MenuItem::HTTP:                  return vis.start_http;
         default:                              return true;

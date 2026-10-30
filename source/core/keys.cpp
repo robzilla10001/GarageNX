@@ -2,6 +2,7 @@
 
 #include "core/keys.hpp"
 #include <SDL2/SDL.h>
+#include <sys/stat.h>
 #include <cstdio>
 #include <cstring>
 #include <cctype>
@@ -185,6 +186,12 @@ LoadResult load(const std::string& switch_dir) {
     SDL_Log("Keys::load - OK (header_key + %s title keys)",
             std::to_string(s_keys.title_keys.size()).c_str());
     return result;
+}
+
+bool prod_keys_present(const std::string& switch_dir) {
+    struct stat st{};
+    const std::string path = switch_dir + "/prod.keys";
+    return ::stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
 }
 
 const Keyset& get() { return s_keys; }

@@ -6,8 +6,12 @@
 #include "ui/font.hpp"
 #include "ui/layout.hpp"
 #include "ui/widgets.hpp"
+#include "core/app_exit.hpp"
+#include "lang/localization.hpp"
 #include <SDL2/SDL.h>
+#include <algorithm>
 #include <cstdio>
+#include <string>
 
 namespace StatusBar {
 
@@ -42,6 +46,43 @@ void draw() {
     // Top border
     Theme::apply(r, Theme::Token::Border);
     Renderer::hline(0, Layout::STATUS_BAR_Y, Layout::SCREEN_W);
+
+    // Applet-mode notice, just above the bar. Applet mode (hbmenu/Sphaira album
+    // launch) gives the app far less memory than an Application, so the user
+    // should know why a large operation might fail. Drawn here because the bar is
+    // painted after the screen, so this lands on top of the content area's foot.
+    static const bool applet_mode = Core::in_applet_mode();
+    if (applet_mode) {
+        // Two lines of near-equal width, broken at a space (never mid-word), so the
+        // notice stays narrow enough not to cover the content above it.
+        const std::string msg = Lang::t("status.applet_mode");
+        std::string l1 = msg, l2;
+        size_t best = std::string::npos, best_diff = msg.size();
+        for (size_t i = 0; i < msg.size(); ++i) {
+            if (msg[i] != ' ') continue;
+            const size_t d = i > msg.size() - i - 1 ? i - (msg.size() - i - 1)
+                                                    : (msg.size() - i - 1) - i;
+            if (d < best_diff) { best_diff = d; best = i; }
+        }
+        if (best != std::string::npos) { l1 = msg.substr(0, best); l2 = msg.substr(best + 1); }
+
+        const SDL_Color red = Theme::get(Theme::Token::AccentDanger);
+        SDL_Surface* s1 = Font::render(l1, Font::Size::Small, Font::Weight::Bold, red);
+        SDL_Surface* s2 = l2.empty() ? nullptr
+                                     : Font::render(l2, Font::Size::Small, Font::Weight::Bold, red);
+        if (s1) {
+            const int lh = s1->h + 1;
+            const int bh = lh * (s2 ? 2 : 1) + 4;
+            const int bw = std::max(s1->w, s2 ? s2->w : 0) + Layout::PAD_MD * 2;
+            const int by = Layout::STATUS_BAR_Y - bh - 2;
+            Theme::apply(r, Theme::Token::BgBase);
+            Renderer::fill_rect(0, by, bw, bh);
+            Renderer::blit(s1, Layout::PAD_MD, by + 2);
+            if (s2) Renderer::blit(s2, Layout::PAD_MD, by + 2 + lh);
+        }
+        if (s1) SDL_FreeSurface(s1);
+        if (s2) SDL_FreeSurface(s2);
+    }
 
     int cy     = Layout::STATUS_BAR_Y
                + (Layout::STATUS_BAR_H - static_cast<int>(Font::Size::Small)) / 2;

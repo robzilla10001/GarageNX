@@ -59,6 +59,12 @@ const Keyset& get();
 /// True if load() succeeded with the essential keys for reading Control NCAs.
 bool available();
 
+/// Cheap, side-effect-free presence check: is there a regular file at
+/// <switch_dir>/prod.keys? Does not parse it or touch the loaded keyset, so it is
+/// safe to call at any time (startup check, "should we offer Lockpick" decision).
+/// Presence only - available() says whether the keys are actually USABLE.
+bool prod_keys_present(const std::string& switch_dir = "sdmc:/switch");
+
 /// A short message suitable for a "keys required" blocking screen, naming what's
 /// missing and where to put it. Empty when keys are available.
 std::string requirement_message();

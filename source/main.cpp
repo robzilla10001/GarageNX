@@ -27,6 +27,8 @@
 #include "lang/localization.hpp"
 #include "core/save_backup.hpp"
 #include "ui/backup_overlay.hpp"
+#include "ui/progress_overlay.hpp"
+#include "services/lockpick_fetch.hpp"
 #include "core/album_mount.hpp"
 #include "core/nand_mount.hpp"
 #include "core/gamecard_mount.hpp"
@@ -121,6 +123,17 @@ static void pop(ScreenStack& stack) {
     stack.back()->on_exit();
     stack.pop_back();
     if (!stack.empty()) stack.back()->on_enter();
+}
+
+// ─── Lockpick_RCM ─────────────────────────────────────────────────────────────
+// When prod.keys is missing, offer to restart into the bootloader (Hekate), where
+// the user launches Lockpick_RCM_Pro from its Payloads list. This deliberately
+// uses the same path as the Exit menu's "Restart to bootloader" rather than
+// injecting a payload over RCM: that exploit is patched on Mariko units.
+static const char* const LOCKPICK_PAYLOAD = Services::LockpickFetch::kPayloadPath;
+
+static bool lockpick_payload_present() {
+    return Fs::exists(LOCKPICK_PAYLOAD) && !Fs::is_directory(LOCKPICK_PAYLOAD);
 }
 
 // ─── Startup ──────────────────────────────────────────────────────────────────
@@ -278,6 +291,13 @@ int main(int argc, char* argv[]) {
 
     uint32_t last_status_refresh = 0;
 
+    // Startup prod.keys check. The probe is silent and cheap; the modal below
+    // appears only when prod.keys is missing, to offer the Lockpick_RCM_Pro route.
+    bool keys_probe_shown = false;
+    // Which Lockpick prompt the current modal is, if any.
+    enum class LockpickModal { None, OfferDownload, OfferReboot, Done };
+    LockpickModal lockpick_modal = LockpickModal::None;
+
     // Auto-backup runs once, deferred until the first frame is on screen so the
     // user sees the menu rather than a frozen startup. Off by default.
     bool auto_backup_done = (Config::get().behavior.save_auto_backup_days <= 0);
@@ -335,6 +355,40 @@ int main(int argc, char* argv[]) {
 
         // Resolve one installed-title display name per frame, on this thread.
         Services::installed_titles_tick();
+
+        // ── One-shot prod.keys probe: modal only when the keys are missing ─────
+        if (!keys_probe_shown && !Modal::is_active()) {
+            keys_probe_shown = true;
+            const bool present = Core::Keys::prod_keys_present();
+            SDL_Log("startup - prod.keys probe: %s, keyset %s",
+                    present ? "present" : "absent",
+                    Core::Keys::available() ? "usable" : "unusable");
+            Modal::Options o;
+            o.kind          = Modal::Kind::Info;
+            o.title         = Lang::t("keys_check.title");
+            o.body          = std::string("sdmc:/switch/prod.keys: ")
+                            + Lang::t(present ? "keys_check.found" : "keys_check.not_found")
+                            + "\n" + Lang::t("keys_check.keyset_loaded") + ": "
+                            + Lang::t(Core::Keys::available() ? "modal.yes" : "modal.no");
+            o.confirm_label = Lang::t("common.ok");
+            if (!present && !lockpick_payload_present()) {
+                // No payload on the SD card: offer to fetch the latest release.
+                o.kind          = Modal::Kind::Confirm;
+                o.body         += "\n\n" + Lang::t("keys_check.offer_download");
+                o.confirm_label = Lang::t("keys_check.download");
+                o.cancel_label  = Lang::t("common.cancel");
+                lockpick_modal  = LockpickModal::OfferDownload;
+            } else if (!present) {
+                o.kind          = Modal::Kind::Confirm;
+                o.body         += "\n\n" + Lang::t("keys_check.offer_reboot");
+                o.confirm_label = Lang::t("keys_check.reboot");
+                o.cancel_label  = Lang::t("common.cancel");
+                lockpick_modal  = LockpickModal::OfferReboot;
+            }
+            // Only ever shown when the keys are missing; with prod.keys present
+            // nothing is drawn (the probe result still goes to the log above).
+            if (!present) Modal::show(o);
+        }
 
         // ── One-shot auto-backup of stale saves ────────────────────────────────
         if (!auto_backup_done) {
@@ -414,7 +468,51 @@ int main(int argc, char* argv[]) {
         if (Modal::is_active()) {
             Modal::Result res = Modal::update_and_draw();
             if (res != Modal::Result::Pending) {
-                if (g_confirm_modal_active) {
+                if (lockpick_modal != LockpickModal::None) {
+                    const LockpickModal which = lockpick_modal;
+                    lockpick_modal = LockpickModal::None;
+                    if (res == Modal::Result::Confirmed) {
+                        if (which == LockpickModal::OfferReboot) {
+                            bool unused_pop = false;
+                            menu_activate(MenuItem::RestartToBootloader, unused_pop);
+                        } else if (which == LockpickModal::OfferDownload) {
+                            uint32_t last_paint = 0;
+                            const auto result = Services::LockpickFetch::fetch_latest(
+                                [&](const Services::LockpickFetch::Status& st) {
+                                    using Ph = Services::LockpickFetch::Status::Phase;
+                                    const uint32_t now = SDL_GetTicks();
+                                    if (now - last_paint < 60 && st.fraction < 1.0) return;
+                                    last_paint = now;
+                                    if (st.phase == Ph::Download)
+                                        UI::draw_progress_overlay(Lang::t("keys_check.dl_download"),
+                                            std::to_string((int)(st.fraction * 100)) + "%",
+                                            (float)st.fraction);
+                                    else
+                                        UI::draw_progress_overlay(
+                                            Lang::t(st.phase == Ph::Release ? "keys_check.dl_release"
+                                                                            : "keys_check.dl_extract"),
+                                            "", -1.f);
+                                });
+                            Modal::Options o;
+                            o.kind          = Modal::Kind::Info;
+                            o.confirm_label = Lang::t("common.ok");
+                            if (result.ok) {
+                                o.title = Lang::t("keys_check.dl_done_title");
+                                o.body  = Lang::t("keys_check.dl_done_body") + " " + result.tag
+                                        + "\n" + LOCKPICK_PAYLOAD;
+                                o.kind          = Modal::Kind::Confirm;
+                                o.body         += "\n\n" + Lang::t("keys_check.offer_reboot");
+                                o.confirm_label = Lang::t("keys_check.reboot");
+                                o.cancel_label  = Lang::t("common.cancel");
+                                lockpick_modal  = LockpickModal::OfferReboot;
+                            } else {
+                                o.title = Lang::t("keys_check.dl_failed_title");
+                                o.body  = result.error;
+                            }
+                            Modal::show(o);
+                        }
+                    }
+                } else if (g_confirm_modal_active) {
                     // This modal was a broker confirmation - resolve the worker.
                     Services::ConfirmationBroker::instance().resolve(
                         g_pending_confirm_id,

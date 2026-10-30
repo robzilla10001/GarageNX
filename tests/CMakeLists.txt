@@ -233,6 +233,18 @@ add_garagenx_test(text_wrap_test
     text_wrap_test.cpp
 )
 
+# Paged text editor window model: parse/serialize round trip and chunk cutting.
+# Pure, no libnx - an off-by-one here rewrites a user's file wrong on save.
+add_garagenx_test(text_window_test
+    text_window_test.cpp
+)
+
+# Lockpick download decisions: release-asset choice and zip-entry match (pure
+# header; the curl/minizip transfer itself is Switch-only).
+add_garagenx_test(lockpick_fetch_test
+    lockpick_fetch_test.cpp
+)
+
 # Save backup DESTINATION NAMING: header-only, no libnx. Save folders are named
 # after account nicknames and game titles, which contain characters FAT rejects -
 # unsanitised, the copy fails on exactly the titles a user wants backed up.

@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <functional>
 #include <atomic>
+#include <mutex>
 
 namespace Fs {
 
@@ -78,7 +79,10 @@ bool make_directory_recursive(const std::string& path);
 bool create_empty_file(const std::string& path);
 bool rename(const std::string& from, const std::string& to);
 bool remove_file(const std::string& path);
-bool remove_directory_recursive(const std::string& path);  // can be slow - see FileOp
+// Optional `progress` counts each removed file (files_done / current label) and
+// honours cancel between entries; null keeps the old silent behaviour.
+struct Progress;
+bool remove_directory_recursive(const std::string& path, Progress* progress = nullptr);  // can be slow - see FileOp
 
 // ─── Conflict resolution ──────────────────────────────────────────────────────
 
@@ -102,9 +106,18 @@ struct Progress {
     std::atomic<int>      files_total{0};
     std::atomic<int>      files_done{0};
 
-    // Current file being processed (guarded by a simple spinlock-free swap;
-    // UI reads it best-effort, exact tearing is acceptable for a label).
-    std::string current_file;
+    // Current file being processed. The worker writes it and the UI thread reads
+    // it every frame, so access goes through set_current()/current() - an
+    // unguarded std::string shared across threads is a use-after-free when the
+    // worker reassigns it mid-read.
+    void set_current(const std::string& s) {
+        std::lock_guard<std::mutex> lk(m_cur_mtx);
+        m_current_file = s;
+    }
+    std::string current() const {
+        std::lock_guard<std::mutex> lk(m_cur_mtx);
+        return m_current_file;
+    }
 
     // Request cancellation from the UI thread.
     void request_cancel() { cancelled.store(true); }
@@ -115,11 +128,23 @@ struct Progress {
         return static_cast<float>(bytes_done.load()) / static_cast<float>(t);
     }
 
+    // Progress by file count - the honest measure for a delete, where bytes_done
+    // barely moves (thousands of tiny files).
+    float files_fraction() const {
+        int t = files_total.load();
+        if (t <= 0) return 0.f;
+        return static_cast<float>(files_done.load()) / static_cast<float>(t);
+    }
+
     void reset() {
         running = false; done = false; cancelled = false; success = false;
         bytes_total = 0; bytes_done = 0; files_total = 0; files_done = 0;
-        current_file.clear();
+        set_current(std::string());
     }
+
+private:
+    mutable std::mutex m_cur_mtx;
+    std::string        m_current_file;
 };
 
 /// Callback invoked when a destination path already exists during copy/move.
