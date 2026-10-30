@@ -1,11 +1,8 @@
 <div align="center">IMPORTANT NOTICE  
   
-10/09/2026: HOS 23.0.0 RELEASED  
+16/10/2026: ATMOSPHERE 1.12.1 FOR HOS 23.0.1 RELEASED  
 
-Do not update your firmware until Atmosphere is updated (I would personally wait on BornToHonk's fork,
-as sys-patches are baked in). Even once Atmosphere has been updated, we do not currently know what
-changes have been made, so we don't know how loading homebrew will be affected. Would highly recommend
-waiting on a new release of libnx/DevKitPro as well. Just to be sure all bases are covered.</div>
+Atmosphere has been updated; BornToHonk's fork released with baked in sigpatches.</div>
 
 # GarageNX
 
