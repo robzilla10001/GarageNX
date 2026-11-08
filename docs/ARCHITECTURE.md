@@ -13,7 +13,7 @@ Resumes sessions should read the "Working on this codebase" section first.
 | Platform SDK | libnx (devkitPro), Switch only - no PC build |
 | Renderer | SDL2 + SDL2_ttf + SDL2_image |
 | Build system | CMake (`toolchain-switch.cmake`) |
-| Version | 1.0.0b (`APP_VERSION` define in `CMakeLists.txt`) |
+| Version | 1.0.0c (`APP_VERSION` define in `CMakeLists.txt`) |
 | License | AGPLv3 (source disclosure via `APP_SOURCE_URL`) |
 
 ---

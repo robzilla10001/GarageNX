@@ -174,6 +174,9 @@ std::vector<uint8_t> MtpServer::build_device_info() const {
         Op::GetNumObjects, Op::GetObjectHandles, Op::GetObjectInfo, Op::GetObject,
         Op::GetPartialObject, Op::GetPartialObject64,
         Op::SendObjectInfo, Op::SendObject, Op::DeleteObject,
+        // Cut/paste and copy/paste in a host file manager. Without MoveObject the
+        // host reports "Operation not supported" on every cut/paste.
+        Op::MoveObject, Op::CopyObject,
         Op::GetDevicePropDesc, Op::GetDevicePropValue,
         // MTP 1.1. A host uses SendObjectPropList only if we claim it here, and
         // libmtp reaches it via GetObjectPropsSupported - advertising 0x9808
@@ -1715,6 +1718,111 @@ void MtpServer::handle_command(const std::vector<uint8_t>& packet) {
             break;
         }
 
+
+        case Op::MoveObject:
+        case Op::CopyObject: {
+            // Params: object handle, destination StorageID, destination parent
+            // handle (0 / 0xFFFFFFFF = the storage root). This is how a host
+            // implements cut/paste (Move) and copy/paste (Copy) WITHOUT pulling the
+            // bytes through the PC. Copy answers with the new object's handle.
+            //
+            // Scope: plain filesystem objects only. Virtual NSPs, save-data objects
+            // and the install storages are not real files that can be relocated, so
+            // they are refused rather than half-handled.
+            const bool is_copy = (c.hdr.code == Op::CopyObject);
+            if (c.nparams < 3) { send_response(Rc::InvalidParameter, tid); break; }
+
+            const std::string* mv_sp = path_for(c.param[0]);
+            if (!mv_sp) { send_response(Rc::InvalidObjectHandle, tid); break; }
+            const std::string mv_src = *mv_sp;   // copy before any map mutation
+            if (mv_src.compare(0, 8, kTitlesPrefix) == 0 ||
+                Services::save_is_synthetic(mv_src)) {
+                send_response(Rc::AccessDenied, tid); break;
+            }
+
+            // Destination directory.
+            std::string mv_dir;
+            const uint32_t mv_parent = c.param[2];
+            if (mv_parent != 0 && mv_parent != Mtp::kRootParent) {
+                const std::string* pp = path_for(mv_parent);
+                if (!pp) { send_response(Rc::InvalidParentObject, tid); break; }
+                if (pp->compare(0, 8, kTitlesPrefix) == 0 ||
+                    Services::save_is_synthetic(*pp) || !Fs::is_directory(*pp)) {
+                    send_response(Rc::InvalidParentObject, tid); break;
+                }
+                mv_dir = *pp;
+            } else {
+                StorageSurface::Id mv_sid;
+                const StorageSurface* mv_surf = nullptr;
+                if (!is_install_storage(c.param[1]) && mtp_id_to_surface(c.param[1], mv_sid))
+                    mv_surf = StorageCatalog::find(mv_sid);
+                if (!mv_surf || mv_surf->kind != StorageKind::Filesystem ||
+                    !StorageCatalog::enabled(mv_sid, Config::get().mtp.surfaces)) {
+                    send_response(Rc::InvalidStorageId, tid); break;
+                }
+                mv_dir = std::string(mv_surf->vfs_root) + "/";
+            }
+
+            const std::string mv_dst = Fs::join(mv_dir, Fs::basename(mv_src));
+            if (!is_copy && mv_dst == mv_src) { send_response(Rc::Ok, tid); break; }   // no-op
+            // A folder cannot go inside itself.
+            if (mv_dir == mv_src || mv_dir.compare(0, mv_src.size() + 1, mv_src + "/") == 0) {
+                send_response(Rc::InvalidParentObject, tid); break;
+            }
+            // Never overwrite: a host that wants a replacement deletes first.
+            if (Fs::exists(mv_dst)) { send_response(Rc::GeneralError, tid); break; }
+
+            const auto mv_decision = is_copy
+                ? Services::guard_write("USB-MTP", "copy", mv_dst, Config::get().mtp.surfaces)
+                : Services::guard_move("USB-MTP", "move", mv_src, mv_dst,
+                                       Config::get().mtp.surfaces);
+            if (mv_decision != Services::WriteDecision::Allow) {
+                send_response(Rc::AccessDenied, tid); break;
+            }
+
+            bool mv_ok = false;
+            Fs::Progress mv_prog;
+            // Dest was checked above, so the resolver is never consulted; if it
+            // somehow is, skipping is the safe answer.
+            const Fs::ConflictResolver mv_skip = [](const std::string&) { return Fs::Conflict::Skip; };
+            if (is_copy) {
+                mv_ok = Fs::copy(mv_src, mv_dir, mv_prog, mv_skip);   // NO-COMMIT: save paths are refused above
+            } else {
+                mv_ok = Services::SaveWrite::rename(mv_src, mv_dst);   // same filesystem: instant
+                // rename() fails across devices (SD -> USB, say): copy, then delete.
+                if (!mv_ok)
+                    mv_ok = Fs::move(mv_src, mv_dir, mv_prog, mv_skip);   // NO-COMMIT: save paths are refused above
+            }
+            if (!mv_ok) {
+                Services::guard_log_note("USB-MTP", is_copy ? "copy" : "move", "FAILED",
+                                         "fs-move-failed", mv_src);
+                send_response(Rc::GeneralError, tid); break;
+            }
+
+            if (is_copy) {
+                const uint32_t nh = intern(mv_dst);
+                send_response(Rc::Ok, tid, &nh, 1);
+            } else {
+                // Keep the handle valid at its new path, and re-point anything that
+                // was listed inside a moved folder, so the host need not re-enumerate.
+                const uint32_t h = c.param[0];
+                const std::string old_prefix = mv_src + "/";
+                for (size_t i = 0; i < m_paths.size(); ++i) {
+                    std::string& pth = m_paths[i];
+                    if (i + 1 == h) continue;
+                    if (pth.compare(0, old_prefix.size(), old_prefix) == 0) {
+                        m_by_path.erase(pth);
+                        pth = mv_dst + "/" + pth.substr(old_prefix.size());
+                        m_by_path[pth] = (uint32_t)(i + 1);
+                    }
+                }
+                m_by_path.erase(mv_src);
+                m_paths[h - 1] = mv_dst;
+                m_by_path[mv_dst] = h;
+                send_response(Rc::Ok, tid);
+            }
+            break;
+        }
 
         case Op::GetDevicePropDesc: {
             if (c.nparams < 1 || c.param[0] != Mtp::Prop::DeviceFriendlyName) {

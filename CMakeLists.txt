@@ -36,7 +36,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # ─── Compile-time constants ───────────────────────────────────────────────────
 add_compile_definitions(
     APP_NAME="GarageNX"
-    APP_VERSION="1.0.0b"
+    APP_VERSION="1.0.0c"
     APP_VERSION_MAJOR=1
     APP_VERSION_MINOR=0
     APP_VERSION_PATCH=0

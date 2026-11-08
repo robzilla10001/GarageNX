@@ -38,6 +38,8 @@ constexpr uint16_t GetPartialObject64 = 0x95C1;
 constexpr uint16_t DeleteObject       = 0x100B;
 constexpr uint16_t SendObjectInfo     = 0x100C;
 constexpr uint16_t SendObject         = 0x100D;
+constexpr uint16_t MoveObject         = 0x1019;   // cut/paste in a host file manager
+constexpr uint16_t CopyObject         = 0x101A;   // copy/paste
 constexpr uint16_t GetDevicePropDesc  = 0x1014;
 constexpr uint16_t GetDevicePropValue = 0x1015;
 
