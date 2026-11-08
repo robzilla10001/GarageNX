@@ -25,5 +25,13 @@ devkitPro container, never on the host. The host has no `/opt/devkitpro/portlibs
 - `build-container/` - the Switch build (configure/build it inside the container,
   see above). Output: `build-container/GarageNX.nro`.
 - `build-tests/` - host unit tests only (`cmake -S tests -B build-tests`).
-- `build-switch/` - holds only the versioned `GarageNX-<version>.nro` copy; its
-  CMake cache is stale (host paths) and unusable from the container.
+- `build-switch/` - release archives only (`GarageNX-<version>.7z`). Its CMake
+  cache is stale (host paths) and unusable from the container.
+
+## NRO naming: the NRO is ALWAYS `GarageNX.nro`
+
+Never put a version in the NRO's file name (no `GarageNX-1.0.0b.nro`): forwarders
+point at that exact path, so a renamed NRO breaks them. Versioning lives in the
+release archive name (`GarageNX-<version>.7z`) and in the code (`APP_VERSION` in
+`CMakeLists.txt`). Release archives contain `switch/GarageNX/GarageNX.nro` and
+`switch/GarageNX/lang/`. Do not copy or rename build output to a versioned `.nro`.

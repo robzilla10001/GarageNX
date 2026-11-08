@@ -7,7 +7,7 @@ Resumes sessions should read the "Working on this codebase" section first.
 | Property | Value |
 |---|---|
 | Name | GarageNX |
-| Binary | `GarageNX.nro` |
+| Binary | `GarageNX.nro` (fixed name, never versioned - forwarders depend on the path) |
 | Root path | `sdmc:/switch/GarageNX/` |
 | Language | C++17 |
 | Platform SDK | libnx (devkitPro), Switch only - no PC build |
